@@ -5,12 +5,16 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
+import config
 import sigma_analyzer
 import validators
+import yara_analyzer
 
 
 class TestLogTypeDetection(unittest.TestCase):
@@ -292,6 +296,83 @@ class TestValidatorsLogDetection(unittest.TestCase):
         self.assertTrue(validators.is_log_file_by_extension('test.json'))
         self.assertTrue(validators.is_log_file_by_extension('test.log'))
         self.assertFalse(validators.is_log_file_by_extension('test.exe'))
+
+
+class TestZircoliteDataDirResolution(unittest.TestCase):
+    """is_zircolite_available / resolvers must honor a custom DATA_DIR at call-time."""
+
+    def setUp(self):
+        self._saved = os.environ.get('DATA_DIR')
+        # Isolate data-dir resolution from a zircolite that may be on PATH
+        # (e.g. the Docker image symlinks zircolite.py into /usr/local/bin).
+        self._which = unittest.mock.patch('sigma_analyzer.shutil.which', return_value=None)
+        self._which.start()
+
+    def tearDown(self):
+        self._which.stop()
+        if self._saved is None:
+            os.environ.pop('DATA_DIR', None)
+        else:
+            os.environ['DATA_DIR'] = self._saved
+
+    def _make_bundled(self, root):
+        zdir = os.path.join(root, 'zircolite')
+        cfgdir = os.path.join(zdir, 'config')
+        os.makedirs(cfgdir, exist_ok=True)
+        open(os.path.join(zdir, 'zircolite.py'), 'w').close()
+        open(os.path.join(cfgdir, 'config.yaml'), 'w').close()
+        venvbin = os.path.join(root, 'zircolite-venv', 'bin')
+        os.makedirs(venvbin, exist_ok=True)
+        open(os.path.join(venvbin, 'python3'), 'w').close()
+
+    def test_explicit_data_dir_arg_resolves_bundled(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._make_bundled(d)
+            self.assertTrue(sigma_analyzer.is_zircolite_available(d))
+            self.assertEqual(sigma_analyzer._zircolite_config(d),
+                             os.path.join(d, 'zircolite', 'config', 'config.yaml'))
+            self.assertEqual(sigma_analyzer._zircolite_python(d),
+                             os.path.join(d, 'zircolite-venv', 'bin', 'python3'))
+
+    def test_env_data_dir_resolves_bundled(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._make_bundled(d)
+            os.environ['DATA_DIR'] = d
+            self.assertTrue(sigma_analyzer.is_zircolite_available())
+
+    def test_custom_data_dir_without_zircolite_is_unavailable(self):
+        # A custom DATA_DIR that lacks a bundled Zircolite must report unavailable,
+        # not be silently satisfied by the default ~/socrates-data location.
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(sigma_analyzer.is_zircolite_available(d))
+
+
+class TestRulesStale(unittest.TestCase):
+    """Age-based cache refresh gate for YARA + Sigma rule files."""
+
+    def test_fresh_file_not_stale(self):
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            path = f.name
+        try:
+            self.assertFalse(sigma_analyzer._rules_stale(path))
+            self.assertFalse(yara_analyzer._rules_stale(path))
+        finally:
+            os.unlink(path)
+
+    def test_aged_file_is_stale(self):
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            path = f.name
+        try:
+            old = time.time() - (config.RULE_REFRESH_DAYS + 1) * 86400
+            os.utime(path, (old, old))
+            self.assertTrue(sigma_analyzer._rules_stale(path))
+            self.assertTrue(yara_analyzer._rules_stale(path))
+        finally:
+            os.unlink(path)
+
+    def test_missing_file_not_stale(self):
+        self.assertFalse(sigma_analyzer._rules_stale('/tmp/does-not-exist-xyz'))
+        self.assertFalse(yara_analyzer._rules_stale('/tmp/does-not-exist-xyz'))
 
 
 if __name__ == '__main__':

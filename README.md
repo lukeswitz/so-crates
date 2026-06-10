@@ -240,6 +240,26 @@ python3 socrates.py
 
 Then open http://localhost:8000/socrates.html in your browser.
 
+### macOS (Homebrew)
+
+On macOS the prerequisites are installed with [Homebrew](https://brew.sh). A helper script installs the tools and (optionally) Zircolite for you:
+```bash
+# Install suricata, suricata-update, yara, tshark/tcpdump, and Zircolite
+sh scripts/setup-macos.sh
+
+# Tools only, skip Zircolite / Sigma log analysis
+sh scripts/setup-macos.sh --no-sigma
+
+# Then run the server
+python3 socrates.py
+```
+
+Or install the tools manually:
+```bash
+brew install suricata yara wireshark
+```
+`suricata-update` ships with the `suricata` formula, and `tcpdump` is already present on macOS. `tshark` comes from either the `wireshark` formula or the Wireshark.app bundle. SO-CRATES reads the base Suricata configuration from the Homebrew location (`/opt/homebrew/etc/suricata` on Apple Silicon, `/usr/local/etc/suricata` on Intel) automatically. Zircolite (optional, for Sigma) is detected at `~/socrates-data/zircolite/zircolite.py`; `setup-macos.sh` installs it there.
+
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -249,6 +269,13 @@ Then open http://localhost:8000/socrates.html in your browser.
 | `PORT` | `8000` | HTTP server port |
 
 Environment variables override the hardcoded defaults at startup.
+
+### Rule Updates
+
+Each rule set refreshes differently at server startup:
+
+- **Suricata** rules update on every start (via `suricata-update`) when online.
+- **YARA Forge** and **Sigma** (Zircolite) rules are cached after first download and automatically re-downloaded when the cached copy is older than `RULE_REFRESH_DAYS` (default 7, in `config.py`) and the internet is reachable. If a refresh fails, the existing cached rules continue to be used. Delete the cached files under `DATA_DIR` to force an immediate re-download.
 
 ## Usage
 
