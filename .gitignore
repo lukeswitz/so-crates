@@ -48,3 +48,4 @@ package-lock.json
 # Project specific
 # (data directories are typically gitignored but the folder structure is created at runtime)
 tmp*.js
+.code-journal.md

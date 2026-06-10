@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.request
 
 from file_analyzer import analyze_file
@@ -45,9 +46,17 @@ def setup_yara_rules(data_dir=None):
         data_dir = os.path.expanduser('~/socrates-data')
     rules_file = os.path.join(data_dir, YARA_RULES_SUBDIR, YARA_FORGE_FILENAME)
 
-    # Already downloaded/cached
+    # Already downloaded/cached — refresh in place if stale and online
     if os.path.isfile(rules_file):
-        print('YARA Forge rules already present — using cached rules')
+        if _rules_stale(rules_file) and _has_internet_access():
+            print('YARA Forge rules are stale — refreshing...')
+            try:
+                _download_yara_forge_rules(rules_file)
+                print('YARA Forge rules refreshed')
+            except (OSError, urllib.error.URLError) as e:
+                print(f'Warning: could not refresh YARA rules, using cached: {e}')
+        else:
+            print('YARA Forge rules already present — using cached rules')
         return rules_file
 
     # Baked-in rules (Docker image)
@@ -79,6 +88,17 @@ def setup_yara_rules(data_dir=None):
 def _has_internet_access():
     from validators import is_host_reachable
     return is_host_reachable('github.com', 443, timeout=5)
+
+
+def _rules_stale(path, max_age_days=None):
+    """Return True if path is older than max_age_days (default config.RULE_REFRESH_DAYS)."""
+    if max_age_days is None:
+        max_age_days = config.RULE_REFRESH_DAYS
+    try:
+        age_seconds = time.time() - os.path.getmtime(path)
+    except OSError:
+        return False
+    return age_seconds > max_age_days * 86400
 
 
 def _download_yara_forge_rules(dest_file):

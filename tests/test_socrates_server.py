@@ -931,9 +931,10 @@ class TestAPIEndpoints(unittest.TestCase):
             meta = json.load(f)
         self.assertEqual(meta['detected_type'], 'log')
 
+    @unittest.mock.patch('socrates.is_zircolite_available', return_value=True)
     @unittest.mock.patch('socrates.run_sigma_pipeline')
     @unittest.mock.patch('socrates.parse_zircolite_results')
-    def test_log_analysis_end_to_end(self, mock_parse, mock_pipeline):
+    def test_log_analysis_end_to_end(self, mock_parse, mock_pipeline, mock_avail):
         """Full log analysis pipeline: upload -> mocked Zircolite -> DB -> API queries."""
         # 1. Create a fake Zircolite unified DB with a logs table
         fake_zircolite_db = os.path.join(self.tmpdir, 'fake_zircolite.db')

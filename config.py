@@ -41,3 +41,6 @@ MAX_ENTROPY_READ_SIZE = 10 * 1024 * 1024 # 10 MB cap for entropy calculation
 
 # Thresholds
 STALE_THRESHOLD_SECONDS = 600              # 10 minutes
+
+# Rule cache freshness
+RULE_REFRESH_DAYS = 7                      # re-download cached YARA/Sigma rules older than this (if online)

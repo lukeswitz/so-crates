@@ -847,7 +847,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 db_file = os.path.join(dir_path, 'events.db')
                 name_path = os.path.join(dir_path, 'name.txt')
 
-                if not is_zircolite_available():
+                if not is_zircolite_available(DATA_DIR):
                     _set_error(dir_path, 'Sigma analysis unavailable — Zircolite is not installed. Install with: pip3 install zircolite==3.7.1')
                     from db import _db_connection, _init_db
                     with _db_connection(db_file) as conn:

@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import urllib.request
 
 import config
@@ -30,29 +31,62 @@ ZIRCOLITE_CONFIG_PATHS = [
     '/usr/share/zircolite/config/config.yaml',
 ]
 ZIRCOLITE_VENV_PYTHON = '/usr/local/lib/zircolite-venv/bin/python3'
+def _resolved_data_dir(data_dir=None):
+    """Active data directory: explicit arg, else $DATA_DIR, else the default.
+
+    Resolved at call-time (not frozen at import) so a custom DATA_DIR is honored
+    when locating the bundled Zircolite install and its venv.
+    """
+    if data_dir:
+        return data_dir
+    return os.environ.get('DATA_DIR', os.path.expanduser('~/socrates-data'))
 
 
-def is_zircolite_available():
+def _zircolite_python(data_dir=None):
+    """Return the first existing Zircolite venv interpreter, else 'python3'.
+
+    The Docker venv is checked first so existing images are unchanged; the
+    data-dir venv supports native (non-Docker) installs such as macOS where
+    setup-macos.sh builds it under the active DATA_DIR.
+    """
+    candidates = [
+        ZIRCOLITE_VENV_PYTHON,
+        os.path.join(_resolved_data_dir(data_dir), 'zircolite-venv', 'bin', 'python3'),
+    ]
+    for py in candidates:
+        if os.path.isfile(py):
+            return py
+    return 'python3'
+
+
+def is_zircolite_available(data_dir=None):
     """Return True if the zircolite CLI is available."""
-    return (_zircolite_cmd() is not None)
+    return (_zircolite_cmd(data_dir) is not None)
 
 
-def _zircolite_cmd():
+def _zircolite_cmd(data_dir=None):
     """Return the best available Zircolite executable path."""
     # Check PATH first
     for cmd in ('zircolite', 'zircolite.py'):
         path = shutil.which(cmd)
         if path:
             return path
-    # Check bundled copy
-    if os.path.isfile(ZIRCOLITE_BUNDLED_PATH):
-        return ZIRCOLITE_BUNDLED_PATH
+    # Check bundled copy in the active data dir. _resolved_data_dir() already
+    # falls back to ~/socrates-data when DATA_DIR is unset, so a custom DATA_DIR
+    # is honored exactly (not silently satisfied by the default location).
+    bundled = os.path.join(_resolved_data_dir(data_dir), 'zircolite', 'zircolite.py')
+    if os.path.isfile(bundled):
+        return bundled
     return None
 
 
-def _zircolite_config():
+def _zircolite_config(data_dir=None):
     """Return the first available Zircolite config file path."""
-    for path in ZIRCOLITE_CONFIG_PATHS:
+    candidates = [
+        os.path.join(_resolved_data_dir(data_dir), 'zircolite', 'config', 'config.yaml'),
+        *ZIRCOLITE_CONFIG_PATHS[1:],
+    ]
+    for path in candidates:
         if os.path.isfile(path):
             return path
     return None
@@ -77,8 +111,15 @@ def setup_sigma_rules(data_dir=None):
     for ruleset_name, url in ZIRCOLITE_RULES_URLS.items():
         rules_file = os.path.join(rules_dir, f'{ruleset_name}.json')
 
-        # Already downloaded/cached
+        # Already downloaded/cached — refresh in place if stale and online
         if os.path.isfile(rules_file):
+            if _rules_stale(rules_file) and _has_internet_access():
+                print(f'Sigma rules ({ruleset_name}) are stale — refreshing...')
+                try:
+                    _download_rule_file(url, rules_file)
+                    print(f'Sigma rules ({ruleset_name}) refreshed')
+                except (OSError, urllib.error.URLError) as e:
+                    print(f'Warning: could not refresh Sigma rules ({ruleset_name}), using cached: {e}')
             result[ruleset_name] = rules_file
             continue
 
@@ -108,6 +149,17 @@ def setup_sigma_rules(data_dir=None):
 
 def _has_internet_access():
     return is_host_reachable('github.com', 443, timeout=5)
+
+
+def _rules_stale(path, max_age_days=None):
+    """Return True if path is older than max_age_days (default config.RULE_REFRESH_DAYS)."""
+    if max_age_days is None:
+        max_age_days = config.RULE_REFRESH_DAYS
+    try:
+        age_seconds = time.time() - os.path.getmtime(path)
+    except OSError:
+        return False
+    return age_seconds > max_age_days * 86400
 
 
 def _download_rule_file(url, dest_file):
@@ -178,7 +230,7 @@ def _detect_log_type(log_path):
     return None
 
 
-def run_zircolite(log_path, rules_file, output_json, output_db=None):
+def run_zircolite(log_path, rules_file, output_json, output_db=None, data_dir=None):
     """Run Zircolite on a log file and write results to output_json.
 
     If output_db is provided, also writes a unified SQLite database with
@@ -186,7 +238,7 @@ def run_zircolite(log_path, rules_file, output_json, output_db=None):
 
     Returns (success, db_path) where db_path is output_db if it was created.
     """
-    zircolite = _zircolite_cmd()
+    zircolite = _zircolite_cmd(data_dir)
     if not zircolite:
         print('Zircolite not available — skipping Sigma analysis')
         return False, None
@@ -195,7 +247,7 @@ def run_zircolite(log_path, rules_file, output_json, output_db=None):
         print(f'Sigma rules file not found: {rules_file}')
         return False, None
 
-    config_file = _zircolite_config()
+    config_file = _zircolite_config(data_dir)
     if not config_file:
         print('Zircolite config file not found — Sigma analysis cannot run')
         return False, None
@@ -207,7 +259,7 @@ def run_zircolite(log_path, rules_file, output_json, output_db=None):
     # Write Zircolite's own log file to the analysis directory, not the project root
     zircolite_log = os.path.join(os.path.dirname(output_json), 'zircolite.log')
 
-    python_cmd = ZIRCOLITE_VENV_PYTHON if os.path.isfile(ZIRCOLITE_VENV_PYTHON) else 'python3'
+    python_cmd = _zircolite_python(data_dir)
     try:
         cmd = [
             python_cmd, zircolite,
@@ -418,12 +470,13 @@ def run_sigma_pipeline(dir_path, log_path, data_dir=None):
     Returns (success, zircolite_db_path) where zircolite_db_path is the path
     to the unified events DB if it was created, or None on failure.
     """
-    if not is_zircolite_available():
+    if data_dir is None:
+        data_dir = os.path.expanduser('~/socrates-data')
+
+    if not is_zircolite_available(data_dir):
         print('Zircolite not available — skipping Sigma analysis')
         return False, None
 
-    if data_dir is None:
-        data_dir = os.path.expanduser('~/socrates-data')
     rules = setup_sigma_rules(data_dir)
     if not rules:
         print('Sigma rules not available')
@@ -442,7 +495,7 @@ def run_sigma_pipeline(dir_path, log_path, data_dir=None):
 
     output_json = os.path.join(dir_path, 'sigma_matches.json')
     temp_db = os.path.join(dir_path, '.zircolite_events.db')
-    success, _ = run_zircolite(log_path, ruleset, output_json, output_db=temp_db)
+    success, _ = run_zircolite(log_path, ruleset, output_json, output_db=temp_db, data_dir=data_dir)
     if success and os.path.exists(temp_db):
         return True, temp_db
     return success, None

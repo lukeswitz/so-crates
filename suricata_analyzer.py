@@ -12,6 +12,23 @@ from yara_analyzer import run_yara_pipeline
 
 REQUIRED_EXECUTABLES = ['tcpdump', 'tshark', 'suricata', 'suricata-update']
 
+# System directories that ship a base suricata.yaml, in priority order.
+# Linux/Docker (/etc/suricata) is checked first so existing deployments are
+# byte-for-byte unchanged; Homebrew paths are appended for native macOS.
+SYSTEM_SURICATA_CONFIG_DIRS = [
+    '/etc/suricata',
+    '/opt/homebrew/etc/suricata',
+    '/usr/local/etc/suricata',
+]
+
+
+def _system_suricata_config_dir():
+    """Return the first existing system Suricata config dir, or None."""
+    for d in SYSTEM_SURICATA_CONFIG_DIRS:
+        if os.path.isdir(d):
+            return d
+    return None
+
 
 def check_executables():
     """Check all required executables exist. Returns list of missing tools."""
@@ -35,14 +52,15 @@ def setup_suricata_config(data_dir=None):
     os.makedirs(suricata_dir, exist_ok=True)
     os.makedirs(suricata_rules_dir, exist_ok=True)
 
-    if os.path.isdir('/etc/suricata'):
+    system_config_dir = _system_suricata_config_dir()
+    if system_config_dir:
         needs_copy = False
         if not os.path.exists(os.path.join(suricata_dir, 'suricata.yaml')):
             needs_copy = True
 
         if needs_copy:
-            for item in os.listdir('/etc/suricata'):
-                src = os.path.join('/etc/suricata', item)
+            for item in os.listdir(system_config_dir):
+                src = os.path.join(system_config_dir, item)
                 dst = os.path.join(suricata_dir, item)
                 if os.path.isfile(src):
                     try:
