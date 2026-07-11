@@ -4,19 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SO-CRATES - Welcome</title>
-    <script>
-        (function() {
-            const theme = localStorage.getItem('socrates-theme');
-            if (theme === 'light') {
-                document.documentElement.setAttribute('data-theme', 'light');
-            }
-        })();
-    </script>
+    <link id="faviconLink" rel="icon" type="image/svg+xml" href="static/favicon.svg">
+    <script>(function(){var t=localStorage.getItem('socrates-theme');if(t&&t!='dark')document.documentElement.setAttribute('data-theme',t);})();</script>
     <link rel="stylesheet" href="static/socrates.css">
     <script src="static/d3.min.js"></script>
     <script src="static/d3-sankey.min.js"></script>
 </head>
 <body>
+    <canvas id="codeRain" class="code-rain-canvas" aria-hidden="true"></canvas>
     <div class="app-header" id="appHeader">
         <div class="app-header-left">
             <a href="#" onclick="showWelcome(); return false;" style="display: inline-flex; align-items: center; text-decoration: none; margin-right: 8px;">
@@ -36,13 +31,22 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                 </button>
                 <div class="app-header-menu-dropdown" id="appHeaderMenuDropdown">
-                    <button class="app-header-menu-item" onclick="toggleTheme()">
-                        <span id="themeMenuIcon">🌙</span>
-                        <span id="themeMenuLabel">Dark Theme</span>
+                    <div class="app-header-menu-item theme-header">Theme</div>
+                    <button class="app-header-menu-item" onclick="setTheme('dark'); closeMenu();">
+                        <span><svg class="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
+                        <span>Dark Mode</span>
+                    </button>
+                    <button class="app-header-menu-item" onclick="setTheme('light'); closeMenu();">
+                        <span><svg class="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span>
+                        <span>Light Mode</span>
+                    </button>
+                    <button class="app-header-menu-item" onclick="setTheme('hacker'); closeMenu();">
+                        <span><svg class="theme-icon-hacker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="6 9 10 12 6 15"/><line x1="12" y1="15" x2="18" y2="15"/></svg></span>
+                        <span>Hacker Mode</span>
                     </button>
                     <div class="app-header-menu-sep"></div>
                     <button class="app-header-menu-item" onclick="showHelpModal(); closeMenu();">
-                        <span>❓</span>
+                        <span><svg class="theme-icon-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
                         <span>Help</span>
                     </button>
                 </div>
@@ -73,24 +77,40 @@
             </div>
         </div>
         
-        <div class="modal" id="deleteConfirmModal">
-            <div class="modal-content" style="max-width: 400px;">
+        <div class="modal" id="deleteConfirmModal" onclick="handleDeleteBackdropClick(event)">
+            <div class="modal-content" style="max-width: 400px;" onclick="event.stopPropagation()">
                 <div class="modal-header">
-                    <h3 style="color: #ff6b6b;">Confirm Delete</h3>
+                    <h3 class="delete-modal-title">Confirm Delete</h3>
                     <button class="modal-close" onclick="closeDeleteModal()">&times;</button>
                 </div>
                 <div style="padding: 20px;">
                     <p style="color: var(--text-primary); margin-bottom: 20px; overflow-wrap: break-word;">Are you sure you want to delete <span id="deleteFileName" style="font-weight: 600; color: var(--text-bright);"></span>?</p>
                     <div style="display: flex; gap: 10px; justify-content: flex-end;">
                         <button onclick="closeDeleteModal()" style="background: var(--bg-hover); color: var(--text-primary); border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Cancel</button>
-                        <button onclick="confirmDelete()" style="background: #ff6b6b; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Delete</button>
+                        <button class="delete-modal-confirm-btn" onclick="confirmDelete()" style="padding: 8px 16px; border-radius: 6px; cursor: pointer;">Delete</button>
                     </div>
                 </div>
             </div>
         </div>
 
-        <div class="modal" id="reanalyzeConfirmModal">
-            <div class="modal-content" style="max-width: 400px;">
+        <div class="modal" id="deleteAllConfirmModal" onclick="handleDeleteAllBackdropClick(event)">
+            <div class="modal-content" style="max-width: 400px;" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3 class="delete-modal-title">Confirm Delete All</h3>
+                    <button class="modal-close" onclick="closeDeleteAllModal()">&times;</button>
+                </div>
+                <div style="padding: 20px;">
+                    <p style="color: var(--text-primary); margin-bottom: 20px;">Are you sure you want to delete all <span id="deleteAllCount" style="font-weight: 600; color: var(--text-bright);"></span> previous analyses? This cannot be undone.</p>
+                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                        <button onclick="closeDeleteAllModal()" style="background: var(--bg-hover); color: var(--text-primary); border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Cancel</button>
+                        <button class="delete-modal-confirm-btn" onclick="confirmDeleteAll()" style="padding: 8px 16px; border-radius: 6px; cursor: pointer;">Delete All</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal" id="reanalyzeConfirmModal" onclick="handleReanalyzeBackdropClick(event)">
+            <div class="modal-content" style="max-width: 400px;" onclick="event.stopPropagation()">
                 <div class="modal-header">
                     <h3 style="color: var(--accent);">Confirm Re-analyze</h3>
                     <button class="modal-close" onclick="closeReanalyzeModal()">&times;</button>
@@ -99,7 +119,7 @@
                     <p style="color: var(--text-primary); margin-bottom: 20px; overflow-wrap: break-word;">This will delete the existing analysis for <span id="reanalyzeFileName" style="font-weight: 600; color: var(--text-bright);"></span> and re-run the analysis pipeline. The uploaded file will be preserved.</p>
                     <div style="display: flex; gap: 10px; justify-content: flex-end;">
                         <button onclick="closeReanalyzeModal()" style="background: var(--bg-hover); color: var(--text-primary); border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Cancel</button>
-                        <button onclick="confirmReanalyze()" style="background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Re-analyze</button>
+                        <button class="reanalyze-confirm-btn" onclick="confirmReanalyze()" style="padding: 8px 16px; border-radius: 6px; cursor: pointer;">Re-analyze</button>
                     </div>
                 </div>
             </div>

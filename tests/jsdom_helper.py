@@ -141,22 +141,6 @@ if (__jsdom_result === undefined) {{
     return parsed
 
 
-def call_js_function(func_name, *args, setup_code=''):
-    """Call a named JS function with arguments and return the result.
-
-    Args:
-        func_name: The name of the function to call (must be in global scope).
-        *args: JSON-serializable arguments to pass to the function.
-        setup_code: Optional setup JS code.
-
-    Returns:
-        The parsed JSON result.
-    """
-    args_json = json.dumps(args)
-    js_code = f'window.__jsdom_result = {func_name}.apply(null, {args_json});'
-    return run_jsdom_test(js_code, setup_code)
-
-
 def js_expression(expr, setup_code=''):
     """Evaluate a JS expression and return the result.
 

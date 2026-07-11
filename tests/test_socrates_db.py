@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+import json
 import unittest
+import unittest.mock
 import os
 import sys
 import tempfile
 import shutil
 import sqlite3
+import subprocess
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
@@ -436,6 +439,77 @@ class TestBackwardCompatibility(unittest.TestCase):
         alerts = db.query_sigma_alerts_sqlite(self.db_file)
         self.assertEqual(len(alerts), 1)
         self.assertEqual(alerts[0]['rule_title'], 'Test Rule')
+
+
+class TestFileAnalysisDBTimeout(unittest.TestCase):
+    @unittest.mock.patch('subprocess.run')
+    def test_file_command_timeout_does_not_crash(self, mock_run):
+        """TimeoutExpired from `file` must be caught during DB creation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_file = os.path.join(tmpdir, 'evil.exe')
+            with open(tmp_file, 'wb') as f:
+                f.write(b'MZ' + b'\x00' * 62)
+            db_file = os.path.join(tmpdir, 'file_events.db')
+            mock_run.side_effect = subprocess.TimeoutExpired('file', 10)
+            try:
+                db.create_file_analysis_db(
+                    db_file, tmp_file, [],
+                    file_md5='a' * 32, file_sha1='b' * 40, file_sha256='c' * 64
+                )
+            except subprocess.TimeoutExpired:
+                self.fail('create_file_analysis_db raised TimeoutExpired')
+            self.assertTrue(os.path.exists(db_file))
+
+
+class TestRelatedFilePath(unittest.TestCase):
+    def test_helper_avoids_substring_replace_bug(self):
+        """_related_file_path must not treat 'events.db' as a substring."""
+        db_path = '/tmp/events.db-backup/analysis/events.db'
+        self.assertEqual(
+            db._related_file_path(db_path, 'yara_matches.json'),
+            '/tmp/events.db-backup/analysis/yara_matches.json'
+        )
+
+    def test_yara_matches_found_when_dir_contains_events_db(self):
+        """YARA matches must be found even when the parent directory contains 'events.db'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            analysis_dir = os.path.join(tmpdir, 'events.db-backup', 'analysis')
+            os.makedirs(analysis_dir)
+            db_file = os.path.join(analysis_dir, 'events.db')
+            eve_file = os.path.join(analysis_dir, 'eve.json')
+
+            with open(eve_file, 'w') as f:
+                f.write(json.dumps({
+                    'event_type': 'fileinfo',
+                    'timestamp': '2026-01-01T00:00:00',
+                    'src_ip': '192.168.1.1',
+                    'src_port': 12345,
+                    'dest_ip': '10.0.0.1',
+                    'dest_port': 80,
+                    'proto': 'TCP',
+                    'app_proto': 'http',
+                    'fileinfo': {
+                        'sha256': 'a' * 64,
+                        'filename': 'malware.exe',
+                        'size': 1024,
+                    }
+                }) + '\n')
+
+            yara_file = os.path.join(analysis_dir, 'yara_matches.json')
+            with open(yara_file, 'w') as f:
+                json.dump([{
+                    'rule_name': 'MALWARE_Test',
+                    'sha256': 'a' * 64,
+                    'tags': ['malware'],
+                    'meta': {'author': 'test'},
+                    'strings': [],
+                    'file_id': 'file.1',
+                }], f)
+
+            db.create_sqlite_db(db_file, eve_file)
+            events = db.query_events_sqlite(db_file, event_type='filealerts')
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]['filealerts']['rule_name'], 'MALWARE_Test')
 
 
 if __name__ == '__main__':

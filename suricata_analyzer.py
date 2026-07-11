@@ -98,7 +98,7 @@ def setup_suricata_config(data_dir=None):
                 timeout=config.SURICATA_UPDATE_TIMEOUT
             )
             print("Suricata rules updated successfully")
-        except (subprocess.CalledProcessError, OSError) as e:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
             print(f'suricata-update warning: {e}')
     elif baked_in_rules_exist:
         print("No internet access detected — using baked-in Suricata rules")

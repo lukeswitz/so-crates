@@ -161,7 +161,7 @@ let tabDataCache = {};       // cached event data per type
 | Data Loading | `loadTabData()`, `loadFromUrl()`, `uploadPcap()`, `checkStatus()` | Fetch data from API |
 | Rendering | `buildStats()`, `buildSections()`, `buildSection()`, `buildAllEvents()`, `buildRowForEvent()`, `updateSankeyDiagram()` | Build HTML |
 | Aggregation | `buildAggregationTablesCore()`, `buildAggregationTables()`, `buildAggregationTablesAll()`, `buildAggregationsSection()`, `buildAggregationsSectionAll()` | Frequency grids |
-| Search | `performSearch()`, `clearSearch()`, `refreshAnalysisData()` | Full-text search via server |
+| Search | `performSearch()`, `clearSearchTerm()`, `refreshAnalysisData()` | Full-text search via server |
 | Filtering | `applyFilter()`, `applyFilters()`, `clearFilter()`, `clearAllFilters()`, `getFilteredEvents()`, `getSankeyEvents()`, `refreshCurrentView()` | Column filter management |
 | Streams | `downloadPcap()`, `loadAsciiTranscript()`, `loadHexdumpData()`, `switchStreamView()`, `togglePacket()`, `toggleRow()` | Stream analysis |
 | Utilities | `escapeHtml()`, `formatEvent()`, `extractValue()`, `extractAllValue()`, `getColumnsForType()`, `clearAnalysisContainers()` | Helpers |

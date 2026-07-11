@@ -36,7 +36,7 @@ from sigma_analyzer import (
 )
 import config
 
-VERSION = '1.1.1'
+VERSION = '2.0.0'
 PORT = int(os.environ.get('PORT', 8000))
 BIND_ADDRESS = os.environ.get('BIND_ADDRESS', '127.0.0.1')
 DATA_DIR = os.environ.get('DATA_DIR', os.path.expanduser('~/socrates-data'))
@@ -381,6 +381,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '/api/check-status': 'handle_post_check_status',
         '/api/reanalyze': 'handle_post_reanalyze',
         '/api/delete-analysis': 'handle_post_delete_analysis',
+        '/api/delete-all-analyses': 'handle_post_delete_all_analyses',
     }
 
     def do_GET(self):
@@ -734,6 +735,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         else:
             self._send_error(404, 'Analysis not found')
 
+    def handle_post_delete_all_analyses(self):
+        deleted = 0
+        errors = []
+        if os.path.exists(DATA_DIR):
+            for md5_dir in os.listdir(DATA_DIR):
+                if not MD5_RE.match(md5_dir):
+                    continue
+                dir_path = os.path.join(DATA_DIR, md5_dir)
+                if not os.path.isdir(dir_path):
+                    continue
+                if not is_safe_path(DATA_DIR, dir_path):
+                    errors.append(md5_dir)
+                    continue
+                try:
+                    shutil.rmtree(dir_path)
+                    deleted += 1
+                except Exception as e:
+                    errors.append(f'{md5_dir}: {e}')
+        if errors and deleted == 0:
+            self._send_error(500, f'Could not delete analyses: {errors[0]}')
+            return
+        self._send_json({'success': True, 'deleted': deleted})
+
     def handle_get_pcap_path(self, params):
         md5 = params.get('md5', [''])[0]
         if not MD5_RE.match(md5):
@@ -963,6 +987,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _analyze_log_file(self, dir_path, file_path, safe_filename):
         """Run Zircolite Sigma analysis on a log file in the background."""
         def run_analysis():
+            from db import _db_connection, _init_db
+
             phase_file = os.path.join(dir_path, '.phase')
             try:
                 with open(phase_file, 'w') as f:
@@ -977,7 +1003,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
                 if not is_zircolite_available():
                     _set_error(dir_path, 'Sigma analysis unavailable — Zircolite is not installed. Install with: pip3 install zircolite==3.7.1')
-                    from db import _db_connection, _init_db
                     with _db_connection(db_file) as conn:
                         _init_db(conn)
                 else:
@@ -998,7 +1023,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                             insert_sigma_alerts(db_file, alerts)
                         else:
                             # Rules missing or Zircolite failed: create empty DB so UI shows ready
-                            from db import _db_connection, _init_db
                             with _db_connection(db_file) as conn:
                                 _init_db(conn)
                     except Exception as e:
