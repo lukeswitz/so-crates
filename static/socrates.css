@@ -28,6 +28,7 @@
             --welcome-red: #ff6b6b;
             --welcome-orange: #ffa726;
             --welcome-yellow: #ffca28;
+            --help-icon-color: #f1c40f;
         }
         [data-theme="light"] {
             --bg-primary: #ffffff;
@@ -58,6 +59,7 @@
             --welcome-red: #c62828;
             --welcome-orange: #e65100;
             --welcome-yellow: #b38600;
+            --help-icon-color: #9a7d0a;
         }
         [data-theme="hacker"] {
             --bg-primary: #000000;
@@ -89,6 +91,7 @@
             --welcome-red: var(--accent);
             --welcome-orange: var(--accent);
             --welcome-yellow: var(--accent);
+            --help-icon-color: var(--accent);
         }
         [data-theme="hacker"] body {
             font-family: 'Courier New', Courier, monospace;

@@ -232,13 +232,13 @@
         const CALENDAR_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>';
         const WELCOME_HELP_CONTENT = `
             <p style="color: var(--text-muted); font-size: 0.95rem;">
-                ${LIGHTBULB_ICON_SVG} Maximum file size is 1000MB.
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is 1000MB.
             </p>
             <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
-                ${LIGHTBULB_ICON_SVG} Processing may take a minute or two depending on the size of the file.
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Processing may take a minute or two depending on the size of the file.
             </p>
             <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
-                ${LIGHTBULB_ICON_SVG} File types supported:
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> File types supported:
             </p>
             <table style="width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; color: var(--text-primary);">
                 <thead>
@@ -945,11 +945,11 @@
                 const isFileOnly = document.body.classList.contains('file-analysis');
                 let helpText;
                 if (isLogFile) {
-                    helpText = '<span style="color: var(--accent);">${LIGHTBULB_ICON_SVG}</span> Investigate Sigma Alerts and then review Log Events. Filter using the search bar or aggregation tables.';
+                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Investigate Sigma Alerts and then review Log Events. Filter using the search bar or aggregation tables.`;
                 } else if (isFileOnly) {
-                    helpText = '<span style="color: var(--accent);">${LIGHTBULB_ICON_SVG}</span> Review the FILE INFO section for metadata and then the data table at the bottom for any matches found by the YARA rules.';
+                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Review the FILE INFO section for metadata and then the data table at the bottom for any matches found by the YARA rules.`;
                 } else {
-                    helpText = '<span style="color: var(--accent);">${LIGHTBULB_ICON_SVG}</span> Start by reviewing all alerts and then you can change to one of the other data types like DNS, HTTP, or TLS. Filter using the search bar, sankey diagram, or aggregation tables. When you find something interesting, you can drill into the row in the data table at the bottom. This will allow you to see the ASCII transcript and hexdump and optionally download the PCAP file for that stream.';
+                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Start by reviewing all alerts and then you can change to one of the other data types like DNS, HTTP, or TLS. Filter using the search bar, sankey diagram, or aggregation tables. When you find something interesting, you can drill into the row in the data table at the bottom. This will allow you to see the ASCII transcript and hexdump and optionally download the PCAP file for that stream.`;
                 }
                 modalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 0.95rem; line-height: 1.6;">' + helpText + '</div>';
                 checkboxContainer.style.display = 'none';
@@ -1012,7 +1012,7 @@
                         </div>`
                     ).join('');
                 } else {
-                    previousHtml = '<span style="color: var(--bg-hover-light);">No previous PCAPs available</span>';
+                    previousHtml = '<span style="color: var(--bg-hover-light);">No previous analyses available</span>';
                 }
             } catch(err) {
                 console.error('Failed to load analyses:', err);
@@ -1227,6 +1227,7 @@
             document.getElementById('pcapUrl').value = lastSampleUrl;
         }
         
+        let keyBuffer = '';
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 closeMenu();
@@ -1236,7 +1237,33 @@
                 e.preventDefault();
                 showHelpModal();
             }
+            // Easter egg: type "31337" anywhere outside of input fields to activate Hacker Mode.
+            const tag = e.target.tagName;
+            const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable;
+            if (!isTyping && e.key.length === 1) {
+                keyBuffer += e.key.toLowerCase();
+                if (keyBuffer.length > 5) {
+                    keyBuffer = keyBuffer.slice(-5);
+                }
+                if (keyBuffer === '31337') {
+                    e.preventDefault();
+                    setTheme('hacker');
+                    showEasterEggMessage('Hacker Mode activated. Welcome to the elite.');
+                    keyBuffer = '';
+                }
+            }
         });
+
+        function showEasterEggMessage(message) {
+            const toast = document.createElement('div');
+            toast.textContent = message;
+            toast.style.cssText = 'position: fixed; bottom: 20px; right: 20px; background: var(--bg-secondary); color: var(--accent); border: 1px solid var(--accent); padding: 12px 20px; border-radius: 6px; font-family: inherit; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: opacity 0.5s;';
+            document.body.appendChild(toast);
+            setTimeout(function() {
+                toast.style.opacity = '0';
+                setTimeout(function() { toast.remove(); }, 500);
+            }, 2000);
+        }
         
         // Single delegated listener for advanced toggle (prevents memory leak from repeated loadAnalysis calls)
         function toggleDiagram() {
@@ -1726,7 +1753,7 @@
             aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + html + '</div></div>';
         }
 
-        function buildBinaryAnalysisView(events) {
+        function buildBinaryAnalysisView(events, baseEvents) {
             const fileAlerts = events.filter(e => e.event_type === 'filealerts');
             const filteredAlerts = fileAlerts.filter(e => {
                 for (const [col, val] of Object.entries(currentFilters)) {
@@ -1734,7 +1761,8 @@
                 }
                 return true;
             });
-            const fileInfoHtml = buildFileInfoHtml(events);
+            const fileInfoSource = baseEvents || baseAllEvents || events;
+            const fileInfoHtml = buildFileInfoHtml(fileInfoSource);
             const fileInfoContainer = document.getElementById('fileInfoContainer');
             if (fileInfoContainer) {
                 fileInfoContainer.innerHTML = fileInfoHtml;
@@ -2412,7 +2440,7 @@
             const hasFilters = Object.keys(currentFilters).length > 0;
             if (currentSearch.length === 0 && !hasFilters) return '';
 
-            let html = '<div class="filter-bar"><span class="filter-label">${SEARCH_ICON_SVG} Active:</span>';
+            let html = `<div class="filter-bar"><span class="filter-label">${SEARCH_ICON_SVG} Active:</span>`;
             for (let i = 0; i < currentSearch.length; i++) {
                 const term = currentSearch[i];
                 html += `<span class="filter-chip">${SEARCH_ICON_SVG} "${escapeHtml(term)}" <span class="filter-chip-remove" onclick="clearSearchTerm(${i})">&times;</span></span>`;
@@ -2787,6 +2815,7 @@
         }
         
         let allEvents = [];
+        let baseAllEvents = [];
         let sections = {};
         let eventTypes = [];
         let currentMd5 = '';
@@ -2801,7 +2830,7 @@
 
         const EVENT_TYPE_ICONS = { alert: '🔴', dns: '🟢', http: '🟠', tls: '🔵', flow: '🟣', ftp: '📁', anomaly: '⚠️', fileinfo: '📄', filealerts: '🚨', log: '📋', sigmaalert: '🛡️' };
         const ALL_EVENTS_COLUMNS = ['Time', 'Type', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Detail'];
-        const EMPTY_FILTER_STATE_HTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.95rem;">${SEARCH_ICON_SVG} No events match the current filters</div>';
+        const EMPTY_FILTER_STATE_HTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.95rem;">${SEARCH_ICON_SVG} No events match the current filters</div>`;
         const AGG_COLLAPSED_HTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▸ Aggregation Tables</div></div>';
 
         function hideAggregationTable(sectionId, col) {
@@ -3032,7 +3061,15 @@
                         statsGrid.innerHTML = '';
                         statsGrid.style.display = 'none';
                     }
-                    buildBinaryAnalysisView(allEvents);
+                    // Keep file info visible even when the current search filter
+                    // excludes the fileinfo event by using unfiltered events.
+                    let baseEvents = allEvents;
+                    if (qParam) {
+                        const baseEventsResp = await fetch('/api/events?md5=' + currentMd5 + '&limit=' + CONFIG.MAX_QUERY_LIMIT + '&t=' + Date.now());
+                        baseEvents = await baseEventsResp.json();
+                    }
+                    baseAllEvents = baseEvents;
+                    buildBinaryAnalysisView(allEvents, baseEvents);
                 }
             } else {
                 document.body.classList.remove('file-analysis');
@@ -3094,6 +3131,7 @@
                     }
                     
                     allEvents = [];
+                    baseAllEvents = [];
                     sections = {};
                     eventTypes = [];
                     currentFilters = {};
@@ -3243,6 +3281,7 @@
                             })();
                         } else {
                             // Binary file analysis: unified view with search + aggregations + file info + YARA table
+                            baseAllEvents = allEvents;
                             buildBinaryAnalysisView(allEvents);
                         }
                     } else {
