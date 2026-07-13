@@ -25,26 +25,144 @@
             });
         }
 
-        function toggleTheme() {
-            const html = document.documentElement;
-            const isLight = html.getAttribute('data-theme') === 'light';
-            if (isLight) {
-                html.removeAttribute('data-theme');
-                localStorage.setItem('socrates-theme', 'dark');
-            } else {
-                html.setAttribute('data-theme', 'light');
-                localStorage.setItem('socrates-theme', 'light');
-            }
-            updateThemeMenuLabel();
+        const THEMES = {
+            dark: { label: 'Dark Mode', icon: '<svg class="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>' },
+            light: { label: 'Light Mode', icon: '<svg class="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>' },
+            hacker: { label: 'Hacker Mode', icon: '<svg class="theme-icon-hacker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="6 9 10 12 6 15"/><line x1="12" y1="15" x2="18" y2="15"/></svg>' },
+        };
+
+        function getCurrentTheme() {
+            return document.documentElement.getAttribute('data-theme') || 'dark';
         }
 
-        function updateThemeMenuLabel() {
-            const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-            const icon = document.getElementById('themeMenuIcon');
-            const label = document.getElementById('themeMenuLabel');
-            if (icon) icon.textContent = isLight ? '☀️' : '🌙';
-            if (label) label.textContent = isLight ? 'Light Theme' : 'Dark Theme';
+        function setTheme(themeName) {
+            const valid = Object.prototype.hasOwnProperty.call(THEMES, themeName);
+            if (!valid) return;
+            const html = document.documentElement;
+            if (themeName === 'dark') {
+                html.removeAttribute('data-theme');
+            } else {
+                html.setAttribute('data-theme', themeName);
+            }
+            localStorage.setItem('socrates-theme', themeName);
+            updateThemeMenu();
+            updateCodeRain();
+            updateFavicon();
         }
+
+        function toggleTheme() {
+            const order = ['dark', 'light', 'hacker'];
+            const current = getCurrentTheme();
+            const nextIndex = (order.indexOf(current) + 1) % order.length;
+            setTheme(order[nextIndex]);
+        }
+
+        function updateThemeMenu() {
+            // Menu items are rendered in HTML; this hook is available for
+            // future dynamic menu generation.
+        }
+
+        // Subtle code-rain background for Hacker Mode.
+        let codeRainCtx = null;
+        let codeRainCols = [];
+        let codeRainFontSize = 14;
+        let codeRainAnimationId = null;
+        let codeRainLastDraw = 0;
+        const codeRainChars = '0123456789ABCDEFｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ';
+
+        function resizeCodeRain() {
+            const canvas = document.getElementById('codeRain');
+            if (!canvas) return;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            codeRainCtx = canvas.getContext('2d');
+            codeRainCtx.scale(dpr, dpr);
+            codeRainFontSize = Math.max(12, Math.min(16, Math.floor(window.innerWidth / 120)));
+            codeRainCtx.font = codeRainFontSize + 'px monospace';
+            const colCount = Math.ceil(window.innerWidth / (codeRainFontSize * 1.6));
+            codeRainCols = [];
+            for (let i = 0; i < colCount; i++) {
+                codeRainCols.push(Math.random() * -window.innerHeight);
+            }
+        }
+
+        function drawCodeRain(timestamp) {
+            const canvas = document.getElementById('codeRain');
+            if (!canvas || getCurrentTheme() !== 'hacker') return;
+            if (!codeRainCtx) resizeCodeRain();
+            if (!codeRainCtx) return;
+
+            const dt = timestamp - codeRainLastDraw;
+            if (dt < 50) {
+                codeRainAnimationId = requestAnimationFrame(drawCodeRain);
+                return;
+            }
+            codeRainLastDraw = timestamp;
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            codeRainCtx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+            codeRainCtx.fillRect(0, 0, width, height);
+
+            for (let i = 0; i < codeRainCols.length; i++) {
+                const char = codeRainChars[Math.floor(Math.random() * codeRainChars.length)];
+                const x = i * codeRainFontSize * 1.6;
+                const y = codeRainCols[i];
+                if (y > 0 && y < height + codeRainFontSize) {
+                    const fade = Math.min(1, y / height + 0.3);
+                    codeRainCtx.fillStyle = 'rgba(0, 255, 65, ' + (0.35 + fade * 0.65) + ')';
+                    codeRainCtx.fillText(char, x, y);
+                }
+                codeRainCols[i] += codeRainFontSize * 0.6;
+                if (y > height && Math.random() > 0.975) {
+                    codeRainCols[i] = Math.random() * -codeRainFontSize * 10;
+                }
+            }
+
+            codeRainAnimationId = requestAnimationFrame(drawCodeRain);
+        }
+
+        function startCodeRain() {
+            if (codeRainAnimationId) return;
+            resizeCodeRain();
+            codeRainLastDraw = performance.now();
+            codeRainAnimationId = requestAnimationFrame(drawCodeRain);
+        }
+
+        function stopCodeRain() {
+            if (codeRainAnimationId) {
+                cancelAnimationFrame(codeRainAnimationId);
+                codeRainAnimationId = null;
+            }
+            const canvas = document.getElementById('codeRain');
+            if (canvas && codeRainCtx) {
+                codeRainCtx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function updateCodeRain() {
+            if (getCurrentTheme() === 'hacker') {
+                startCodeRain();
+            } else {
+                stopCodeRain();
+            }
+        }
+
+        function updateFavicon() {
+            const link = document.getElementById('faviconLink');
+            if (!link) return;
+            link.href = getCurrentTheme() === 'hacker' ? 'static/favicon-hacker.svg' : 'static/favicon.svg';
+        }
+
+        window.addEventListener('resize', resizeCodeRain);
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopCodeRain();
+            } else {
+                updateCodeRain();
+            }
+        });
 
         function toggleMenu() {
             const dropdown = document.getElementById('appHeaderMenuDropdown');
@@ -109,15 +227,18 @@
         const FOLDER_OPEN_ICON_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="2 13 6 9 10 13"></polyline></svg>';
         const DOWN_ARROW_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>';
         const CHECKMARK_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        const LIGHTBULB_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-7 7c0 2.5 1.5 4.5 3 6h8c1.5-1.5 3-3.5 3-6a7 7 0 0 0-7-7z"/></svg>';
+        const SEARCH_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+        const CALENDAR_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>';
         const WELCOME_HELP_CONTENT = `
             <p style="color: var(--text-muted); font-size: 0.95rem;">
-                💡 Maximum file size is 1000MB.
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is 1000MB.
             </p>
             <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
-                💡 Processing may take a minute or two depending on the size of the file.
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Processing may take a minute or two depending on the size of the file.
             </p>
             <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
-                💡 File types supported:
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> File types supported:
             </p>
             <table style="width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; color: var(--text-primary);">
                 <thead>
@@ -776,18 +897,26 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                     </button>
                     <div class="app-header-menu-dropdown" id="appHeaderMenuDropdown">
-                        <button class="app-header-menu-item" onclick="toggleTheme()">
-                            <span id="themeMenuIcon">🌙</span>
-                            <span id="themeMenuLabel">Dark Theme</span>
+                        <div class="app-header-menu-item theme-header">Theme</div>
+                        <button class="app-header-menu-item" onclick="setTheme('dark'); closeMenu();">
+                            <span><svg class="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
+                            <span>Dark Mode</span>
+                        </button>
+                        <button class="app-header-menu-item" onclick="setTheme('light'); closeMenu();">
+                            <span><svg class="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span>
+                            <span>Light Mode</span>
+                        </button>
+                        <button class="app-header-menu-item" onclick="setTheme('hacker'); closeMenu();">
+                            <span><svg class="theme-icon-hacker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="6 9 10 12 6 15"/><line x1="12" y1="15" x2="18" y2="15"/></svg></span>
+                            <span>Hacker Mode</span>
                         </button>
                         <div class="app-header-menu-sep"></div>
                         <button class="app-header-menu-item" onclick="showHelpModal(); closeMenu();">
-                            <span>❓</span>
+                            <span><svg class="theme-icon-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
                             <span>Help</span>
                         </button>
                     </div>
                 </div>`;
-            updateThemeMenuLabel();
         }
 
         function shouldShowHelpModal() {
@@ -816,11 +945,11 @@
                 const isFileOnly = document.body.classList.contains('file-analysis');
                 let helpText;
                 if (isLogFile) {
-                    helpText = '<span style="color: var(--accent);">💡</span> Investigate Sigma Alerts and then review Log Events. Filter using the search bar or aggregation tables.';
+                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Investigate Sigma Alerts and then review Log Events. Filter using the search bar or aggregation tables.`;
                 } else if (isFileOnly) {
-                    helpText = '<span style="color: var(--accent);">💡</span> Review the FILE INFO section for metadata and then the data table at the bottom for any matches found by the YARA rules.';
+                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Review the FILE INFO section for metadata and then the data table at the bottom for any matches found by the YARA rules.`;
                 } else {
-                    helpText = '<span style="color: var(--accent);">💡</span> Start by reviewing all alerts and then you can change to one of the other data types like DNS, HTTP, or TLS. Filter using the search bar, sankey diagram, or aggregation tables. When you find something interesting, you can drill into the row in the data table at the bottom. This will allow you to see the ASCII transcript and hexdump and optionally download the PCAP file for that stream.';
+                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Start by reviewing all alerts and then you can change to one of the other data types like DNS, HTTP, or TLS. Filter using the search bar, sankey diagram, or aggregation tables. When you find something interesting, you can drill into the row in the data table at the bottom. This will allow you to see the ASCII transcript and hexdump and optionally download the PCAP file for that stream.`;
                 }
                 modalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 0.95rem; line-height: 1.6;">' + helpText + '</div>';
                 checkboxContainer.style.display = 'none';
@@ -869,24 +998,29 @@
             
             // Load previous analyses
             let previousHtml = '';
+            let previousAnalysisCount = 0;
             try {
                 const resp = await fetch('/api/analyses');
                 const analyses = await resp.json();
+                previousAnalysisCount = analyses.length;
                 if (analyses.length > 0) {
                     previousHtml = analyses.map(a => 
                         `<div style="display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--bg-hover);">
                             <a href="?file=${a.md5}" onclick="event.preventDefault(); loadAnalysis('${a.md5}');" style="color: var(--accent); text-decoration: none; flex: 1;">${FOLDER_ICON_SVG}${escapeHtml(a.name)}</a>
                             <button data-md5="${a.md5}" data-name="${escapeHtml(a.name)}" data-action="reanalyze" style="background: var(--bg-hover); border: none; color: var(--accent); cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="Re-analyze">${REFRESH_ICON_SVG}</button>
-                            <button data-md5="${a.md5}" data-name="${escapeHtml(a.name)}" data-action="delete" style="background: var(--bg-hover); border: none; color: var(--badge-danger-text); cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px;" title="Delete">${DELETE_ICON_SVG}</button>
+                            <button class="previous-analysis-delete" data-md5="${a.md5}" data-name="${escapeHtml(a.name)}" data-action="delete" style="background: var(--bg-hover); border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px;" title="Delete">${DELETE_ICON_SVG}</button>
                         </div>`
                     ).join('');
                 } else {
-                    previousHtml = '<span style="color: var(--bg-hover-light);">No previous PCAPs available</span>';
+                    previousHtml = '<span style="color: var(--bg-hover-light);">No previous analyses available</span>';
                 }
             } catch(err) {
                 console.error('Failed to load analyses:', err);
                 previousHtml = '<span style="color: var(--bg-hover-light);">Error loading analyses</span>';
             }
+            const deleteAllButtonHtml = previousAnalysisCount > 0
+                ? `<button class="previous-analysis-delete-all" onclick="openDeleteAllAnalyses(${previousAnalysisCount})" style="background: var(--bg-hover); border: none; cursor: pointer; font-size: 0.8rem; padding: 4px 10px; border-radius: 6px;" title="Delete all previous analyses">Delete All</button>`
+                : '';
             
             document.getElementById('inputBoxes').innerHTML = `
                 <div style="max-width: 900px; margin: 0 auto;">
@@ -930,10 +1064,13 @@
                              </div>
                          </div>
                      </div>
-                     <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover);">
-                         <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; margin-bottom: 15px; font-weight: 600;">${FOLDER_OPEN_ICON_SVG} Previous Analyses</div>
-                        <div id="previousAnalysesList">${previousHtml}</div>
-                    </div>
+                      <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover);">
+                          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                              <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; font-weight: 600;">${FOLDER_OPEN_ICON_SVG} Previous Analyses</div>
+                              ${deleteAllButtonHtml}
+                          </div>
+                         <div id="previousAnalysesList">${previousHtml}</div>
+                     </div>
                     <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover); margin-top: 20px;">
                         <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 10px; text-align: center;">SO-CRATES provides basic analysis. Need more advanced functionality?<br>Take a look at the full <a href="https://securityonion.net" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion</a> platform available in a free Community Edition!<br>If you need enterprise features, consider upgrading to <a href="https://securityonion.com/pro" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion Pro</a>!</div>
                         <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
@@ -1090,6 +1227,7 @@
             document.getElementById('pcapUrl').value = lastSampleUrl;
         }
         
+        let keyBuffer = '';
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 closeMenu();
@@ -1099,7 +1237,33 @@
                 e.preventDefault();
                 showHelpModal();
             }
+            // Easter egg: type "31337" anywhere outside of input fields to activate Hacker Mode.
+            const tag = e.target.tagName;
+            const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable;
+            if (!isTyping && e.key.length === 1) {
+                keyBuffer += e.key.toLowerCase();
+                if (keyBuffer.length > 5) {
+                    keyBuffer = keyBuffer.slice(-5);
+                }
+                if (keyBuffer === '31337') {
+                    e.preventDefault();
+                    setTheme('hacker');
+                    showEasterEggMessage('Hacker Mode activated. Welcome to the elite.');
+                    keyBuffer = '';
+                }
+            }
         });
+
+        function showEasterEggMessage(message) {
+            const toast = document.createElement('div');
+            toast.textContent = message;
+            toast.style.cssText = 'position: fixed; bottom: 20px; right: 20px; background: var(--bg-secondary); color: var(--accent); border: 1px solid var(--accent); padding: 12px 20px; border-radius: 6px; font-family: inherit; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: opacity 0.5s;';
+            document.body.appendChild(toast);
+            setTimeout(function() {
+                toast.style.opacity = '0';
+                setTimeout(function() { toast.remove(); }, 500);
+            }, 2000);
+        }
         
         // Single delegated listener for advanced toggle (prevents memory leak from repeated loadAnalysis calls)
         function toggleDiagram() {
@@ -1213,7 +1377,6 @@
                     const bv = Array.from(linkMap.values()).filter(l => l.source === b.id || l.target === b.id).reduce((s, l) => s + l.value, 0);
                     return bv - av;
                 });
-                const keepIds = new Set(columnNodes.slice(0, limit).map(n => n.id));
                 const otherId = addNode('Other', columnIndex);
 
                 for (const node of columnNodes.slice(limit)) {
@@ -1590,7 +1753,7 @@
             aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + html + '</div></div>';
         }
 
-        function buildBinaryAnalysisView(events) {
+        function buildBinaryAnalysisView(events, baseEvents) {
             const fileAlerts = events.filter(e => e.event_type === 'filealerts');
             const filteredAlerts = fileAlerts.filter(e => {
                 for (const [col, val] of Object.entries(currentFilters)) {
@@ -1598,7 +1761,8 @@
                 }
                 return true;
             });
-            const fileInfoHtml = buildFileInfoHtml(events);
+            const fileInfoSource = baseEvents || baseAllEvents || events;
+            const fileInfoHtml = buildFileInfoHtml(fileInfoSource);
             const fileInfoContainer = document.getElementById('fileInfoContainer');
             if (fileInfoContainer) {
                 fileInfoContainer.innerHTML = fileInfoHtml;
@@ -2276,10 +2440,10 @@
             const hasFilters = Object.keys(currentFilters).length > 0;
             if (currentSearch.length === 0 && !hasFilters) return '';
 
-            let html = '<div class="filter-bar"><span class="filter-label">🔍 Active:</span>';
+            let html = `<div class="filter-bar"><span class="filter-label">${SEARCH_ICON_SVG} Active:</span>`;
             for (let i = 0; i < currentSearch.length; i++) {
                 const term = currentSearch[i];
-                html += `<span class="filter-chip">🔍 "${escapeHtml(term)}" <span class="filter-chip-remove" onclick="clearSearchTerm(${i})">&times;</span></span>`;
+                html += `<span class="filter-chip">${SEARCH_ICON_SVG} "${escapeHtml(term)}" <span class="filter-chip-remove" onclick="clearSearchTerm(${i})">&times;</span></span>`;
             }
             for (const [col, val] of Object.entries(currentFilters)) {
                 html += `<span class="filter-chip">${escapeHtml(col)}: ${escapeHtml(val)} <span class="filter-chip-remove" onclick="clearFilter('${escapeJsString(col)}')">&times;</span></span>`;
@@ -2557,7 +2721,6 @@
                         <tbody>`;
                 
                 for (const [val, count] of sorted) {
-                    const displayVal = val === '(empty)' ? '' : val;
                     const escapedVal = escapeHtml(val);
                     const filterVal = val === '(empty)' ? '' : val;
                     html += `<tr class="agg-row" onclick="applyFilter('${sectionId}', '${escapeJsString(col)}', '${escapeJsString(filterVal)}')">
@@ -2652,6 +2815,7 @@
         }
         
         let allEvents = [];
+        let baseAllEvents = [];
         let sections = {};
         let eventTypes = [];
         let currentMd5 = '';
@@ -2666,7 +2830,7 @@
 
         const EVENT_TYPE_ICONS = { alert: '🔴', dns: '🟢', http: '🟠', tls: '🔵', flow: '🟣', ftp: '📁', anomaly: '⚠️', fileinfo: '📄', filealerts: '🚨', log: '📋', sigmaalert: '🛡️' };
         const ALL_EVENTS_COLUMNS = ['Time', 'Type', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Detail'];
-        const EMPTY_FILTER_STATE_HTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.95rem;">🔍 No events match the current filters</div>';
+        const EMPTY_FILTER_STATE_HTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.95rem;">${SEARCH_ICON_SVG} No events match the current filters</div>`;
         const AGG_COLLAPSED_HTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▸ Aggregation Tables</div></div>';
 
         function hideAggregationTable(sectionId, col) {
@@ -2799,14 +2963,6 @@
             await refreshAnalysisData();
         }
 
-        async function clearSearch() {
-            currentSearch = [];
-            const input = document.getElementById('searchInput');
-            if (input) input.value = '';
-            updateFilterBarVisibility();
-            await refreshAnalysisData();
-        }
-
         async function clearSearchTerm(index) {
             currentSearch.splice(index, 1);
             updateFilterBarVisibility();
@@ -2905,7 +3061,15 @@
                         statsGrid.innerHTML = '';
                         statsGrid.style.display = 'none';
                     }
-                    buildBinaryAnalysisView(allEvents);
+                    // Keep file info visible even when the current search filter
+                    // excludes the fileinfo event by using unfiltered events.
+                    let baseEvents = allEvents;
+                    if (qParam) {
+                        const baseEventsResp = await fetch('/api/events?md5=' + currentMd5 + '&limit=' + CONFIG.MAX_QUERY_LIMIT + '&t=' + Date.now());
+                        baseEvents = await baseEventsResp.json();
+                    }
+                    baseAllEvents = baseEvents;
+                    buildBinaryAnalysisView(allEvents, baseEvents);
                 }
             } else {
                 document.body.classList.remove('file-analysis');
@@ -2967,6 +3131,7 @@
                     }
                     
                     allEvents = [];
+                    baseAllEvents = [];
                     sections = {};
                     eventTypes = [];
                     currentFilters = {};
@@ -3025,7 +3190,7 @@
                     document.getElementById('appHeaderFilename').innerHTML = `${FILE_ICON_SVG}${escapeHtml(currentFileName)}`;
                     document.getElementById('appHeaderMeta').innerHTML = `
                         <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${FOLDER_ICON_SVG}${currentMd5}</span>
-                        <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">📅 ${dateDisplay}</span>
+                        <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${CALENDAR_ICON_SVG}${dateDisplay}</span>
                     `;
                     document.getElementById('appHeaderRight').innerHTML = `
                         <div class="app-header-menu">
@@ -3033,18 +3198,26 @@
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                             </button>
                             <div class="app-header-menu-dropdown" id="appHeaderMenuDropdown">
-                                <button class="app-header-menu-item" onclick="toggleTheme()">
-                                    <span id="themeMenuIcon">🌙</span>
-                                    <span id="themeMenuLabel">Dark Theme</span>
+                                <div class="app-header-menu-item theme-header">Theme</div>
+                                <button class="app-header-menu-item" onclick="setTheme('dark'); closeMenu();">
+                                    <span><svg class="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
+                                    <span>Dark Mode</span>
+                                </button>
+                                <button class="app-header-menu-item" onclick="setTheme('light'); closeMenu();">
+                                    <span><svg class="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span>
+                                    <span>Light Mode</span>
+                                </button>
+                                <button class="app-header-menu-item" onclick="setTheme('hacker'); closeMenu();">
+                                    <span><svg class="theme-icon-hacker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="6 9 10 12 6 15"/><line x1="12" y1="15" x2="18" y2="15"/></svg></span>
+                                    <span>Hacker Mode</span>
                                 </button>
                                 <div class="app-header-menu-sep"></div>
                                 <button class="app-header-menu-item" onclick="showHelpModal(); closeMenu();">
-                                    <span>❓</span>
+                                    <span><svg class="theme-icon-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
                                     <span>Help</span>
                                 </button>
                             </div>
                         </div>`;
-                    updateThemeMenuLabel();
                     showAnalysisUI();
                     updateFilterBarVisibility();
                     
@@ -3108,6 +3281,7 @@
                             })();
                         } else {
                             // Binary file analysis: unified view with search + aggregations + file info + YARA table
+                            baseAllEvents = allEvents;
                             buildBinaryAnalysisView(allEvents);
                         }
                     } else {
@@ -3347,6 +3521,12 @@
             document.getElementById('deleteConfirmModal').classList.remove('active');
         }
         
+        function handleDeleteBackdropClick(event) {
+            if (event.target.id === 'deleteConfirmModal') {
+                closeDeleteModal();
+            }
+        }
+        
         function showError(message) {
             document.getElementById('errorMessage').textContent = message;
             document.getElementById('errorModal').classList.add('active');
@@ -3380,6 +3560,47 @@
             }
         }
         
+        let pendingDeleteAllCount = 0;
+        
+        function openDeleteAllAnalyses(count) {
+            pendingDeleteAllCount = count;
+            document.getElementById('deleteAllCount').textContent = count;
+            document.getElementById('deleteAllConfirmModal').classList.add('active');
+        }
+        
+        function closeDeleteAllModal() {
+            pendingDeleteAllCount = 0;
+            document.getElementById('deleteAllConfirmModal').classList.remove('active');
+        }
+        
+        function handleDeleteAllBackdropClick(event) {
+            if (event.target.id === 'deleteAllConfirmModal') {
+                closeDeleteAllModal();
+            }
+        }
+        
+        async function confirmDeleteAll() {
+            if (!pendingDeleteAllCount) return;
+            pendingDeleteAllCount = 0;
+            document.getElementById('deleteAllConfirmModal').classList.remove('active');
+            
+            try {
+                const resp = await fetch('/api/delete-all-analyses', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showWelcome();
+                } else {
+                    showError(result.error || 'Could not delete analyses');
+                }
+            } catch(err) {
+                showError(err.message);
+            }
+        }
+        
         async function openReanalyzeModal(md5, name) {
             let phase = 'files';
             try {
@@ -3405,6 +3626,12 @@
         function closeReanalyzeModal() {
             pendingReanalyze = null;
             document.getElementById('reanalyzeConfirmModal').classList.remove('active');
+        }
+        
+        function handleReanalyzeBackdropClick(event) {
+            if (event.target.id === 'reanalyzeConfirmModal') {
+                closeReanalyzeModal();
+            }
         }
         
         async function confirmReanalyze() {
@@ -3449,6 +3676,11 @@
 
         async function init() {
             try {
+                // Initialize theme state, code-rain background, and favicon.
+                updateThemeMenu();
+                updateCodeRain();
+                updateFavicon();
+
                 // Fetch and display version from server
                 try {
                     const verResp = await fetch('/api/version');

@@ -10,6 +10,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'socrates.html')
 JS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'socrates.js')
 CSS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'socrates.css')
+FAVICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon.svg')
+FAVICON_HACKER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-hacker.svg')
 
 with open(HTML_PATH, 'r') as f:
     HTML_CONTENT = f.read()
@@ -57,6 +59,30 @@ class TestHTMLStructure(unittest.TestCase):
         """static/socrates.css and static/socrates.js must exist on disk."""
         self.assertTrue(os.path.exists(CSS_PATH), 'static/socrates.css must exist')
         self.assertTrue(os.path.exists(JS_PATH), 'static/socrates.js must exist')
+
+    def test_favicon_file_exists(self):
+        """static/favicon.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_PATH), 'static/favicon.svg must exist')
+
+    def test_favicon_hacker_file_exists(self):
+        """static/favicon-hacker.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_HACKER_PATH), 'static/favicon-hacker.svg must exist')
+
+    def test_favicon_link_in_head(self):
+        """HTML must link to the SVG favicon in <head>."""
+        head = HTML_CONTENT.split('</head>')[0]
+        self.assertIn('rel="icon"', head, 'Favicon link must exist in head')
+        self.assertIn('static/favicon.svg', head, 'Favicon link must point to static/favicon.svg')
+        self.assertIn('id="faviconLink"', head, 'Favicon link must have id for JS updates')
+
+    def test_favicon_swap_logic_exists(self):
+        """JS must contain updateFavicon logic to swap favicon based on theme."""
+        self.assertIn('function updateFavicon(', JS_CONTENT,
+                      'updateFavicon function must exist')
+        self.assertIn('favicon-hacker.svg', JS_CONTENT,
+                      'updateFavicon must reference the Hacker Mode favicon')
+        self.assertIn('getCurrentTheme() === \'hacker\'', JS_CONTENT,
+                      'updateFavicon must check for Hacker Mode')
 
     def test_valid_doctype(self):
         self.assertTrue(HTML_CONTENT.startswith('<!DOCTYPE html>'))
@@ -538,7 +564,7 @@ class TestUXFeatures(unittest.TestCase):
         self.assertIn('spinner', CSS_CONTENT)
 
     def test_empty_state_handling(self):
-        self.assertIn('No previous PCAPs available', JS_CONTENT)
+        self.assertIn('No previous analyses available', JS_CONTENT)
 
     def test_error_messages(self):
         self.assertIn('showError(', JS_CONTENT)
@@ -548,6 +574,77 @@ class TestUXFeatures(unittest.TestCase):
         """Back navigation must exist via the app header logo link."""
         self.assertIn("showWelcome(); return false;", HTML_CONTENT,
                       'App header logo must link back to welcome screen')
+
+    def test_help_modal_lightbulb_uses_template_literal(self):
+        """REGRESSION: dynamic help text must interpolate LIGHTBULB_ICON_SVG
+        instead of showing the literal text."""
+        func_match = re.search(r'function showHelpModal\([^)]*\)\s*\{', JS_CONTENT)
+        self.assertIsNotNone(func_match, 'showHelpModal function must exist')
+        start = func_match.end()
+        brace_count = 1
+        pos = start
+        while pos < len(JS_CONTENT) and brace_count > 0:
+            if JS_CONTENT[pos] == '{':
+                brace_count += 1
+            elif JS_CONTENT[pos] == '}':
+                brace_count -= 1
+            pos += 1
+        func_body = JS_CONTENT[start:pos]
+        # The three dynamic helpText assignments should use backticks.
+        self.assertNotIn("'${LIGHTBULB_ICON_SVG}'", func_body,
+                         'Dynamic helpText must not single-quote the icon variable')
+        self.assertIn('helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}', func_body,
+                      'Dynamic helpText must use a template literal for the icon')
+
+    def test_welcome_help_lightbulb_uses_help_icon_color(self):
+        """Static welcome help modal lightbulb icons must use --help-icon-color."""
+        welcome_match = re.search(r'const WELCOME_HELP_CONTENT = `', JS_CONTENT)
+        self.assertIsNotNone(welcome_match, 'WELCOME_HELP_CONTENT must exist')
+        start = welcome_match.end()
+        # Find the closing backtick of the template literal.
+        pos = start
+        while pos < len(JS_CONTENT):
+            if JS_CONTENT[pos] == '`' and JS_CONTENT[pos - 1] != '\\':
+                break
+            pos += 1
+        content = JS_CONTENT[start:pos]
+        self.assertIn('<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span>', content,
+                      'Welcome help lightbulb icons must use --help-icon-color')
+
+    def test_empty_filter_state_uses_template_literal(self):
+        """REGRESSION: EMPTY_FILTER_STATE_HTML must interpolate SEARCH_ICON_SVG
+        instead of showing the literal text."""
+        self.assertIn('const EMPTY_FILTER_STATE_HTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.95rem;">${SEARCH_ICON_SVG}', JS_CONTENT,
+                      'EMPTY_FILTER_STATE_HTML must use a template literal for the search icon')
+        self.assertNotIn("const EMPTY_FILTER_STATE_HTML = '<div style=\"padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.95rem;\">${SEARCH_ICON_SVG}", JS_CONTENT,
+                         'EMPTY_FILTER_STATE_HTML must not single-quote the search icon variable')
+
+    def test_help_modal_has_backdrop_click_handler(self):
+        """Help modal wrapper must close when the dark backdrop is clicked."""
+        self.assertIn('id="helpModal" onclick="handleHelpBackdropClick(event)"', HTML_CONTENT,
+                      'Help modal wrapper must handle backdrop clicks')
+        modal_section = HTML_CONTENT.split('id="helpModal"')[1].split('</div>\n        </div>')[0]
+        self.assertIn('onclick="event.stopPropagation()"', modal_section,
+                      'Help modal content must stop event propagation')
+
+    def test_help_modal_backdrop_handler_closes_modal(self):
+        """handleHelpBackdropClick must close the modal only when the backdrop is clicked."""
+        func_match = re.search(r'function handleHelpBackdropClick\([^)]*\)\s*\{', JS_CONTENT)
+        self.assertIsNotNone(func_match, 'handleHelpBackdropClick function must exist')
+        start = func_match.end()
+        brace_count = 1
+        pos = start
+        while pos < len(JS_CONTENT) and brace_count > 0:
+            if JS_CONTENT[pos] == '{':
+                brace_count += 1
+            elif JS_CONTENT[pos] == '}':
+                brace_count -= 1
+            pos += 1
+        func_body = JS_CONTENT[start:pos]
+        self.assertIn("event.target === document.getElementById('helpModal')", func_body,
+                      'Backdrop handler must only close when the helpModal wrapper is clicked')
+        self.assertIn('closeHelpModal()', func_body,
+                      'Backdrop handler must call closeHelpModal()')
 
     def test_header_has_no_separators(self):
         """Header items must not have any separators (pipes or borders) for clean responsive wrapping."""
@@ -852,9 +949,13 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('id="appHeaderMenuDropdown"', HTML_CONTENT,
                       'Menu dropdown container must exist in HTML')
 
-    def test_theme_toggle_in_menu(self):
-        self.assertIn('onclick="toggleTheme()"', HTML_CONTENT,
-                      'Theme toggle button must be inside the menu')
+    def test_theme_options_in_menu(self):
+        self.assertIn('setTheme(\'dark\'); closeMenu();', HTML_CONTENT,
+                      'Dark mode option must be inside the menu')
+        self.assertIn('setTheme(\'light\'); closeMenu();', HTML_CONTENT,
+                      'Light mode option must be inside the menu')
+        self.assertIn('setTheme(\'hacker\'); closeMenu();', HTML_CONTENT,
+                      'Hacker mode option must be inside the menu')
 
     def test_help_in_menu_not_standalone(self):
         self.assertIn('onclick="showHelpModal(); closeMenu();"', HTML_CONTENT,
@@ -867,6 +968,23 @@ class TestThemeAndMenu(unittest.TestCase):
                       'CSS must define --text-primary custom property')
         self.assertIn('--accent:', CSS_CONTENT,
                       'CSS must define --accent custom property')
+
+    def test_help_icon_color_variable_exists_per_theme(self):
+        """Each theme must define --help-icon-color (yellow in dark/light, green in hacker)."""
+        self.assertIn('--help-icon-color:', CSS_CONTENT,
+                      'CSS must define --help-icon-color custom property')
+        # Verify the variable appears inside each theme block.
+        root_block = CSS_CONTENT.split(':root {')[1].split('}')[0]
+        light_block = CSS_CONTENT.split('[data-theme="light"] {')[1].split('}')[0]
+        hacker_block = CSS_CONTENT.split('[data-theme="hacker"] {')[1].split('}')[0]
+        self.assertIn('--help-icon-color:', root_block,
+                      'Dark theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', light_block,
+                      'Light theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', hacker_block,
+                      'Hacker theme must define --help-icon-color')
+        self.assertIn('var(--accent)', hacker_block,
+                      'Hacker theme --help-icon-color should map to accent green')
 
     def test_light_theme_override_exists(self):
         self.assertIn('[data-theme="light"]', CSS_CONTENT,
@@ -884,6 +1002,58 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('data-theme', HTML_CONTENT,
                       'HTML must have FOUC-prevention theme script')
 
+    def test_hacker_theme_override_exists(self):
+        self.assertIn('[data-theme="hacker"]', CSS_CONTENT,
+                      'CSS must have a Hacker theme override block')
+
+    def test_code_rain_canvas_exists(self):
+        self.assertIn('id="codeRain"', HTML_CONTENT,
+                      'HTML must include a code-rain canvas for Hacker Mode')
+
+    def test_setTheme_function_exists(self):
+        self.assertIn('function setTheme(', JS_CONTENT,
+                      'setTheme function must exist for multi-theme support')
+
+    def test_themes_registry_exists(self):
+        self.assertIn('const THEMES = {', JS_CONTENT,
+                      'JS must define a THEMES registry')
+
+    def test_hacker_theme_in_registry(self):
+        self.assertIn('hacker:', JS_CONTENT,
+                      'THEMES registry must include the hacker theme')
+
+    def test_hacker_search_btn_override(self):
+        self.assertIn('[data-theme="hacker"] .search-btn', CSS_CONTENT,
+                      'Hacker theme must override search button styling')
+
+    def test_hacker_sample_card_overrides(self):
+        self.assertIn('[data-theme="hacker"] .sample-card-red', CSS_CONTENT,
+                      'Hacker theme must override sample card styling')
+        self.assertIn('[data-theme="hacker"] .sample-red', CSS_CONTENT,
+                      'Hacker theme must override sample label color')
+
+    def test_hacker_previous_analysis_delete_overrides(self):
+        self.assertIn('[data-theme="hacker"] .previous-analysis-delete', CSS_CONTENT,
+                      'Hacker theme must override previous analysis delete color')
+        self.assertIn('[data-theme="hacker"] .previous-analysis-delete-all', CSS_CONTENT,
+                      'Hacker theme must override delete-all button color')
+
+    def test_hacker_reanalyze_button_override(self):
+        self.assertIn('[data-theme="hacker"] .reanalyze-confirm-btn', CSS_CONTENT,
+                      'Hacker theme must override re-analyze confirm button')
+
+    def test_hacker_delete_modal_overrides(self):
+        self.assertIn('[data-theme="hacker"] .delete-modal-title', CSS_CONTENT,
+                      'Hacker theme must override delete modal title color')
+        self.assertIn('[data-theme="hacker"] .delete-modal-confirm-btn', CSS_CONTENT,
+                      'Hacker theme must override delete modal confirm button')
+
+    def test_hacker_font_size_adjust(self):
+        self.assertIn('font-size-adjust:', CSS_CONTENT,
+                      'Hacker theme should adjust monospace font size')
+        self.assertIn('[data-theme="hacker"] body {', CSS_CONTENT,
+                      'Hacker theme body rule must exist')
+
     def test_gear_icon_button_exists(self):
         self.assertIn('class="app-header-menu-btn"', HTML_CONTENT,
                       'Gear icon menu button must exist')
@@ -900,6 +1070,38 @@ class TestThemeAndMenu(unittest.TestCase):
         svg_section = header_left.split('<svg')[1].split('</svg>')[0]
         self.assertTrue('stroke="currentColor"' in svg_section or 'stroke="var(--accent)"' in svg_section,
                         'Magnifying glass SVG must use currentColor or var(--accent) for theme adaptability')
+
+    def test_hacker_mode_easter_egg_exists(self):
+        """Typing 31337 outside of input fields must activate Hacker Mode."""
+        self.assertIn("keyBuffer === '31337'", JS_CONTENT,
+                      'JS must check for the 31337 easter egg sequence')
+        self.assertIn("setTheme('hacker')", JS_CONTENT,
+                      'Easter egg must activate Hacker Mode')
+        self.assertIn('showEasterEggMessage(', JS_CONTENT,
+                      'Easter egg must show an activation message')
+
+    def test_hacker_mode_easter_egg_ignores_input_fields(self):
+        """Easter egg must not trigger while typing in form controls."""
+        listener_match = re.search(r'document\.addEventListener\(\'keydown\',\s*function\(e\)\s*\{', JS_CONTENT)
+        self.assertIsNotNone(listener_match, 'keydown listener must exist')
+        start = listener_match.end()
+        brace_count = 1
+        pos = start
+        while pos < len(JS_CONTENT) and brace_count > 0:
+            if JS_CONTENT[pos] == '{':
+                brace_count += 1
+            elif JS_CONTENT[pos] == '}':
+                brace_count -= 1
+            pos += 1
+        listener_body = JS_CONTENT[start:pos]
+        self.assertIn("tag === 'INPUT'", listener_body,
+                      'Easter egg must ignore INPUT elements')
+        self.assertIn("tag === 'TEXTAREA'", listener_body,
+                      'Easter egg must ignore TEXTAREA elements')
+        self.assertIn("tag === 'SELECT'", listener_body,
+                      'Easter egg must ignore SELECT elements')
+        self.assertIn('isContentEditable', listener_body,
+                      'Easter egg must ignore contenteditable elements')
 
 
 class TestAggregationTables(unittest.TestCase):
@@ -1476,6 +1678,20 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
         self.assertIn('String(s.count)', func,
                       'buildStats must show only count when hasFilters is false')
 
+    def test_buildBinaryAnalysisView_preserves_file_info_on_search(self):
+        """REGRESSION: buildBinaryAnalysisView must use unfiltered baseAllEvents
+        so the FILE INFO section remains visible when search filters out the
+        fileinfo event."""
+        self.assertIn('let baseAllEvents = []', JS_CONTENT,
+                      'A baseAllEvents variable must exist to store unfiltered events')
+        self.assertIn('function buildBinaryAnalysisView(events, baseEvents)', JS_CONTENT,
+                      'buildBinaryAnalysisView must accept a baseEvents parameter')
+        func = JS_CONTENT.split('function buildBinaryAnalysisView(events, baseEvents)')[1].split('function buildLogEventRow(')[0]
+        self.assertIn('const fileInfoSource = baseEvents || baseAllEvents || events;', func,
+                      'buildBinaryAnalysisView must fall back to baseAllEvents for file info')
+        self.assertIn('buildFileInfoHtml(fileInfoSource)', func,
+                      'buildBinaryAnalysisView must pass fileInfoSource to buildFileInfoHtml')
+
 
 class TestXSSPrevention(unittest.TestCase):
     def _get_function_body(self, func_name):
@@ -1990,7 +2206,7 @@ class TestSearchUI(unittest.TestCase):
 
 class TestReanalyzeUI(unittest.TestCase):
     def test_reanalyze_button_on_welcome(self):
-        """Welcome screen must show a re-analyze button next to each previous PCAP."""
+        """Welcome screen must show a re-analyze button next to each previous analysis."""
         self.assertIn('openReanalyzeModal', JS_CONTENT,
                       'showWelcome must include re-analyze button')
         self.assertIn('REFRESH_ICON_SVG', JS_CONTENT,
@@ -2010,6 +2226,16 @@ class TestReanalyzeUI(unittest.TestCase):
                       'Modal must have Cancel button')
         self.assertIn('confirmReanalyze()', modal_section,
                       'Modal must have Re-analyze button')
+
+    def test_reanalyze_modal_has_backdrop_click_handler(self):
+        """Re-analyze modal wrapper must close when backdrop is clicked."""
+        self.assertIn('id="reanalyzeConfirmModal" onclick="handleReanalyzeBackdropClick(event)"', HTML_CONTENT,
+                      'Re-analyze modal wrapper must handle backdrop clicks')
+        modal_section = HTML_CONTENT.split('id="reanalyzeConfirmModal"')[1].split('</div>\n        </div>')[0]
+        self.assertIn('onclick="event.stopPropagation()"', modal_section,
+                      'Re-analyze modal content must stop event propagation')
+        self.assertIn('function handleReanalyzeBackdropClick(', JS_CONTENT,
+                      'handleReanalyzeBackdropClick must be defined')
 
     def test_reanalyze_calls_post_api(self):
         """confirmReanalyze must POST to /api/reanalyze with JSON body."""
@@ -2130,6 +2356,63 @@ class TestReanalyzeUI(unittest.TestCase):
                       'Fallback must set logs phase')
         self.assertIn("else if (isPcapFile) phase = 'network'", catch_section,
                       'Fallback must set network phase')
+
+
+class TestDeleteAllAnalysesUI(unittest.TestCase):
+    def test_delete_all_button_on_welcome(self):
+        """Welcome screen must show a Delete All button when previous analyses exist."""
+        self.assertIn('openDeleteAllAnalyses', JS_CONTENT,
+                      'showWelcome must include Delete All button handler')
+        self.assertIn('previous-analysis-delete-all', JS_CONTENT,
+                      'Delete All button must have styling class')
+
+    def test_delete_all_modal_exists(self):
+        """Delete All confirmation modal must exist in HTML."""
+        self.assertIn('id="deleteAllConfirmModal"', HTML_CONTENT,
+                      'deleteAllConfirmModal must exist')
+        self.assertIn('id="deleteAllCount"', HTML_CONTENT,
+                      'deleteAllCount span must exist')
+
+    def test_delete_all_modal_has_cancel_and_delete_buttons(self):
+        """Delete All modal must have Cancel and Delete All buttons."""
+        modal_section = HTML_CONTENT.split('id="deleteAllConfirmModal"')[1].split('</div>\n        </div>')[0]
+        self.assertIn('closeDeleteAllModal()', modal_section,
+                      'Modal must have Cancel button')
+        self.assertIn('confirmDeleteAll()', modal_section,
+                      'Modal must have Delete All button')
+
+    def test_delete_all_modal_has_backdrop_click_handler(self):
+        """Delete All modal wrapper must close when backdrop is clicked."""
+        self.assertIn('id="deleteAllConfirmModal" onclick="handleDeleteAllBackdropClick(event)"', HTML_CONTENT,
+                      'Delete All modal wrapper must handle backdrop clicks')
+        modal_section = HTML_CONTENT.split('id="deleteAllConfirmModal"')[1].split('</div>\n        </div>')[0]
+        self.assertIn('onclick="event.stopPropagation()"', modal_section,
+                      'Delete All modal content must stop event propagation')
+        self.assertIn('function handleDeleteAllBackdropClick(', JS_CONTENT,
+                      'handleDeleteAllBackdropClick must be defined')
+
+    def test_delete_modal_has_backdrop_click_handler(self):
+        """Delete modal wrapper must close when backdrop is clicked."""
+        self.assertIn('id="deleteConfirmModal" onclick="handleDeleteBackdropClick(event)"', HTML_CONTENT,
+                      'Delete modal wrapper must handle backdrop clicks')
+        modal_section = HTML_CONTENT.split('id="deleteConfirmModal"')[1].split('</div>\n        </div>')[0]
+        self.assertIn('onclick="event.stopPropagation()"', modal_section,
+                      'Delete modal content must stop event propagation')
+        self.assertIn('function handleDeleteBackdropClick(', JS_CONTENT,
+                      'handleDeleteBackdropClick must be defined')
+
+    def test_confirm_delete_all_calls_post_api(self):
+        """confirmDeleteAll must POST to /api/delete-all-analyses."""
+        self.assertIn("fetch('/api/delete-all-analyses'", JS_CONTENT,
+                      'confirmDeleteAll must fetch /api/delete-all-analyses')
+        self.assertIn("method: 'POST'", JS_CONTENT,
+                      'confirmDeleteAll must use POST method')
+
+    def test_confirm_delete_all_refreshes_welcome(self):
+        """confirmDeleteAll must refresh the welcome screen on success."""
+        self.assertIn('if (result.success) {', JS_CONTENT)
+        self.assertIn('showWelcome()', JS_CONTENT,
+                      'confirmDeleteAll must call showWelcome on success')
 
 
 class TestFileAlertsUI(unittest.TestCase):

@@ -253,6 +253,7 @@ def import_zircolite_logs(zircolite_db_path, events_db_path):
     import sqlite3
 
     log_events = []
+    conn = None
     try:
         conn = sqlite3.connect(zircolite_db_path)
         conn.row_factory = sqlite3.Row

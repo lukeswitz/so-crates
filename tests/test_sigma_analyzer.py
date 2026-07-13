@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
@@ -266,6 +267,24 @@ class TestImportZircoliteLogs(unittest.TestCase):
         finally:
             os.unlink(zdb_path)
             os.unlink(edb_path)
+
+    @unittest.mock.patch('sqlite3.connect')
+    def test_import_handles_corrupt_db(self, mock_connect):
+        """If sqlite3.connect fails, import_zircolite_logs must return 0 cleanly."""
+        import sqlite3
+        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as zdb:
+            zdb_path = zdb.name
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as edb:
+                edb_path = edb.name
+            try:
+                mock_connect.side_effect = sqlite3.OperationalError('unable to open database file')
+                count = sigma_analyzer.import_zircolite_logs(zdb_path, edb_path)
+                self.assertEqual(count, 0)
+            finally:
+                os.unlink(edb_path)
+        finally:
+            os.unlink(zdb_path)
 
 
 class TestValidatorsLogDetection(unittest.TestCase):

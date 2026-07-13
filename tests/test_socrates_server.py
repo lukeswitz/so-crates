@@ -14,12 +14,14 @@ import zipfile
 import io
 import re
 import sqlite3
+import subprocess
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 import config
 import db
 import socrates as server
+import suricata_analyzer
 from validators import validate_pcap_content
 
 SERVER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'socrates.py')
@@ -372,10 +374,6 @@ class TestPcapContentValidation(unittest.TestCase):
         self.assertNotIn('data.endswith(b".zip")', content)
 
 
-class TestRateLimiting(unittest.TestCase):
-    pass
-
-
 class TestMD5Validation(unittest.TestCase):
     def test_valid_md5(self):
         self.assertTrue(bool(__import__('re').match(r'^[a-f0-9]{32}$', 'd41d8cd98f00b204e9800998ecf8427e')))
@@ -659,6 +657,43 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(status, 400)
         data = json.loads(body)
         self.assertIn('Invalid JSON', data.get('error', ''))
+
+    def test_delete_all_analyses_removes_directories(self):
+        md5_one = 'd41d8cd98f00b204e9800998ecf8427e'
+        md5_two = 'a3f5c5f7e7b5f5e5d5c5b5a595857565'
+        for md5 in (md5_one, md5_two):
+            md5dir = os.path.join(self.tmpdir, md5)
+            os.makedirs(md5dir, exist_ok=True)
+            with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00"}\n')
+        self.assertTrue(os.path.exists(os.path.join(self.tmpdir, md5_one)))
+        self.assertTrue(os.path.exists(os.path.join(self.tmpdir, md5_two)))
+
+        status, body = self._post('/api/delete-all-analyses', {})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertTrue(data.get('success'))
+        self.assertGreaterEqual(data.get('deleted', 0), 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmpdir, md5_one)))
+        self.assertFalse(os.path.exists(os.path.join(self.tmpdir, md5_two)))
+
+    def test_delete_all_analyses_get_returns_404(self):
+        """GET /api/delete-all-analyses must return 404."""
+        status, body = self._get('/api/delete-all-analyses')
+        self.assertEqual(status, 404)
+
+    def test_delete_all_analyses_empty_state(self):
+        """POST /api/delete-all-analyses with no analyses returns deleted: 0."""
+        # Ensure the shared temp data dir has no MD5 analysis directories.
+        for entry in os.listdir(self.tmpdir):
+            entry_path = os.path.join(self.tmpdir, entry)
+            if __import__('re').match(r'^[a-f0-9]{32}$', entry) and os.path.isdir(entry_path):
+                shutil.rmtree(entry_path)
+        status, body = self._post('/api/delete-all-analyses', {})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertTrue(data.get('success'))
+        self.assertEqual(data.get('deleted'), 0)
 
     def test_pcap_path_invalid_md5(self):
         status, body = self._get('/api/pcap-path?md5=invalid')
@@ -2263,6 +2298,20 @@ class TestAirgapFallback(unittest.TestCase):
                       'Should log when baked-in rules are copied')
         self.assertIn('no baked-in rules found and no internet access', content,
                       'Should warn when no rules are available')
+
+
+class TestSuricataUpdateTimeout(unittest.TestCase):
+    @unittest.mock.patch('suricata_analyzer.subprocess.run')
+    @unittest.mock.patch('suricata_analyzer.has_internet_access')
+    def test_suricata_update_timeout_does_not_crash(self, mock_internet, mock_run):
+        """TimeoutExpired from suricata-update must be caught, not crash setup."""
+        mock_internet.return_value = True
+        mock_run.side_effect = subprocess.TimeoutExpired('suricata-update', 60)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            try:
+                suricata_analyzer.setup_suricata_config(tmpdir)
+            except subprocess.TimeoutExpired:
+                self.fail('setup_suricata_config raised TimeoutExpired')
 
 
 class TestServerStartupBanner(unittest.TestCase):

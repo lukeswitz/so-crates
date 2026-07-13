@@ -10,13 +10,18 @@ from models import (
     get_app_proto,
     get_dest_ip,
     get_dest_port,
-    get_event_type,
     get_protocol,
     get_src_ip,
     get_src_port,
     get_timestamp,
 )
 import config
+
+
+def _related_file_path(db_path, filename):
+    """Build the path for a file sibling to events.db."""
+    return os.path.join(os.path.dirname(db_path), filename)
+
 
 SQLITE_SCHEMA = '''
 CREATE TABLE IF NOT EXISTS events (
@@ -166,7 +171,7 @@ def create_sqlite_db(db_path, eve_file):
                     continue
 
         # Create synthetic filealerts events from YARA matches correlated with fileinfo
-        yara_file = db_path.replace('events.db', 'yara_matches.json')
+        yara_file = _related_file_path(db_path, 'yara_matches.json')
         if os.path.exists(yara_file) and fileinfo_by_sha256:
             try:
                 with open(yara_file, 'r') as f:
@@ -200,7 +205,7 @@ def create_sqlite_db(db_path, eve_file):
                 print(f'Warning: could not parse YARA matches: {e}')
 
         # Merge file metadata for zero-YARA-match files
-        meta_file = db_path.replace('events.db', 'file_metadata.json')
+        meta_file = _related_file_path(db_path, 'file_metadata.json')
         if os.path.exists(meta_file) and fileinfo_by_sha256:
             try:
                 with open(meta_file, 'r') as f:
@@ -240,7 +245,7 @@ def create_file_analysis_db(db_path, file_path, yara_matches, file_md5, file_sha
             )
             if result.returncode == 0:
                 magic_desc = result.stdout.strip()
-        except (FileNotFoundError, PermissionError) as e:
+        except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as e:
             print(f'Warning: could not run file command: {e}')
 
     timestamp = datetime.now(timezone.utc).isoformat()

@@ -16,7 +16,7 @@ Redirects to `/socrates.html`.
 
 Returns the running SO-CRATES version.
 
-**Response:** `{"version": "3.0.0"}`
+**Response:** `{"version": "2.0.0"}`
 
 ---
 
@@ -167,20 +167,6 @@ Loads a historical analysis by MD5, setting it as the current session.
 
 ---
 
-### `GET /api/delete-analysis`
-
-Deletes a historical analysis (removes the entire MD5 directory).
-
-**Query Parameters:**
-
-| Parameter | Required | Description |
-|---|---|---|
-| `md5` | Yes | MD5 hash of the analysis to delete |
-
-**Response:** `{"success": true}`
-
----
-
 ### `GET /api/pcap-path`
 
 Returns the filesystem path to the PCAP file in an MD5 directory.
@@ -264,6 +250,59 @@ or
 ```
 
 **Ready detection:** For PCAPs, checks that `eve.json` exists and `events.db` is present. For other files, checks that `events.db` exists.
+
+---
+
+### `POST /api/reanalyze`
+
+Re-runs the analysis pipeline for an existing MD5 directory. The original uploaded file is preserved; the previous analysis outputs (`eve.json`, `events.db`, etc.) are removed and regenerated.
+
+**Request Body:**
+```json
+{"md5": "<hash>", "phase": "network"}
+```
+
+The `phase` field is optional and defaults based on file type (`network` for PCAPs, `logs` for log files, `files` for binaries).
+
+**Response:**
+```json
+{"success": true}
+```
+
+**Errors:** `400` for invalid MD5 or unsafe path. `404` if analysis not found.
+
+---
+
+### `POST /api/delete-analysis`
+
+Deletes a single historical analysis (removes the entire MD5 directory).
+
+**Request Body:**
+```json
+{"md5": "<hash>"}
+```
+
+**Response:**
+```json
+{"success": true}
+```
+
+**Errors:** `400` for invalid MD5 or unsafe path. `404` if analysis not found.
+
+---
+
+### `POST /api/delete-all-analyses`
+
+Deletes all historical analyses (every MD5-shaped directory under the data root). Non-analysis directories and files are left untouched.
+
+**Request Body:** `{}` (empty JSON object)
+
+**Response:**
+```json
+{"success": true, "deleted": 5}
+```
+
+**Errors:** `500` if every analysis directory fails to delete.
 
 ---
 

@@ -7,7 +7,6 @@ files where our lightweight analyzer alone doesn't tell the full story.
 """
 
 import json
-import os
 import subprocess
 
 import config
@@ -151,7 +150,7 @@ def extract_exif(file_path, mime_type=''):
     try:
         result = subprocess.run(
             ['exiftool', '-j', file_path],
-            capture_output=True, text=True, timeout=3
+            capture_output=True, text=True, timeout=config.FILE_COMMAND_TIMEOUT
         )
     except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as e:
         print(f'Warning: ExifTool failed for {file_path}: {e}')

@@ -18,7 +18,6 @@ Search (`currentSearch`) is a separate server-side full-text filter using SQLite
 | Function | Role |
 |---|---|
 | `performSearch()` | Splits `searchInput` into terms, pushes to `currentSearch` array, clears input, refreshes data |
-| `clearSearch()` | Clears all `currentSearch` terms, resets input, refreshes data |
 | `clearSearchTerm(index)` | Removes single term at index from `currentSearch`, refreshes data |
 | `applyFilter(sectionId, columnName, value)` | Sets `currentFilters[columnName] = value`, rebuilds table + agg grid + stats + sankey |
 | `clearFilter(columnName)` | Deletes `currentFilters[columnName]`, rebuilds |

@@ -51,6 +51,7 @@ To slice and dice your data, expand the Aggregation Tables section and click on 
   - [Analyze a File](#analyze-a-file)
   - [Navigate Results](#navigate-results)
   - [Stream Analysis](#stream-analysis)
+  - [Themes](#themes)
 - [Data Storage](#data-storage)
 - [Configuration](#configuration)
 - [Security](#security)
@@ -292,6 +293,16 @@ Click any row in a data table to expand it, then:
 - **ASCII Transcript** — view decoded TCP/UDP payload as readable text
 - **Hexdump** — view per-packet hex dumps with collapsible packet headers
 - **Download PCAP** — carve that specific stream into a standalone `.pcap` file
+
+### Themes
+
+SO-CRATES includes three UI themes. Choose one from the gear icon menu in the upper-right corner:
+
+- **Dark Mode** (default)
+- **Light Mode**
+- **Hacker Mode** — green-on-black terminal aesthetic with a subtle animated code-rain background
+
+Your choice is persisted in the browser's `localStorage` and restored on the next visit.
 
 ## Data Storage
 
