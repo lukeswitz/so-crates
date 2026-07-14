@@ -156,7 +156,7 @@ sudo apt update && sudo apt -y install podman
 mkdir -p ~/socrates-data
 # Start SO-CRATES
 podman run --userns=keep-id --user $(id -u):$(id -g) \
-  -v $HOME/socrates-data:/data -p 8000:8000 \
+  -v $HOME/socrates-data:/data:Z -p 8000:8000 \
   ghcr.io/dougburks/so-crates:main
 ```
 
