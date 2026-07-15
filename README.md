@@ -132,8 +132,6 @@ docker load < so-crates.tar
 docker run -v ~/socrates-data:/data -p 8000:8000 ghcr.io/dougburks/so-crates:main
 ```
 
-If your Docker host enforces SELinux, add `:Z` to the volume mount (`-v ~/socrates-data:/data:Z`).
-
 #### Build Your Own Docker Image
 
 If you prefer to build your own Docker image, you can clone this github repo and then build the image:
@@ -146,13 +144,11 @@ mkdir -p ~/socrates-data
 docker run -v ~/socrates-data:/data -p 8000:8000 so-crates
 ```
 
-If your Docker host enforces SELinux, add `:Z` to the volume mount (`-v ~/socrates-data:/data:Z`).
-
 ### Podman
 
 #### podman run
 
-If you prefer Podman (rootless, daemonless), then here are the steps you can use on Debian 13 or compatible distros:
+If you prefer to use `podman run`, then here are the steps you can use on Debian 13 or compatible distros:
 ```bash
 # Install podman
 sudo apt update && sudo apt -y install podman
@@ -164,24 +160,19 @@ podman run --userns=keep-id --user $(id -u):$(id -g) \
   ghcr.io/dougburks/so-crates:main
 ```
 
-No `usermod` or `newgrp` is needed since Podman runs rootless by default. Use `$HOME` instead of `~` for the volume mount to avoid path expansion issues. The `--userns=keep-id --user $(id -u):$(id -g)` flags ensure files written to `~/socrates-data` are owned by your host user.
-
 #### podman compose
 
 If you prefer to use `podman compose`, then here are the steps you can use on Debian 13 or compatible distros:
 ```bash
 # Install and configure podman and podman-compose
 sudo apt update && sudo apt -y install podman podman-compose
-# Download compose files
-wget https://raw.githubusercontent.com/dougburks/so-crates/refs/heads/main/docker-compose.yml
+# Download the Podman compose file
 wget https://raw.githubusercontent.com/dougburks/so-crates/refs/heads/main/docker-compose.podman.yml
 # Create data directory
 mkdir -p socrates-data
 # Start SO-CRATES (add the -d option to run in the background if desired)
 podman compose -f docker-compose.podman.yml up
 ```
-
-The `docker-compose.podman.yml` file extends `docker-compose.yml` and adds `user` and `userns_mode` flags so files written to `~/socrates-data` are owned by your host user — the same behavior as `--userns=keep-id --user $(id -u):$(id -g)` in `podman run`.
 
 To stop:
 ```bash
@@ -221,10 +212,6 @@ mkdir -p ~/socrates-data
 podman run --userns=keep-id --user $(id -u):$(id -g) \
   -v $HOME/socrates-data:/data -p 8000:8000 so-crates
 ```
-
-SO-CRATES will check for internet access, update its NIDS rules if online (or use the baked-in rules if offline), and then prompt you to open http://localhost:8000/socrates.html in your browser.
-
-To stop a `docker run` or `podman run` instance, just press Ctrl-C in the terminal window or close the terminal window altogether. For `docker compose` or `podman compose`, use `docker compose down` or `podman compose down`.
 
 ## Manual Installation
 
