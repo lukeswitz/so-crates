@@ -2983,16 +2983,15 @@ class TestDockerfile(unittest.TestCase):
         self.assertTrue(os.path.exists(DOCKER_COMPOSE_PODMAN),
                         'docker-compose.podman.yml must exist')
 
-    def test_docker_compose_podman_extends_base(self):
-        """docker-compose.podman.yml must extend docker-compose.yml service."""
+    def test_docker_compose_podman_has_z_labeled_volume(self):
+        """docker-compose.podman.yml must mount the data directory with the :Z
+        SELinux label so rootless Podman can write to it."""
         with open(DOCKER_COMPOSE_PODMAN, 'r') as f:
             content = f.read()
-        self.assertIn('extends:', content,
-                        'podman compose file must use extends')
-        self.assertIn('file: docker-compose.yml', content,
-                        'podman compose file must extend docker-compose.yml')
-        self.assertIn('service: so-crates', content,
-                        'podman compose file must extend so-crates service')
+        self.assertIn('volumes:', content,
+                      'podman compose file must define a volumes section')
+        self.assertIn('/data:Z', content,
+                      'podman compose data volume must use :Z SELinux label')
 
     def test_docker_compose_podman_has_user_and_userns(self):
         """docker-compose.podman.yml must set user and userns_mode for host ownership."""

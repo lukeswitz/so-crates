@@ -132,6 +132,8 @@ docker load < so-crates.tar
 docker run -v ~/socrates-data:/data -p 8000:8000 ghcr.io/dougburks/so-crates:main
 ```
 
+If your Docker host enforces SELinux, add `:Z` to the volume mount (`-v ~/socrates-data:/data:Z`).
+
 #### Build Your Own Docker Image
 
 If you prefer to build your own Docker image, you can clone this github repo and then build the image:
@@ -143,6 +145,8 @@ docker build -t so-crates .
 mkdir -p ~/socrates-data
 docker run -v ~/socrates-data:/data -p 8000:8000 so-crates
 ```
+
+If your Docker host enforces SELinux, add `:Z` to the volume mount (`-v ~/socrates-data:/data:Z`).
 
 ### Podman
 
