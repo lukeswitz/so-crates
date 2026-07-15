@@ -292,8 +292,8 @@ Click any row in a data table to expand it, then:
 SO-CRATES includes four UI themes. Choose one from the gear icon menu in the upper-right corner, or press `t` to cycle through them:
 
 - **Midnight** (default dark theme)
-- **Matte Black** — AMOLED-style dark theme with orange/yellow accents
-- **Hacker** — green-on-black terminal aesthetic with a subtle animated code-rain background
+- **Matte Black** — dark theme with orange/yellow accents
+- **Hacker** — green-on-black terminal aesthetic with a subtle animated code-rain background (31337)
 - **Daylight** (light theme)
 
 Your choice is persisted in the browser's `localStorage` and restored on the next visit.
