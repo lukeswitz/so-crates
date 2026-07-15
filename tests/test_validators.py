@@ -333,7 +333,8 @@ class TestResolveSafeIp(unittest.TestCase):
     hostname (closing the DNS-rebinding TOCTOU window)."""
 
     def _fake_addrinfo(self, ip):
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (ip, 0))]
+        family = socket.AF_INET6 if ':' in ip else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, 6, '', (ip, 0))]
 
     def test_returns_ip_for_public_host(self):
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('93.184.216.34')):
@@ -408,6 +409,24 @@ class TestResolveSafeIp(unittest.TestCase):
         with unittest.mock.patch('socket.getaddrinfo', return_value=addrinfo):
             with self.assertRaises(ValueError):
                 validators.resolve_safe_ips('mixed.example.com')
+
+    def test_rejects_ipv4_mapped_loopback(self):
+        """::ffff:127.0.0.1 must be blocked like 127.0.0.1."""
+        with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('::ffff:127.0.0.1')):
+            with self.assertRaises(ValueError):
+                validators.resolve_safe_ip('v6mapped.example.com')
+
+    def test_rejects_ipv4_mapped_private(self):
+        """::ffff:10.0.0.1 must be blocked like 10.0.0.1."""
+        with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('::ffff:10.0.0.1')):
+            with self.assertRaises(ValueError):
+                validators.resolve_safe_ip('v6mapped-private.example.com')
+
+    def test_rejects_ipv4_compatible_loopback(self):
+        """::127.0.0.1 (IPv4-compatible) must be blocked."""
+        with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('::127.0.0.1')):
+            with self.assertRaises(ValueError):
+                validators.resolve_safe_ip('v6compat.example.com')
 
 
 if __name__ == '__main__':

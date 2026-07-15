@@ -15,6 +15,7 @@ BLOCKED_NETWORKS = [
     ipaddress.ip_network('127.0.0.0/8'),
     ipaddress.ip_network('::1/128'),
     ipaddress.ip_network('fd00::/8'),
+    ipaddress.ip_network('::/96'),  # IPv4-compatible (::127.0.0.1)
 ]
 
 
@@ -34,8 +35,25 @@ def validate_port(port_str):
         return False
 
 
+RESERVED_FILENAMES = {
+    'events.db', 'eve.json', 'name.txt', '.meta', '.phase', '.error',
+}
+
+
 def sanitize_filename(filename):
-    return os.path.basename(filename.replace('\\', '/'))
+    """Return a safe basename, or raise ValueError for unsafe names.
+
+    Unsafe names include:
+    - path traversal sequences (. / ..)
+    - empty names after stripping
+    - names that collide with internal analysis files.
+    """
+    safe = os.path.basename(filename.replace('\\', '/'))
+    if not safe or safe in ('.', '..') or safe.startswith('..'):
+        raise ValueError(f'Invalid filename: {filename!r}')
+    if safe in RESERVED_FILENAMES:
+        raise ValueError(f'Reserved filename not allowed: {safe}')
+    return safe
 
 
 def is_safe_path(base, path):
@@ -70,6 +88,9 @@ def _resolve_and_validate_ips(hostname):
     resolved_ips = list(dict.fromkeys(info[4][0] for info in addrinfo))
     for addr in resolved_ips:
         ip = ipaddress.ip_address(addr)
+        # Normalize IPv4-mapped IPv6 (::ffff:127.0.0.1) so it is checked against IPv4 blocklists.
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
         for network in BLOCKED_NETWORKS:
             if ip in network:
                 raise ValueError(f"Access to private/internal addresses is not allowed ({addr})")

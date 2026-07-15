@@ -35,6 +35,9 @@ SO-CRATES's backend is split into domain modules. Do not add new logic directly 
 | `validators.py` | Pure input validation (no HTTP, no I/O). IP/port checks, filename sanitization, URL safety, PCAP magic bytes, ZIP slip prevention. |
 | `suricata_analyzer.py` | Anything related to Suricata lifecycle: config setup, rule downloads, spawning subprocesses, processing locks, file extraction. |
 | `yara_analyzer.py` | YARA scanning: executable checks, rules download/setup, scanning extracted files, parsing output. |
+| `sigma_analyzer.py` | Sigma rule conversion/execution via Zircolite, importing log events, querying Sigma alerts. |
+| `file_analyzer.py` | Lightweight file metadata extraction (magic, hashes, strings). |
+| `exif_analyzer.py` | EXIF metadata extraction for image/media files. |
 | `db.py` | SQLite schema changes, new query functions, index optimization, bulk loading logic. |
 | `models.py` | New Suricata event field extraction helpers (parsing JSON fields into typed values). |
 | `config.py` | Application-wide constants: size limits, timeouts, thresholds. Adjust here for different deployments. |
@@ -52,36 +55,38 @@ The frontend is split into three files under `static/`:
 
 | File | Content |
 |---|---|
-| `socrates.html` | HTML shell (no inline CSS/JS) |
+| `socrates.html` | HTML shell (one minimal inline theme-restore script in `<head>` to prevent FOUC; otherwise no inline CSS/JS) |
 | `static/socrates.css` | All styles |
 | `static/socrates.js` | All JavaScript |
 
 `socrates.html` references them via `<link rel="stylesheet" href="static/socrates.css">` and `<script src="static/socrates.js"></script>`.
 
-When updating styles or frontend logic, edit the appropriate split file. Keep `socrates.html` free of inline `<style>` and `<script>` blocks.
+When updating styles or frontend logic, edit the appropriate split file. Keep `socrates.html` free of inline `<style>` blocks. The single inline `<script>` in `<head>` restores the user's theme before the first paint; keep it minimal and fault-tolerant.
 
 ### Theming Conventions
 
-SO-CRATES supports three themes via CSS custom properties:
+SO-CRATES supports four themes via CSS custom properties:
 
-- **Dark Mode** (default)
-- **Light Mode**
-- **Hacker Mode** — green-on-black terminal aesthetic with a subtle code-rain background
+- **Midnight** (default dark theme)
+- **Matte Black** — AMOLED-style dark theme with orange/yellow accents
+- **Hacker** — green-on-black terminal aesthetic with a subtle code-rain background
+- **Daylight** (light theme)
 
 - **Use CSS variables** (`var(--bg-primary)`, `var(--text-primary)`, `var(--accent)`, etc.) instead of hardcoded hex values for all structural/theme colors.
-- **Add theme overrides** in the appropriate `[data-theme="..."]` block (`light` or `hacker`) when a default dark color lacks contrast or does not match the theme's aesthetic.
+- **Add theme overrides** in the appropriate `[data-theme="..."]` block (e.g., `light`, `hacker`, or `matte-black`) when a default dark color lacks contrast or does not match the theme's aesthetic.
 - **Preserve hardcoded colors** only for functional/data-driven elements (event type colors, severity colors, ASCII transcript direction colors) that must stay consistent across themes.
 - **Use `currentColor`** for inline SVG icons so they inherit the surrounding text color and adapt automatically.
 - **Avoid emojis** for UI icons when possible — use inline SVGs instead, since emojis render as full-color system glyphs that ignore CSS `color` and may be invisible in one theme.
 
-Theme selection is a flat list in the gear icon menu in the upper right corner. The user's choice is persisted to `localStorage` as `socrates-theme` and restored on page load to prevent a flash of unstyled content.
+Theme selection is in the gear icon menu in the upper right corner. The menu shows **Help** first, then a divider, then the **Dark Themes** section (Midnight, Matte Black, Hacker), followed by the **Light Themes** section (Daylight). Hovering a theme name previews it temporarily; clicking commits it. The user's choice is persisted to `localStorage` as `socrates-theme` and restored on page load to prevent a flash of unstyled content.
 
 To add a new theme:
 
-1. Add it to the `THEMES` registry and `setTheme()` logic in `static/socrates.js`.
+1. Add it to the `THEMES` registry and `setTheme()`/`previewTheme()` logic in `static/socrates.js`.
 2. Add a `[data-theme="your-name"]` CSS override block in `static/socrates.css`.
-3. Add the corresponding menu button to the gear menu in `socrates.html`.
-4. Add any theme-specific runtime behavior (e.g. background effects) and gate it on `getCurrentTheme()`.
+3. Add the corresponding menu button under the correct section in the static `socrates.html` menu and in the `renderGearMenu()` helper in `static/socrates.js`. The button should use `onmouseenter="previewTheme('your-name')"`, `onmouseleave="revertTheme()"`, and `onclick="commitTheme('your-name')"`.
+4. If the theme needs a custom favicon, add the SVG file and update `updateFavicon()` in `static/socrates.js`.
+5. Add any theme-specific runtime behavior (e.g. background effects) and gate it on `getCurrentTheme()`.
 
 ## README Maintenance
 

@@ -26,6 +26,50 @@ def has_internet_access():
     return is_host_reachable('rules.emergingthreats.net', 80, timeout=5)
 
 
+def _enable_app_layer_protocols(config_content, protocols=('pgsql', 'modbus', 'dnp3', 'enip')):
+    """Enable disabled app-layer protocols in a suricata.yaml string.
+
+    Suricata sometimes places comment lines between the protocol header and
+    the `enabled:` key (e.g. modbus), so the regex tolerates intervening
+    comments/blank lines.
+    """
+    for proto in protocols:
+        config_content = re.sub(
+            rf'(?m)^(\s+{proto}:\s*\n(?:\s*#.*\n)*\s+)enabled:\s*no',
+            r'\1enabled: yes',
+            config_content
+        )
+    return config_content
+
+
+def _enable_eve_log_protocol_types(config_content, protocols=('modbus', 'dnp3')):
+    """Enable EVE logging for protocols that are supported but not logged by default.
+
+    Suricata 7 supports `event_type: modbus` and `event_type: dnp3` records, but
+    neither is listed in the default eve-log `types` block. PostgreSQL is listed
+    but disabled by default. This helper turns on the pgsql logger and adds the
+    others just before the `stats` entry so they appear as standalone events.
+    """
+    new_types = [f'        - {p}:\n' for p in protocols
+                 if f'        - {p}:' not in config_content]
+
+    def _replace_pgsql_block(m):
+        block = m.group(1)
+        # Enable the pgsql logger if it is currently disabled.
+        block = re.sub(
+            r'(?m)^(            enabled:) no$',
+            r'\1 yes',
+            block
+        )
+        return block + ''.join(new_types) + m.group(2)
+
+    return re.sub(
+        r'(?m)^(        - pgsql:\s*\n(?:            .*\n)+)(        - stats:)',
+        _replace_pgsql_block,
+        config_content
+    )
+
+
 def setup_suricata_config(data_dir=None):
     if data_dir is None:
         data_dir = os.path.expanduser('~/socrates-data')
@@ -60,12 +104,8 @@ def setup_suricata_config(data_dir=None):
         with open(suricata_config, 'r') as f:
             config_content = f.read()
         config_content = config_content.replace('/var/lib/suricata/rules', suricata_rules_dir)
-        for proto in ('pgsql', 'modbus', 'dnp3', 'enip'):
-            config_content = re.sub(
-                rf'(\s+{proto}:\s*\n\s+)enabled:\s*no',
-                r'\1enabled: yes',
-                config_content
-            )
+        config_content = _enable_app_layer_protocols(config_content)
+        config_content = _enable_eve_log_protocol_types(config_content)
         # Enable file-store output for extracted file analysis
         config_content = re.sub(
             r'(\s+file-store:\s*\n\s+version:\s*\d+\s*\n\s+)enabled:\s*no',
@@ -81,9 +121,12 @@ def setup_suricata_config(data_dir=None):
             f.write(config_content)
 
     disable_conf = os.path.join(suricata_dir, 'disable.conf')
-    if not os.path.exists(disable_conf):
-        with open(disable_conf, 'w') as f:
-            f.write('re:classtype:protocol-command-decode\n')
+    # Suppress noisy protocol-command-decode event rules while still leaving
+    # the protocol parsers enabled. This keeps the protocol event metadata
+    # (e.g. event_type: modbus) without generating an alert for every parser
+    # anomaly.
+    with open(disable_conf, 'w') as f:
+        f.write('re:classtype:protocol-command-decode\n')
 
     rules_exist = os.path.exists(os.path.join(suricata_rules_dir, 'suricata.rules'))
     baked_in_rules_dir = '/usr/share/suricata/rules'
@@ -94,8 +137,9 @@ def setup_suricata_config(data_dir=None):
         print("Internet access detected — updating Suricata rules...")
         try:
             subprocess.run(
-                ['suricata-update', '--no-test', '-c', suricata_config, '--data-dir', suricata_dir, '--disable-conf', disable_conf, '--output', suricata_rules_dir],
-                timeout=config.SURICATA_UPDATE_TIMEOUT
+                ['suricata-update', '--no-test', '--suricata-conf', suricata_config, '--data-dir', suricata_dir, '--disable-conf', disable_conf, '--output', suricata_rules_dir],
+                timeout=config.SURICATA_UPDATE_TIMEOUT,
+                check=True
             )
             print("Suricata rules updated successfully")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:

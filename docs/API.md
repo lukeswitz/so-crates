@@ -16,7 +16,7 @@ Redirects to `/socrates.html`.
 
 Returns the running SO-CRATES version.
 
-**Response:** `{"version": "2.0.0"}`
+**Response:** `{"version": "2.1.0"}`
 
 ---
 
@@ -28,8 +28,8 @@ Returns event data from Suricata's eve.json (via SQLite index or direct JSON par
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
-| `md5` | No | current session | MD5 hash of a historical analysis |
-| `type` | No | all | Filter by event type (`alert`, `dns`, `http`, `tls`, `flow`, `ftp`, `anomaly`, `fileinfo`, `filealerts`) |
+| `md5` | No | none | MD5 hash of a historical analysis (returns an empty array if omitted) |
+| `type` | No | all | Filter by event type (`alert`, `dns`, `http`, `tls`, `flow`, `ftp`, `anomaly`, `fileinfo`, `filealerts`, `dnp3`, `modbus`, `pgsql`, `log`, `sigmaalert`) |
 | `q` | No | none | Full-text search query (searches all event JSON). Multiple `q` params AND together. |
 | `offset` | No | `0` | Pagination offset |
 | `limit` | No | `1000` | Max events to return (capped at 5000) |
@@ -54,7 +54,7 @@ Returns event-type counts for the current or specified analysis.
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
-| `md5` | No | current session | MD5 hash of a historical analysis |
+| `md5` | Yes | — | MD5 hash of a historical analysis |
 | `q` | No | none | Full-text search query (counts only matching events). Multiple `q` params AND together. |
 
 **Response:** Object mapping event type to count.
@@ -74,7 +74,7 @@ Returns total event count, optionally filtered by type or search query.
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
-| `md5` | No | current session | MD5 hash of a historical analysis |
+| `md5` | Yes | — | MD5 hash of a historical analysis |
 | `type` | No | all | Filter by event type |
 | `q` | No | none | Full-text search query (counts only matching events). Multiple `q` params AND together. |
 
@@ -94,7 +94,7 @@ Carves a single TCP/UDP stream from the PCAP using `tcpdump` and returns it as a
 | `sport` | Yes | Source port |
 | `dst` | Yes | Destination IP address |
 | `dport` | Yes | Destination port |
-| `md5` | No | MD5 hash of a historical analysis (defaults to current session) |
+| `md5` | Yes | MD5 hash of a historical analysis |
 
 **Response:** `application/vnd.tcpdump.pcap` file download.
 
@@ -114,7 +114,7 @@ Extracts ASCII payload from a TCP/UDP stream using `tshark`. Tries TCP first, fa
 | `sport` | Yes | Source port |
 | `dst` | Yes | Destination IP address |
 | `dport` | Yes | Destination port |
-| `md5` | No | MD5 hash of a historical analysis (defaults to current session) |
+| `md5` | Yes | MD5 hash of a historical analysis |
 
 **Response:** `text/plain` — decoded ASCII transcript. Non-printable characters replaced with `.`.
 
@@ -132,7 +132,7 @@ Extracts per-packet hex dumps from a TCP/UDP stream using `tcpdump -X`. Truncate
 | `sport` | Yes | Source port |
 | `dst` | Yes | Destination IP address |
 | `dport` | Yes | Destination port |
-| `md5` | No | MD5 hash of a historical analysis (defaults to current session) |
+| `md5` | Yes | MD5 hash of a historical analysis |
 
 **Response:** `application/json` — `{"packets": [{"header": "...", "lines": ["..."]}], "truncated": false}`.
 
@@ -150,7 +150,7 @@ Lists all previously-analyzed files.
 
 ### `GET /api/load-analysis`
 
-Loads a historical analysis by MD5, setting it as the current session.
+Loads a historical analysis by MD5.
 
 **Query Parameters:**
 
@@ -181,6 +181,61 @@ Returns the filesystem path to the PCAP file in an MD5 directory.
 
 ---
 
+### `GET /api/status`
+
+Same status information as `POST /api/check-status`, but accessible via query parameters for read-only polling.
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|---|---|---|
+| `md5` | Yes | MD5 hash of the analysis |
+
+**Response:**
+```json
+{"status": "ready"}
+```
+or
+```json
+{"status": "processing", "phase": "network"}
+```
+
+**Errors:** `400` for invalid MD5. `404` if analysis not found.
+
+---
+
+### `GET /api/sigma-alerts`
+
+Returns Sigma alerts stored in `events.db` for the specified analysis.
+
+**Query Parameters:**
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `md5` | No | none | MD5 hash of a historical analysis (returns an empty array if omitted) |
+| `offset` | No | `0` | Pagination offset |
+| `limit` | No | `1000` | Max alerts to return (capped at 5000) |
+| `severity` | No | none | Filter by severity level |
+| `q` | No | none | Full-text search query. Multiple `q` params AND together. |
+
+**Response:** Array of Sigma alert objects.
+
+---
+
+### `GET /api/sigma-stats`
+
+Returns Sigma alert statistics (counts grouped by severity/rule/etc.) for the specified analysis.
+
+**Query Parameters:**
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `md5` | No | none | MD5 hash of a historical analysis (returns an empty object if omitted) |
+
+**Response:** Object mapping statistic names to counts.
+
+---
+
 ## POST Endpoints
 
 ### `POST /api/upload`
@@ -191,7 +246,19 @@ Uploads a file for analysis. Accepts multipart form data.
 
 **Response (new file):**
 ```json
-{"status": "processing", "md5": "<hash>"}
+{"status": "processing", "md5": "<hash>", "phase": "network"}
+```
+
+or for non-PCAP files:
+
+```json
+{"status": "processing", "md5": "<hash>", "phase": "files"}
+```
+
+or for log files:
+
+```json
+{"status": "processing", "md5": "<hash>", "phase": "logs"}
 ```
 
 **Response (already analyzed):**
@@ -200,14 +267,15 @@ Uploads a file for analysis. Accepts multipart form data.
 ```
 
 **Processing flow:**
-1. Detects file type (PCAP magic bytes or `.zip` extension)
+1. Detects file type (PCAP magic bytes, log content, or `.zip` extension)
 2. Computes MD5 hash
 3. If already analyzed (`eve.json` for PCAPs, `events.db` for non-PCAPs), returns `ready`
-4. For PCAPs: saves file, spawns Suricata in background thread, returns `processing`
-5. For non-PCAPs: saves file, runs YARA scan in background thread, returns `processing`
-6. When analysis finishes, results are indexed into SQLite (`events.db`)
+4. For PCAPs: saves file, spawns Suricata in background thread, returns `processing` with `phase: "network"`
+5. For log files: saves file and imports them into `events.db` in the background, returns `processing` with `phase: "logs"`
+6. For other files: saves file, runs YARA/EXIF scans in the background, returns `processing` with `phase: "files"`
+7. When analysis finishes, results are available in `events.db` (or `eve.json` for PCAPs)
 
-**Client should poll** `GET /api/check-status` with the returned MD5 to know when analysis is complete.
+**Client should poll** `POST /api/check-status` with the returned MD5 to know when analysis is complete.
 
 ---
 
@@ -220,7 +288,7 @@ Downloads a file from a URL and analyzes it.
 {"url": "https://example.com/capture.pcap"}
 ```
 
-**Response:** Same as `/api/upload` — `{"status": "processing", "md5": "..."}` or `{"status": "ready", "md5": "..."}`.
+**Response:** Same as `/api/upload` — `{"status": "processing", "md5": "...", "phase": "..."}` or `{"status": "ready", "md5": "..."}`.
 
 **Special handling:**
 - Password-protected zips from `malware-traffic-analysis.net` are auto-decrypted using the date-based password format (`infected_YYYYMMDD`)
@@ -246,8 +314,10 @@ Polls whether analysis has finished for an uploaded file.
 ```
 or
 ```json
-{"status": "processing"}
+{"status": "processing", "phase": "network"}
 ```
+
+The `phase` field reflects the current analysis stage (`network`, `logs`, or `files`).
 
 **Ready detection:** For PCAPs, checks that `eve.json` exists and `events.db` is present. For other files, checks that `events.db` exists.
 
@@ -266,10 +336,10 @@ The `phase` field is optional and defaults based on file type (`network` for PCA
 
 **Response:**
 ```json
-{"success": true}
+{"status": "processing", "md5": "<hash>", "phase": "network"}
 ```
 
-**Errors:** `400` for invalid MD5 or unsafe path. `404` if analysis not found.
+**Errors:** `400` for invalid MD5 or unsafe path. `404` if analysis not found. `409` if analysis is already in progress.
 
 ---
 
