@@ -68,7 +68,7 @@ When updating styles or frontend logic, edit the appropriate split file. Keep `s
 SO-CRATES supports four themes via CSS custom properties:
 
 - **Midnight** (default dark theme)
-- **Matte Black** — AMOLED-style dark theme with orange/yellow accents
+- **Matte Black** — dark theme with orange/yellow accents
 - **Hacker** — green-on-black terminal aesthetic with a subtle code-rain background
 - **Daylight** (light theme)
 
