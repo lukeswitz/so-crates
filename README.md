@@ -197,7 +197,8 @@ Then transfer so-crates.tar to the isolated network via USB or other media. On t
 ```bash
 podman load < so-crates.tar
 podman run --userns=keep-id --user $(id -u):$(id -g) \
-  -v $HOME/socrates-data:/data -p 8000:8000 ghcr.io/dougburks/so-crates:main
+  -v $HOME/socrates-data:/data:Z -p 8000:8000 \
+  ghcr.io/dougburks/so-crates:main
 ```
 
 #### Build Your Own Podman Image
@@ -210,7 +211,8 @@ cd so-crates
 podman build -t so-crates .
 mkdir -p ~/socrates-data
 podman run --userns=keep-id --user $(id -u):$(id -g) \
-  -v $HOME/socrates-data:/data -p 8000:8000 so-crates
+  -v $HOME/socrates-data:/data:Z -p 8000:8000 \
+  so-crates
 ```
 
 ## Manual Installation
