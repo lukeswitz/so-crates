@@ -42,6 +42,7 @@
         const THEMES = {
             dark: { label: 'Midnight' },
             light: { label: 'Daylight' },
+            sguil: { label: 'Sguil' },
             hacker: { label: 'Hacker' },
             'matte-black': { label: 'Matte Black' },
         };
@@ -98,7 +99,7 @@
         }
 
         function toggleTheme() {
-            const order = ['dark', 'matte-black', 'hacker', 'light'];
+            const order = ['dark', 'matte-black', 'hacker', 'light', 'sguil'];
             const current = getCurrentTheme();
             const nextIndex = (order.indexOf(current) + 1) % order.length;
             const nextTheme = order[nextIndex];
@@ -150,6 +151,12 @@
                                 onmouseleave="revertTheme()"
                                 onclick="commitTheme('light')">
                             <span>Daylight</span>
+                        </button>
+                        <button class="app-header-menu-item"
+                                onmouseenter="previewTheme('sguil')"
+                                onmouseleave="revertTheme()"
+                                onclick="commitTheme('sguil')">
+                            <span>Sguil</span>
                         </button>
                     </div>
                 </div>`;
@@ -254,6 +261,8 @@
                 favicon = 'static/favicon-hacker.svg';
             } else if (theme === 'matte-black') {
                 favicon = 'static/favicon-matte-black.svg';
+            } else if (theme === 'sguil') {
+                favicon = 'static/favicon-sguil.svg';
             }
             link.href = favicon;
         }
@@ -680,9 +689,9 @@
         }
         
         function htmlRow(label, innerHtml, className, style) {
-            const cls = className ? ` class="${className}"` : '';
+            const valueCls = className ? `detail-value ${className}` : 'detail-value';
             const sty = style ? ` style="${style}"` : '';
-            return `<span style="color: var(--text-muted);">${escapeHtml(label)}</span><span${cls}${sty}>${innerHtml}</span>`;
+            return `<span class="detail-label">${escapeHtml(label)}</span><span class="${valueCls}"${sty}>${innerHtml}</span>`;
         }
         
         function htmlRowText(label, text, className, style) {
@@ -1213,7 +1222,7 @@
                 previousAnalysisCount = analyses.length;
                 if (analyses.length > 0) {
                     previousHtml = analyses.map(a => 
-                        `<div style="display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--bg-hover);">
+                        `<div class="previous-analysis-row" style="display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--bg-hover);">
                             <a href="?file=${escapeHtml(a.md5)}" onclick="event.preventDefault(); loadAnalysis('${escapeJsString(a.md5)}');" style="color: var(--accent); text-decoration: none; flex: 1;">${FOLDER_ICON_SVG}${escapeHtml(a.name)}</a>
                             <button data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="reanalyze" style="background: var(--bg-hover); border: none; color: var(--accent); cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="Re-analyze">${REFRESH_ICON_SVG}</button>
                             <button class="previous-analysis-delete" data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="delete" style="background: var(--bg-hover); border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px;" title="Delete">${DELETE_ICON_SVG}</button>
@@ -1272,16 +1281,16 @@
                              </div>
                          </div>
                      </div>
-                      <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover);">
-                          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                              <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; font-weight: 600;">${FOLDER_OPEN_ICON_SVG} Previous Analyses</div>
-                              ${deleteAllButtonHtml}
-                          </div>
-                         <div id="previousAnalysesList">${previousHtml}</div>
-                     </div>
+                       <div class="previous-analyses-section" style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover);">
+                           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                               <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; font-weight: 600;">${FOLDER_OPEN_ICON_SVG} Previous Analyses</div>
+                               ${deleteAllButtonHtml}
+                           </div>
+                          <div id="previousAnalysesList">${previousHtml}</div>
+                      </div>
                     <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover); margin-top: 20px;">
                         <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 10px; text-align: center;">SO-CRATES provides basic analysis. Need more advanced functionality?<br>Take a look at the full <a href="https://securityonion.net" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion</a> platform available in a free Community Edition!<br>If you need enterprise features, consider upgrading to <a href="https://securityonion.com/pro" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion Pro</a>!</div>
-                        <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+                        <table class="feature-table" style="width: 100%; border-collapse: collapse; margin-top: 15px;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--bg-hover);">
                                     <th style="text-align: left; padding: 10px; color: var(--text-muted); font-size: 0.8rem; text-transform: none; cursor: default;">Feature</th>
@@ -1449,7 +1458,7 @@
                 e.preventDefault();
                 toggleTheme();
             }
-            // Easter egg: type "31337" anywhere outside of input fields to activate Hacker theme.
+            // Easter eggs: type "31337" for Hacker theme or "sguil" for Sguil theme.
             const tag = e.target.tagName;
             const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable;
             if (!isTyping && e.key.length === 1) {
@@ -1463,11 +1472,19 @@
                     showToast('Switched to Hacker theme. You are truly 31337!');
                     keyBuffer = '';
                 }
+                if (keyBuffer === 'sguil') {
+                    e.preventDefault();
+                    setTheme('sguil');
+                    showToast('Switched to Sguil theme.');
+                    keyBuffer = '';
+                }
             }
         });
 
         function showToast(message) {
+            document.querySelectorAll('.socrates-toast').forEach(t => t.remove());
             const toast = document.createElement('div');
+            toast.className = 'socrates-toast';
             toast.textContent = message;
             toast.style.cssText = 'position: fixed; bottom: 20px; right: 20px; background: var(--bg-secondary); color: var(--accent); border: 1px solid var(--accent); padding: 12px 20px; border-radius: 6px; font-family: inherit; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: opacity 0.5s;';
             document.body.appendChild(toast);

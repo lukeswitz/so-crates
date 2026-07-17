@@ -13,6 +13,7 @@ CSS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'stati
 FAVICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon.svg')
 FAVICON_HACKER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-hacker.svg')
 FAVICON_MATTE_BLACK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-matte-black.svg')
+FAVICON_SGUIL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-sguil.svg')
 
 with open(HTML_PATH, 'r') as f:
     HTML_CONTENT = f.read()
@@ -73,6 +74,10 @@ class TestHTMLStructure(unittest.TestCase):
         """static/favicon-matte-black.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_MATTE_BLACK_PATH), 'static/favicon-matte-black.svg must exist')
 
+    def test_favicon_sguil_file_exists(self):
+        """static/favicon-sguil.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_SGUIL_PATH), 'static/favicon-sguil.svg must exist')
+
     def test_favicon_link_in_head(self):
         """HTML must link to the SVG favicon in <head>."""
         head = HTML_CONTENT.split('</head>')[0]
@@ -88,6 +93,8 @@ class TestHTMLStructure(unittest.TestCase):
                       'updateFavicon must reference the Hacker favicon')
         self.assertIn('favicon-matte-black.svg', JS_CONTENT,
                       'updateFavicon must reference the Matte Black favicon')
+        self.assertIn('favicon-sguil.svg', JS_CONTENT,
+                      'updateFavicon must reference the Sguil favicon')
         self.assertIn('getCurrentTheme()', JS_CONTENT,
                       'updateFavicon must check the current theme')
 
@@ -979,7 +986,7 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Menu dropdown container must exist in HTML')
 
     def test_theme_options_in_menu(self):
-        for theme in ('dark', 'light', 'hacker', 'matte-black'):
+        for theme in ('dark', 'light', 'sguil', 'hacker', 'matte-black'):
             self.assertIn(f"commitTheme('{theme}')", HTML_CONTENT,
                           f'{theme} theme option must commit on click')
             self.assertIn(f"previewTheme('{theme}')", HTML_CONTENT,
@@ -1111,18 +1118,21 @@ class TestThemeAndMenu(unittest.TestCase):
                       'CSS must define --accent custom property')
 
     def test_help_icon_color_variable_exists_per_theme(self):
-        """Each theme must define --help-icon-color (yellow in dark/light, green in hacker)."""
+        """Each theme must define --help-icon-color."""
         self.assertIn('--help-icon-color:', CSS_CONTENT,
                       'CSS must define --help-icon-color custom property')
         # Verify the variable appears inside each theme block.
         root_block = CSS_CONTENT.split(':root {')[1].split('}')[0]
         light_block = CSS_CONTENT.split('[data-theme="light"] {')[1].split('}')[0]
+        sguil_block = CSS_CONTENT.split('[data-theme="sguil"] {')[1].split('}')[0]
         hacker_block = CSS_CONTENT.split('[data-theme="hacker"] {')[1].split('}')[0]
         matte_black_block = CSS_CONTENT.split('[data-theme="matte-black"] {')[1].split('}')[0]
         self.assertIn('--help-icon-color:', root_block,
                       'Dark theme must define --help-icon-color')
         self.assertIn('--help-icon-color:', light_block,
                       'Light theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', sguil_block,
+                      'Sguil theme must define --help-icon-color')
         self.assertIn('--help-icon-color:', hacker_block,
                       'Hacker theme must define --help-icon-color')
         self.assertIn('--help-icon-color:', matte_black_block,
@@ -1180,6 +1190,10 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('[data-theme="matte-black"]', CSS_CONTENT,
                       'CSS must have a Matte Black theme override block')
 
+    def test_sguil_theme_override_exists(self):
+        self.assertIn('[data-theme="sguil"]', CSS_CONTENT,
+                      'CSS must have a Sguil theme override block')
+
     def test_code_rain_canvas_exists(self):
         self.assertIn('id="codeRain"', HTML_CONTENT,
                       'HTML must include a code-rain canvas for Hacker')
@@ -1199,6 +1213,10 @@ class TestThemeAndMenu(unittest.TestCase):
     def test_matte_black_theme_in_registry(self):
         self.assertIn("'matte-black':", JS_CONTENT,
                       'THEMES registry must include the matte-black theme')
+
+    def test_sguil_theme_in_registry(self):
+        self.assertIn("sguil:", JS_CONTENT,
+                      'THEMES registry must include the sguil theme')
 
     def test_hacker_search_btn_override(self):
         self.assertIn('[data-theme="hacker"] .search-btn', CSS_CONTENT,
