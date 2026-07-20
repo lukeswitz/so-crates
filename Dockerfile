@@ -60,8 +60,22 @@ COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Bake Suricata rules into image for air-gapped deployments
+# Enable protocols that are disabled by default so their rules are included.
+RUN python3 - <<'PY'
+import re
+with open('/etc/suricata/suricata.yaml', 'r') as f:
+    content = f.read()
+for proto in ('pgsql', 'modbus', 'dnp3', 'enip'):
+    content = re.sub(
+        rf'(?m)^(\s+{proto}:\s*\n(?:\s*#.*\n)*\s+)enabled:\s*no',
+        r'\1enabled: yes',
+        content
+    )
+with open('/etc/suricata/suricata.yaml', 'w') as f:
+    f.write(content)
+PY
 RUN mkdir -p /usr/share/suricata/rules && \
-    suricata-update --no-test --data-dir /usr/share/suricata --output /usr/share/suricata/rules
+    suricata-update --no-test --suricata-conf /etc/suricata/suricata.yaml --data-dir /usr/share/suricata --output /usr/share/suricata/rules
 
 # Bake YARA Forge rules into image for air-gapped deployments
 RUN mkdir -p /usr/share/yara-rules && \

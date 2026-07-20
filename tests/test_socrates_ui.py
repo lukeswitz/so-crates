@@ -12,6 +12,8 @@ JS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static
 CSS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'socrates.css')
 FAVICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon.svg')
 FAVICON_HACKER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-hacker.svg')
+FAVICON_MATTE_BLACK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-matte-black.svg')
+FAVICON_SGUIL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-sguil.svg')
 
 with open(HTML_PATH, 'r') as f:
     HTML_CONTENT = f.read()
@@ -68,6 +70,14 @@ class TestHTMLStructure(unittest.TestCase):
         """static/favicon-hacker.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_HACKER_PATH), 'static/favicon-hacker.svg must exist')
 
+    def test_favicon_matte_black_file_exists(self):
+        """static/favicon-matte-black.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_MATTE_BLACK_PATH), 'static/favicon-matte-black.svg must exist')
+
+    def test_favicon_sguil_file_exists(self):
+        """static/favicon-sguil.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_SGUIL_PATH), 'static/favicon-sguil.svg must exist')
+
     def test_favicon_link_in_head(self):
         """HTML must link to the SVG favicon in <head>."""
         head = HTML_CONTENT.split('</head>')[0]
@@ -80,9 +90,13 @@ class TestHTMLStructure(unittest.TestCase):
         self.assertIn('function updateFavicon(', JS_CONTENT,
                       'updateFavicon function must exist')
         self.assertIn('favicon-hacker.svg', JS_CONTENT,
-                      'updateFavicon must reference the Hacker Mode favicon')
-        self.assertIn('getCurrentTheme() === \'hacker\'', JS_CONTENT,
-                      'updateFavicon must check for Hacker Mode')
+                      'updateFavicon must reference the Hacker favicon')
+        self.assertIn('favicon-matte-black.svg', JS_CONTENT,
+                      'updateFavicon must reference the Matte Black favicon')
+        self.assertIn('favicon-sguil.svg', JS_CONTENT,
+                      'updateFavicon must reference the Sguil favicon')
+        self.assertIn('getCurrentTheme()', JS_CONTENT,
+                      'updateFavicon must check the current theme')
 
     def test_valid_doctype(self):
         self.assertTrue(HTML_CONTENT.startswith('<!DOCTYPE html>'))
@@ -187,13 +201,6 @@ class TestCSSLayout(unittest.TestCase):
                       'Long content must wrap with break-word')
         self.assertIn('table-layout: fixed', CSS_CONTENT,
                       'Table must use fixed layout to prevent expansion beyond viewport')
-
-    def test_stream_output_breaks_on_dots(self):
-        """Modal stream output must break on non-word characters like dots."""
-        self.assertIn('.stream-output {', CSS_CONTENT,
-                      'stream-output style must exist')
-        self.assertIn('word-break: break-all', CSS_CONTENT,
-                      'stream-output must break on dots and non-word characters')
 
     def test_detail_row_allows_text_wrapping(self):
         """Detail rows must override the global td nowrap so content can wrap."""
@@ -473,6 +480,10 @@ class TestJavaScriptLogic(unittest.TestCase):
         self.assertIn('&lt;', JS_CONTENT)
         self.assertIn('&gt;', JS_CONTENT)
         self.assertIn('&quot;', JS_CONTENT)
+
+    def test_error_message_escapes_event_type_label(self):
+        self.assertIn("escapeHtml(typeLabels[eventType] || eventType.toUpperCase())", JS_CONTENT,
+                      'Tab error message must escape the event type label before innerHTML')
 
     def test_sort_table_toggles_direction(self):
         self.assertIn('sort-asc', JS_CONTENT)
@@ -866,6 +877,31 @@ class TestUXFeatures(unittest.TestCase):
         self.assertIn('.view-tabs', CSS_CONTENT)
         self.assertIn('.view-tab', CSS_CONTENT)
 
+    def test_payload_container_uses_data_attributes(self):
+        """Payload container must store stream params in data-* attributes, not in a raw id."""
+        self.assertIn('class="stream-payload"', JS_CONTENT,
+                      'Payload container must use a stream-payload class')
+        self.assertIn('data-src-ip="', JS_CONTENT,
+                      'Payload container must store src IP in a data attribute')
+        self.assertIn('data-dst-ip="', JS_CONTENT,
+                      'Payload container must store dst IP in a data attribute')
+        self.assertIn("escapeHtml(e.src_ip)", JS_CONTENT,
+                      'Payload container must HTML-escape src IP')
+        self.assertIn("escapeHtml(e.dest_ip)", JS_CONTENT,
+                      'Payload container must HTML-escape dst IP')
+        self.assertNotIn('id="ascii-${e.src_ip}', JS_CONTENT,
+                         'Payload container must not build id from raw src IP')
+
+    def test_all_events_filter_refreshes_correctly(self):
+        """refreshCurrentView must use buildAllEvents for the 'all' section."""
+        func = JS_CONTENT.split('function refreshCurrentView(')[1].split('function applyFilters')[0]
+        self.assertIn("if (eventType === 'all')", func,
+                      'refreshCurrentView must special-case the all-events section')
+        self.assertIn('buildAllEvents();', func,
+                      'refreshCurrentView must call buildAllEvents for all-events')
+        self.assertIn('buildAggregationsSectionAll();', func,
+                      'refreshCurrentView must call buildAggregationsSectionAll for all-events')
+
     def test_hexdump_packet_css(self):
         self.assertIn('.packet-block', CSS_CONTENT)
         self.assertIn('.packet-header', CSS_CONTENT)
@@ -950,16 +986,128 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Menu dropdown container must exist in HTML')
 
     def test_theme_options_in_menu(self):
-        self.assertIn('setTheme(\'dark\'); closeMenu();', HTML_CONTENT,
-                      'Dark mode option must be inside the menu')
-        self.assertIn('setTheme(\'light\'); closeMenu();', HTML_CONTENT,
-                      'Light mode option must be inside the menu')
-        self.assertIn('setTheme(\'hacker\'); closeMenu();', HTML_CONTENT,
-                      'Hacker mode option must be inside the menu')
+        for theme in ('dark', 'light', 'sguil', 'hacker', 'matte-black'):
+            self.assertIn(f"commitTheme('{theme}')", HTML_CONTENT,
+                          f'{theme} theme option must commit on click')
+            self.assertIn(f"previewTheme('{theme}')", HTML_CONTENT,
+                          f'{theme} theme option must preview on hover')
+        self.assertIn('revertTheme()', HTML_CONTENT,
+                      'Theme options must revert on mouseleave')
+
+    def test_theme_header_separate_class(self):
+        """Theme section headings must be distinct non-interactive headers."""
+        self.assertIn('class="app-header-menu-header"', HTML_CONTENT,
+                      'Theme heading must use app-header-menu-header class')
+        self.assertIn('>Dark Themes</div>', HTML_CONTENT,
+                      'Dark Themes heading must exist in menu')
+        self.assertIn('>Light Themes</div>', HTML_CONTENT,
+                      'Light Themes heading must exist in menu')
+        self.assertNotIn('>Theme</div>', HTML_CONTENT,
+                         'Old single Theme heading must be removed')
+        self.assertIn('.app-header-menu-header {', CSS_CONTENT,
+                      'CSS must define app-header-menu-header styling')
+        header_block = CSS_CONTENT.split('.app-header-menu-header {')[1].split('}')[0]
+        self.assertIn('text-transform: uppercase', header_block,
+                      'Theme heading must be uppercase')
+        self.assertIn('color: var(--text-muted)', header_block,
+                      'Theme heading must use muted text color')
+
+    def test_theme_menu_items_have_no_icons(self):
+        """Theme menu items must be plain text; old theme icon classes must be gone."""
+        for cls in ['theme-icon-dark', 'theme-icon-light', 'theme-icon-hacker']:
+            self.assertNotIn(cls, HTML_CONTENT,
+                             f'{cls} must not appear in HTML after removing theme icons')
+            self.assertNotIn(cls, JS_CONTENT,
+                             f'{cls} must not appear in JS after removing theme icons')
 
     def test_help_in_menu_not_standalone(self):
         self.assertIn('onclick="showHelpModal(); closeMenu();"', HTML_CONTENT,
                       'Help button must be inside the menu dropdown')
+
+    def test_help_appears_before_theme_header(self):
+        """REGRESSION: Help must be at the top of the gear menu, followed by
+        the Dark Themes section."""
+        help_index = HTML_CONTENT.find('onclick="showHelpModal(); closeMenu();"')
+        dark_index = HTML_CONTENT.find('>Dark Themes</div>')
+        self.assertGreater(help_index, -1, 'Help button must exist in menu')
+        self.assertGreater(dark_index, -1, 'Dark Themes header must exist in menu')
+        self.assertLess(help_index, dark_index,
+                        'Help button must appear before the Dark Themes header')
+
+    def test_dark_themes_before_light_themes(self):
+        """REGRESSION: Dark themes must be grouped before Light themes."""
+        dark_index = HTML_CONTENT.find('>Dark Themes</div>')
+        light_index = HTML_CONTENT.find('>Light Themes</div>')
+        light_btn_index = HTML_CONTENT.find('commitTheme(\'light\')')
+        self.assertGreater(dark_index, -1, 'Dark Themes header must exist')
+        self.assertGreater(light_index, -1, 'Light Themes header must exist')
+        self.assertGreater(light_btn_index, -1, 'Light theme button must exist')
+        self.assertLess(dark_index, light_index,
+                        'Dark Themes header must appear before Light Themes header')
+        self.assertLess(light_index, light_btn_index,
+                        'Light Themes header must appear before Light theme button')
+
+    def test_renderGearMenu_helper_exists(self):
+        """The gear menu markup must live in a single shared helper."""
+        self.assertIn('function renderGearMenu(', JS_CONTENT,
+                      'renderGearMenu helper must exist for shared gear menu markup')
+        self.assertIn('GEAR_ICON_SVG', JS_CONTENT,
+                      'Gear icon SVG must be a shared constant')
+        self.assertGreaterEqual(JS_CONTENT.count('renderGearMenu()'), 2,
+                                'showWelcomeUI and loadAnalysis must both call renderGearMenu()')
+
+    def test_preview_commit_revert_functions_exist(self):
+        self.assertIn('function previewTheme(', JS_CONTENT,
+                      'previewTheme function must exist for hover preview')
+        self.assertIn('function revertTheme(', JS_CONTENT,
+                      'revertTheme function must exist for hover revert')
+        self.assertIn('function commitTheme(', JS_CONTENT,
+                      'commitTheme function must exist for click persistence')
+
+    def test_theme_hover_previews_and_reverts(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            toggleMenu();
+            var buttons = document.querySelectorAll('.app-header-menu-item');
+            var lightBtn = Array.from(buttons).find(function(b) {
+                return b.textContent.trim() === 'Daylight';
+            });
+            lightBtn.onmouseenter();
+            var preview = document.documentElement.getAttribute('data-theme') || 'dark';
+            lightBtn.onmouseleave();
+            var reverted = document.documentElement.getAttribute('data-theme') || 'dark';
+            window.__jsdom_result = { preview: preview, reverted: reverted };
+        ''')
+        self.assertEqual(result['preview'], 'light',
+                         'hovering a theme should preview it')
+        self.assertEqual(result['reverted'], 'dark',
+                         'leaving a theme item should revert to the baseline')
+
+    def test_theme_click_commits_and_closes_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            toggleMenu();
+            var buttons = document.querySelectorAll('.app-header-menu-item');
+            var lightBtn = Array.from(buttons).find(function(b) {
+                return b.textContent.trim() === 'Daylight';
+            });
+            lightBtn.onclick();
+            var committed = document.documentElement.getAttribute('data-theme') || 'dark';
+            var stored = localStorage.getItem('socrates-theme');
+            var dropdown = document.getElementById('appHeaderMenuDropdown');
+            window.__jsdom_result = {
+                committed: committed,
+                stored: stored,
+                menuOpen: dropdown.classList.contains('active')
+            };
+        ''')
+        self.assertEqual(result['committed'], 'light',
+                         'clicking a theme should commit it visually')
+        self.assertEqual(result['stored'], 'light',
+                         'clicking a theme should persist it to localStorage')
+        self.assertFalse(result['menuOpen'], 'clicking a theme should close the menu')
 
     def test_css_theme_variables_exist(self):
         self.assertIn('--bg-primary:', CSS_CONTENT,
@@ -970,21 +1118,29 @@ class TestThemeAndMenu(unittest.TestCase):
                       'CSS must define --accent custom property')
 
     def test_help_icon_color_variable_exists_per_theme(self):
-        """Each theme must define --help-icon-color (yellow in dark/light, green in hacker)."""
+        """Each theme must define --help-icon-color."""
         self.assertIn('--help-icon-color:', CSS_CONTENT,
                       'CSS must define --help-icon-color custom property')
         # Verify the variable appears inside each theme block.
         root_block = CSS_CONTENT.split(':root {')[1].split('}')[0]
         light_block = CSS_CONTENT.split('[data-theme="light"] {')[1].split('}')[0]
+        sguil_block = CSS_CONTENT.split('[data-theme="sguil"] {')[1].split('}')[0]
         hacker_block = CSS_CONTENT.split('[data-theme="hacker"] {')[1].split('}')[0]
+        matte_black_block = CSS_CONTENT.split('[data-theme="matte-black"] {')[1].split('}')[0]
         self.assertIn('--help-icon-color:', root_block,
                       'Dark theme must define --help-icon-color')
         self.assertIn('--help-icon-color:', light_block,
                       'Light theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', sguil_block,
+                      'Sguil theme must define --help-icon-color')
         self.assertIn('--help-icon-color:', hacker_block,
                       'Hacker theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', matte_black_block,
+                      'Matte Black theme must define --help-icon-color')
         self.assertIn('var(--accent)', hacker_block,
                       'Hacker theme --help-icon-color should map to accent green')
+        self.assertIn('var(--accent)', matte_black_block,
+                      'Matte Black theme --help-icon-color should map to accent orange')
 
     def test_light_theme_override_exists(self):
         self.assertIn('[data-theme="light"]', CSS_CONTENT,
@@ -995,20 +1151,52 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Escape key handler must call closeMenu()')
 
     def test_localStorage_theme_persistence(self):
-        self.assertIn("localStorage.setItem('socrates-theme'", JS_CONTENT,
-                      'Theme choice must be persisted to localStorage')
+        self.assertIn("safeStorageSet(localStorage, 'socrates-theme'", JS_CONTENT,
+                      'Theme choice must be persisted to localStorage via safe wrapper')
+
+    def test_help_storage_uses_safe_wrappers(self):
+        should_show = JS_CONTENT.split('function shouldShowHelpModal')[1].split('function')[0]
+        self.assertIn('safeStorageGet(localStorage, \'socrates_hideHelp\')', should_show,
+                      'shouldShowHelpModal must use safeStorageGet for localStorage')
+        self.assertIn('safeStorageGet(sessionStorage, \'socrates_helpShown\')', should_show,
+                      'shouldShowHelpModal must use safeStorageGet for sessionStorage')
+        close_help = JS_CONTENT.split('function closeHelpModal')[1].split('function')[0]
+        self.assertIn('safeStorageSet(sessionStorage, \'socrates_helpShown\', \'true\')', close_help,
+                      'closeHelpModal must use safeStorageSet for sessionStorage')
+        self.assertIn('safeStorageSet(localStorage, \'socrates_hideHelp\', \'true\')', close_help,
+                      'closeHelpModal must use safeStorageSet for localStorage')
+        self.assertIn('safeStorageRemove(localStorage, \'socrates_hideHelp\')', close_help,
+                      'closeHelpModal must use safeStorageRemove for localStorage')
 
     def test_fouc_prevention_script_exists(self):
         self.assertIn('data-theme', HTML_CONTENT,
                       'HTML must have FOUC-prevention theme script')
 
+    def test_fouc_prevention_script_is_fault_tolerant(self):
+        head = HTML_CONTENT.split('</head>')[0]
+        inline_script_match = re.search(r'<script[^>]*>(.*?)</script>', head, re.DOTALL)
+        self.assertTrue(inline_script_match, 'Inline script must be present in <head>')
+        inline_script = inline_script_match.group(1)
+        self.assertIn('try{', inline_script.replace(' ', ''),
+                      'FOUC script must guard theme read in try block')
+        self.assertIn('catch(e){}', inline_script.replace(' ', ''),
+                      'FOUC script must swallow localStorage errors')
+
     def test_hacker_theme_override_exists(self):
         self.assertIn('[data-theme="hacker"]', CSS_CONTENT,
                       'CSS must have a Hacker theme override block')
 
+    def test_matte_black_theme_override_exists(self):
+        self.assertIn('[data-theme="matte-black"]', CSS_CONTENT,
+                      'CSS must have a Matte Black theme override block')
+
+    def test_sguil_theme_override_exists(self):
+        self.assertIn('[data-theme="sguil"]', CSS_CONTENT,
+                      'CSS must have a Sguil theme override block')
+
     def test_code_rain_canvas_exists(self):
         self.assertIn('id="codeRain"', HTML_CONTENT,
-                      'HTML must include a code-rain canvas for Hacker Mode')
+                      'HTML must include a code-rain canvas for Hacker')
 
     def test_setTheme_function_exists(self):
         self.assertIn('function setTheme(', JS_CONTENT,
@@ -1021,6 +1209,14 @@ class TestThemeAndMenu(unittest.TestCase):
     def test_hacker_theme_in_registry(self):
         self.assertIn('hacker:', JS_CONTENT,
                       'THEMES registry must include the hacker theme')
+
+    def test_matte_black_theme_in_registry(self):
+        self.assertIn("'matte-black':", JS_CONTENT,
+                      'THEMES registry must include the matte-black theme')
+
+    def test_sguil_theme_in_registry(self):
+        self.assertIn("sguil:", JS_CONTENT,
+                      'THEMES registry must include the sguil theme')
 
     def test_hacker_search_btn_override(self):
         self.assertIn('[data-theme="hacker"] .search-btn', CSS_CONTENT,
@@ -1048,11 +1244,12 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('[data-theme="hacker"] .delete-modal-confirm-btn', CSS_CONTENT,
                       'Hacker theme must override delete modal confirm button')
 
-    def test_hacker_font_size_adjust(self):
-        self.assertIn('font-size-adjust:', CSS_CONTENT,
-                      'Hacker theme should adjust monospace font size')
+    def test_hacker_theme_uses_base_font(self):
         self.assertIn('[data-theme="hacker"] body {', CSS_CONTENT,
                       'Hacker theme body rule must exist')
+        hacker_body_block = CSS_CONTENT.split('[data-theme="hacker"] body {')[1].split('}')[0]
+        self.assertNotIn('font-family:', hacker_body_block,
+                         'Hacker theme must not override the base font family')
 
     def test_gear_icon_button_exists(self):
         self.assertIn('class="app-header-menu-btn"', HTML_CONTENT,
@@ -1071,13 +1268,46 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertTrue('stroke="currentColor"' in svg_section or 'stroke="var(--accent)"' in svg_section,
                         'Magnifying glass SVG must use currentColor or var(--accent) for theme adaptability')
 
+    def test_theme_cycle_hotkey_exists(self):
+        """Pressing 't' outside input fields must cycle themes."""
+        self.assertIn("e.key === 't'", JS_CONTENT,
+                      'JS must listen for the theme-cycle hotkey')
+        self.assertIn('toggleTheme();', JS_CONTENT,
+                      'Theme hotkey must call toggleTheme()')
+        self.assertIn("showToast('Switched to ' + THEMES[nextTheme].label + ' theme')", JS_CONTENT,
+                      'Theme hotkey must show a toast with the new theme name')
+        # Guard against triggering while typing in inputs.
+        self.assertIn("e.target.tagName !== 'INPUT'", JS_CONTENT,
+                      'Theme hotkey must ignore input fields')
+        self.assertIn("e.target.tagName !== 'TEXTAREA'", JS_CONTENT,
+                      'Theme hotkey must ignore textarea fields')
+        self.assertIn('!e.target.isContentEditable', JS_CONTENT,
+                      'Theme hotkey must ignore contenteditable elements')
+
+    def test_theme_hotkey_matches_menu_order(self):
+        """The 't' hotkey must cycle themes in the same order they appear in the menu."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var order = [];
+            setTheme('dark');
+            for (var i = 0; i < 5; i++) {
+                toggleTheme();
+                order.push(document.documentElement.getAttribute('data-theme') || 'dark');
+            }
+            window.__jsdom_result = { order: order };
+        ''')
+        self.assertEqual(result['order'], ['matte-black', 'hacker', 'light', 'dark', 'matte-black'],
+                         't hotkey cycle order must match menu order')
+
     def test_hacker_mode_easter_egg_exists(self):
-        """Typing 31337 outside of input fields must activate Hacker Mode."""
+        """Typing 31337 outside of input fields must activate Hacker."""
         self.assertIn("keyBuffer === '31337'", JS_CONTENT,
                       'JS must check for the 31337 easter egg sequence')
         self.assertIn("setTheme('hacker')", JS_CONTENT,
-                      'Easter egg must activate Hacker Mode')
-        self.assertIn('showEasterEggMessage(', JS_CONTENT,
+                      'Easter egg must activate Hacker')
+        self.assertIn('Switched to Hacker theme', JS_CONTENT,
+                      'Easter egg activation message must reference Hacker theme')
+        self.assertIn('showToast(', JS_CONTENT,
                       'Easter egg must show an activation message')
 
     def test_hacker_mode_easter_egg_ignores_input_fields(self):
@@ -1429,6 +1659,22 @@ class TestFiltering(unittest.TestCase):
         self.assertEqual(result['fileProto'], 'TCP')
         self.assertEqual(result['fileName'], 'test.exe')
 
+    def test_buildStats_no_filealerts_special_case(self):
+        """buildStats must use filteredStats consistently for all event types, including filealerts."""
+        func_body = JS_CONTENT.split('function buildStats(')[1].split('function buildFilterBarHtml')[0]
+        self.assertNotIn("if (type === 'filealerts')", func_body,
+                         'buildStats must not special-case filealerts count')
+        self.assertIn('filteredStats ? (filteredStats[type] || 0)', func_body,
+                      'buildStats must use filteredStats for all types')
+
+    def test_sigmaAlertMatchesFilters_uses_original_log_for_dynamic_columns(self):
+        """sigmaAlertMatchesFilters must parse original_log for dynamic columns, like getFilteredSigmaAlerts."""
+        func_body = JS_CONTENT.split('function sigmaAlertMatchesFilters')[1].split('function buildStats')[0]
+        self.assertIn('JSON.parse(alert.original_log ||', func_body,
+                      'sigmaAlertMatchesFilters must parse original_log for dynamic columns')
+        self.assertIn('_getFieldForLabel(col)', func_body,
+                      'sigmaAlertMatchesFilters must use _getFieldForLabel for dynamic column lookup')
+
 
 class TestPerformance(unittest.TestCase):
     def test_uses_document_fragment_for_batch_inserts(self):
@@ -1448,9 +1694,6 @@ class TestPerformance(unittest.TestCase):
 
 
 class TestAdvancedToggle(unittest.TestCase):
-    def test_has_advanced_toggle_css(self):
-        self.assertIn('.advanced-toggle', CSS_CONTENT)
-
     def test_has_advanced_toggle_input(self):
         self.assertIn('toggleAggregations()', JS_CONTENT)
 
@@ -1962,6 +2205,52 @@ class TestEscapeJsStringCompleteness(unittest.TestCase):
         self.assertEqual(result['backslash'], 'a\\\\b')
         self.assertEqual(result['quote'], "a\\&#39;b")
 
+    def test_escapeJsString_escapes_newlines_and_carriage_returns(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = {
+                newline: escapeJsString('a\\nb'),
+                cr: escapeJsString('a\\rb'),
+                crlf: escapeJsString('a\\r\\nb'),
+            };
+        ''')
+        self.assertNotIn('\n', result['newline'], 'newline must be escaped')
+        self.assertNotIn('\r', result['cr'], 'carriage return must be escaped')
+        self.assertNotIn('\r\n', result['crlf'], 'CRLF must be escaped')
+        self.assertIn('\\n', result['newline'], 'newline must appear as escaped \\\\n')
+        self.assertIn('\\r', result['cr'], 'carriage return must appear as escaped \\\\r')
+
+
+class TestInlineHtmlEscaping(unittest.TestCase):
+    """REGRESSION: values from server responses must be escaped before being
+    assigned to innerHTML or placed inside inline event handlers."""
+
+    def test_previous_analysis_md5_escaped_in_link(self):
+        show_welcome = JS_CONTENT.split('async function showWelcome')[1].split('async function')[0]
+        self.assertIn('href="?file=${escapeHtml(a.md5)}"', show_welcome,
+                      'previous analysis md5 must be escaped in query link')
+        self.assertIn("loadAnalysis('${escapeJsString(a.md5)}')", show_welcome,
+                      'previous analysis md5 must be escaped in inline onclick handler')
+
+    def test_previous_analysis_md5_escaped_in_data_attrs(self):
+        show_welcome = JS_CONTENT.split('async function showWelcome')[1].split('async function')[0]
+        # Both re-analyze and delete buttons should have data-md5 escaped.
+        data_md5_count = show_welcome.count('data-md5="${escapeHtml(a.md5)}"')
+        self.assertGreaterEqual(data_md5_count, 2,
+                                'data-md5 attributes must escape the md5 value')
+
+    def test_appHeaderMeta_escapes_md5_and_date(self):
+        load_analysis = JS_CONTENT.split('async function loadAnalysis')[1].split('async function')[0]
+        self.assertIn('${escapeHtml(currentMd5)}', load_analysis,
+                      'currentMd5 must be escaped in appHeaderMeta.innerHTML')
+        self.assertIn('${escapeHtml(dateDisplay)}', load_analysis,
+                      'dateDisplay must be escaped in appHeaderMeta.innerHTML')
+
+    def test_document_title_escapes_filename(self):
+        load_analysis = JS_CONTENT.split('async function loadAnalysis')[1].split('async function')[0]
+        self.assertIn("document.title = 'SO-CRATES - ' + escapeHtml(currentFileName)", load_analysis,
+                      'document.title must escape the filename before assignment')
+
 
 class TestAdvancedToggleNoMemoryLeak(unittest.TestCase):
     def test_no_inline_addEventListener_for_advancedToggle(self):
@@ -1999,6 +2288,25 @@ class TestNoDeadCode(unittest.TestCase):
         """currentSectionTypes was declared but never used — should be removed."""
         self.assertNotIn('currentSectionTypes', JS_CONTENT,
                          'currentSectionTypes is dead code and should be removed')
+
+    def test_no_dead_css_selectors(self):
+        """These CSS rules were removed because no HTML/JS uses them."""
+        dead_selectors = [
+            '.app-header-help',
+            '.back-top-btn',
+            '.stream-output',
+            '.filtered-row',
+            '.advanced-toggle',
+            '.sankey-close',
+            '.yara-matches-section',
+            '.file-alerts-grid',
+            '.file-alert-card',
+            '.sigma-alerts-section',
+            '.sigma-log-json',
+        ]
+        for selector in dead_selectors:
+            self.assertNotIn(selector, CSS_CONTENT,
+                             f'{selector} is unused CSS and should be removed')
 
 
 class TestSearchUI(unittest.TestCase):

@@ -99,6 +99,20 @@ class TestFilenameSanitization(unittest.TestCase):
         result = server.sanitize_filename('file name.pcap')
         self.assertEqual(result, 'file name.pcap')
 
+    def test_rejects_dot(self):
+        with self.assertRaises(ValueError):
+            server.sanitize_filename('.')
+
+    def test_rejects_dotdot(self):
+        with self.assertRaises(ValueError):
+            server.sanitize_filename('..')
+
+    def test_rejects_reserved_filenames(self):
+        for reserved in ('events.db', 'eve.json', 'name.txt', '.meta', '.phase', '.error'):
+            with self.subTest(filename=reserved):
+                with self.assertRaises(ValueError):
+                    server.sanitize_filename(reserved)
+
 
 class TestZipSlipPrevention(unittest.TestCase):
     def test_normal_zip(self):
@@ -130,9 +144,13 @@ class TestZipSlipPrevention(unittest.TestCase):
 
 
 class TestURLValidation(unittest.TestCase):
-    @unittest.mock.patch('socket.gethostbyname')
+    def _addrinfo(self, ip):
+        family = socket.AF_INET6 if ':' in ip else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, 6, '', (ip, 0))]
+
+    @unittest.mock.patch('socket.getaddrinfo')
     def test_valid_public_url(self, mock_dns):
-        mock_dns.return_value = '93.184.216.34'
+        mock_dns.return_value = self._addrinfo('93.184.216.34')
         server.validate_url_safety('https://example.com/file.pcap')
 
     def test_blocks_localhost(self):
@@ -140,33 +158,33 @@ class TestURLValidation(unittest.TestCase):
             server.validate_url_safety('http://localhost:8080/secret')
         self.assertIn('localhost', str(ctx.exception).lower())
 
-    @unittest.mock.patch('socket.gethostbyname')
+    @unittest.mock.patch('socket.getaddrinfo')
     def test_blocks_127_0_0_1(self, mock_dns):
-        mock_dns.return_value = '127.0.0.1'
+        mock_dns.return_value = self._addrinfo('127.0.0.1')
         with self.assertRaises(ValueError):
             server.validate_url_safety('http://127.0.0.1:8080/secret')
 
-    @unittest.mock.patch('socket.gethostbyname')
+    @unittest.mock.patch('socket.getaddrinfo')
     def test_blocks_private_10x(self, mock_dns):
-        mock_dns.return_value = '10.0.0.1'
+        mock_dns.return_value = self._addrinfo('10.0.0.1')
         with self.assertRaises(ValueError):
             server.validate_url_safety('http://internal.corp/file')
 
-    @unittest.mock.patch('socket.gethostbyname')
+    @unittest.mock.patch('socket.getaddrinfo')
     def test_blocks_private_192x(self, mock_dns):
-        mock_dns.return_value = '192.168.1.1'
+        mock_dns.return_value = self._addrinfo('192.168.1.1')
         with self.assertRaises(ValueError):
             server.validate_url_safety('http://router.local/file')
 
-    @unittest.mock.patch('socket.gethostbyname')
+    @unittest.mock.patch('socket.getaddrinfo')
     def test_blocks_link_local(self, mock_dns):
-        mock_dns.return_value = '169.254.169.254'
+        mock_dns.return_value = self._addrinfo('169.254.169.254')
         with self.assertRaises(ValueError):
             server.validate_url_safety('http://169.254.169.254/latest/meta-data/')
 
-    @unittest.mock.patch('socket.gethostbyname')
+    @unittest.mock.patch('socket.getaddrinfo')
     def test_blocks_metadata_service(self, mock_dns):
-        mock_dns.return_value = '169.254.169.254'
+        mock_dns.return_value = self._addrinfo('169.254.169.254')
         with self.assertRaises(ValueError):
             server.validate_url_safety('http://169.254.169.254/latest/meta-data/')
 
@@ -606,13 +624,37 @@ class TestAPIEndpoints(unittest.TestCase):
 
     def test_stats_requires_md5(self):
         status, body = self._get('/api/stats')
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 400)
         data = json.loads(body)
         self.assertIn('error', data)
 
     def test_count_requires_md5(self):
         status, body = self._get('/api/count')
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_stats_invalid_md5_returns_400(self):
+        status, body = self._get('/api/stats?md5=invalid')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_count_invalid_md5_returns_400(self):
+        status, body = self._get('/api/count?md5=invalid')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_stats_traversal_md5_returns_400(self):
+        status, body = self._get('/api/stats?md5=../etc/passwd')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_count_traversal_md5_returns_400(self):
+        status, body = self._get('/api/count?md5=../etc/passwd')
+        self.assertEqual(status, 400)
         data = json.loads(body)
         self.assertIn('error', data)
 
@@ -1507,7 +1549,7 @@ class TestAPIEndpoints(unittest.TestCase):
         status, body = self._post('/api/check-status', {})
         self.assertEqual(status, 400)
         data = json.loads(body)
-        self.assertIn('Invalid MD5', data.get('error', ''))
+        self.assertIn('md5', data.get('error', '').lower())
 
     def test_check_status_invalid_md5_format(self):
         status, body = self._post('/api/check-status', {'md5': 'not-a-valid-md5'})
@@ -2314,6 +2356,125 @@ class TestSuricataUpdateTimeout(unittest.TestCase):
                 self.fail('setup_suricata_config raised TimeoutExpired')
 
 
+class TestSuricataProtocolEnable(unittest.TestCase):
+    def test_enable_app_layer_protocols_handles_comments(self):
+        """Modbus has comments between the header and enabled key."""
+        sample = '''    modbus:
+      # How many unanswered Modbus requests are considered a flood.
+      # If the limit is reached, the app-layer-event:modbus.flooded; will match.
+      #request-flood: 500
+
+      enabled: no
+      detection-ports:
+        dp: 502
+'''
+        result = suricata_analyzer._enable_app_layer_protocols(sample)
+        self.assertIn('enabled: yes', result)
+        self.assertNotIn('enabled: no', result)
+
+    def test_enable_app_layer_protocols_enables_all_four(self):
+        """All four default-disabled protocols are enabled."""
+        sample = '''    pgsql:
+      enabled: no
+    modbus:
+      enabled: no
+    dnp3:
+      enabled: no
+    enip:
+      enabled: no
+'''
+        result = suricata_analyzer._enable_app_layer_protocols(sample)
+        self.assertEqual(result.count('enabled: yes'), 4)
+        self.assertNotIn('enabled: no', result)
+
+    def test_suricata_update_uses_suricata_conf(self):
+        """suricata-update must be told which Suricata config to read."""
+        with open(SURICATA_FILE, 'r') as f:
+            content = f.read()
+        # Find the suricata-update argument list.
+        self.assertIn("'--suricata-conf', suricata_config", content,
+                      'suricata-update must use --suricata-conf for the Suricata config')
+        self.assertNotIn("'--no-test', '-c', suricata_config", content,
+                         'must not pass -c as the Suricata config argument')
+
+    def test_enable_eve_log_protocol_types_adds_modbus_dnp3(self):
+        """Modbus and DNP3 should be added as standalone EVE log types."""
+        sample = '''        - pgsql:
+            enabled: no
+        - stats:
+            totals: yes
+'''
+        result = suricata_analyzer._enable_eve_log_protocol_types(sample)
+        self.assertIn('        - modbus:', result)
+        self.assertIn('        - dnp3:', result)
+        self.assertIn('            enabled: yes', result)
+        self.assertNotIn('            enabled: no', result)
+
+    def test_enable_eve_log_protocol_types_does_not_duplicate(self):
+        """Entries that already exist should not be duplicated."""
+        sample = '''        - pgsql:
+            enabled: yes
+        - modbus:
+        - dnp3:
+        - stats:
+            totals: yes
+'''
+        result = suricata_analyzer._enable_eve_log_protocol_types(sample)
+        self.assertEqual(result.count('        - modbus:'), 1)
+        self.assertEqual(result.count('        - dnp3:'), 1)
+
+
+class TestProtocolEventUI(unittest.TestCase):
+    JS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'socrates.js')
+
+    def _js_content(self):
+        with open(self.JS_PATH, 'r') as f:
+            return f.read()
+
+    def test_protocol_detail_renderers_exist(self):
+        """Each protocol must have a dedicated detail renderer."""
+        content = self._js_content()
+        self.assertIn('function renderModbusDetails(e)', content)
+        self.assertIn('function renderDnp3Details(e)', content)
+        self.assertIn('function renderPgsqlDetails(e)', content)
+
+    def test_protocol_renderers_registered(self):
+        """Renderers must be wired into EVENT_RENDERERS."""
+        content = self._js_content()
+        self.assertIn('modbus: renderModbusDetails', content)
+        self.assertIn('dnp3: renderDnp3Details', content)
+        self.assertIn('pgsql: renderPgsqlDetails', content)
+
+    def test_protocol_icons_registered(self):
+        """Protocol event types should have icons."""
+        content = self._js_content()
+        self.assertIn('modbus:', content)
+        self.assertIn('dnp3:', content)
+        self.assertIn('pgsql:', content)
+        self.assertIn("'modbus'", content)
+        self.assertIn("'dnp3'", content)
+        self.assertIn("'pgsql'", content)
+
+    def test_protocol_columns_defined(self):
+        """getColumnsForType must return protocol-specific columns."""
+        content = self._js_content()
+        self.assertIn("case 'modbus':", content)
+        self.assertIn("case 'dnp3':", content)
+        self.assertIn("case 'pgsql':", content)
+
+    def test_protocol_extractvalue_cases_exist(self):
+        """extractValue must know how to pull protocol fields for tables/aggregations."""
+        content = self._js_content()
+        self.assertIn("case 'Function':", content)
+        self.assertIn("case 'Unit ID':", content)
+        self.assertIn("case 'Access Type':", content)
+        self.assertIn("case 'Error Flags':", content)
+        self.assertIn("case 'Source Addr':", content)
+        self.assertIn("case 'Dest Addr':", content)
+        self.assertIn("case 'Rows':", content)
+        self.assertIn("case 'SSL':", content)
+
+
 class TestServerStartupBanner(unittest.TestCase):
     def test_windows_banner_format(self):
         """Verify the startup banner has the correct format"""
@@ -2822,16 +2983,15 @@ class TestDockerfile(unittest.TestCase):
         self.assertTrue(os.path.exists(DOCKER_COMPOSE_PODMAN),
                         'docker-compose.podman.yml must exist')
 
-    def test_docker_compose_podman_extends_base(self):
-        """docker-compose.podman.yml must extend docker-compose.yml service."""
+    def test_docker_compose_podman_has_z_labeled_volume(self):
+        """docker-compose.podman.yml must mount the data directory with the :Z
+        SELinux label so rootless Podman can write to it."""
         with open(DOCKER_COMPOSE_PODMAN, 'r') as f:
             content = f.read()
-        self.assertIn('extends:', content,
-                        'podman compose file must use extends')
-        self.assertIn('file: docker-compose.yml', content,
-                        'podman compose file must extend docker-compose.yml')
-        self.assertIn('service: so-crates', content,
-                        'podman compose file must extend so-crates service')
+        self.assertIn('volumes:', content,
+                      'podman compose file must define a volumes section')
+        self.assertIn('/data:Z', content,
+                      'podman compose data volume must use :Z SELinux label')
 
     def test_docker_compose_podman_has_user_and_userns(self):
         """docker-compose.podman.yml must set user and userns_mode for host ownership."""
@@ -2843,6 +3003,66 @@ class TestDockerfile(unittest.TestCase):
                         'podman compose file must set userns_mode')
         self.assertIn('keep-id', content,
                         'podman compose file must use keep-id userns_mode')
+
+
+class TestMultipartParsing(unittest.TestCase):
+    """REGRESSION: the upload parser must handle quoted/unquoted boundaries
+    and filenames, skip preamble, and return (None, None) when no file part is
+    present."""
+
+    def _make_body(self, boundary, filename, content, quote_filename=True, preamble=''):
+        disp = 'Content-Disposition: form-data; name="pcap"; '
+        if quote_filename:
+            disp += f'filename="{filename}"'
+        else:
+            disp += f'filename={filename}'
+        body = (
+            (preamble + '\r\n' if preamble else '')
+            + f'--{boundary}\r\n'
+            + disp + '\r\n'
+            + 'Content-Type: application/octet-stream\r\n\r\n'
+        ).encode() + content + f'\r\n--{boundary}--\r\n'.encode()
+        return body
+
+    def _parse(self, body, content_type):
+        handler = server.Handler.__new__(server.Handler)
+        return handler._parse_multipart_file(body, content_type)
+
+    def test_quoted_boundary(self):
+        body = self._make_body('WebKitBoundary', 'test.pcap', b'PCAPDATA')
+        ct = 'multipart/form-data; boundary="WebKitBoundary"'
+        data, name = self._parse(body, ct)
+        self.assertEqual(name, 'test.pcap')
+        self.assertEqual(data, b'PCAPDATA')
+
+    def test_unquoted_filename(self):
+        body = self._make_body('Boundary', 'unquoted.pcap', b'PCAPDATA', quote_filename=False)
+        ct = 'multipart/form-data; boundary=Boundary'
+        data, name = self._parse(body, ct)
+        self.assertEqual(name, 'unquoted.pcap')
+        self.assertEqual(data, b'PCAPDATA')
+
+    def test_preamble_skipped(self):
+        body = self._make_body('Boundary', 'test.pcap', b'PCAPDATA', preamble='ignore this preamble')
+        ct = 'multipart/form-data; boundary=Boundary'
+        data, name = self._parse(body, ct)
+        self.assertEqual(name, 'test.pcap')
+        self.assertEqual(data, b'PCAPDATA')
+
+    def test_missing_boundary(self):
+        body = b'--Boundary\r\nContent-Disposition: form-data; filename="x.pcap"\r\n\r\nDATA\r\n--Boundary--\r\n'
+        ct = 'multipart/form-data'
+        data, name = self._parse(body, ct)
+        self.assertIsNone(data)
+        self.assertIsNone(name)
+
+    def test_no_file_part(self):
+        body = self._make_body('Boundary', 'test.pcap', b'PCAPDATA', quote_filename=False)
+        body = body.replace(b'filename=test.pcap', b'name="pcap"')
+        ct = 'multipart/form-data; boundary=Boundary'
+        data, name = self._parse(body, ct)
+        self.assertIsNone(data)
+        self.assertIsNone(name)
 
 
 if __name__ == '__main__':

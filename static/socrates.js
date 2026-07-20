@@ -11,8 +11,22 @@
             // string boundary but leaves the attribute boundary open (a
             // raw '"' or '<'/'>' would still break out of the attribute),
             // so also HTML-escape after JS-escaping.
-            const jsEscaped = String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            const jsEscaped = String(str)
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\n/g, '\\n')
+                .replace(/\r/g, '\\r');
             return escapeHtml(jsEscaped);
+        }
+
+        function safeStorageGet(storage, key) {
+            try { return storage.getItem(key); } catch (e) { return null; }
+        }
+        function safeStorageSet(storage, key, value) {
+            try { storage.setItem(key, value); } catch (e) { /* ignore */ }
+        }
+        function safeStorageRemove(storage, key) {
+            try { storage.removeItem(key); } catch (e) { /* ignore */ }
         }
 
         function sortEventTypes(types) {
@@ -26,14 +40,18 @@
         }
 
         const THEMES = {
-            dark: { label: 'Dark Mode', icon: '<svg class="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>' },
-            light: { label: 'Light Mode', icon: '<svg class="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>' },
-            hacker: { label: 'Hacker Mode', icon: '<svg class="theme-icon-hacker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="6 9 10 12 6 15"/><line x1="12" y1="15" x2="18" y2="15"/></svg>' },
+            dark: { label: 'Midnight' },
+            light: { label: 'Daylight' },
+            sguil: { label: 'Sguil' },
+            hacker: { label: 'Hacker' },
+            'matte-black': { label: 'Matte Black' },
         };
 
         function getCurrentTheme() {
             return document.documentElement.getAttribute('data-theme') || 'dark';
         }
+
+        let menuBaseTheme = null;
 
         function setTheme(themeName) {
             const valid = Object.prototype.hasOwnProperty.call(THEMES, themeName);
@@ -44,17 +62,49 @@
             } else {
                 html.setAttribute('data-theme', themeName);
             }
-            localStorage.setItem('socrates-theme', themeName);
+            safeStorageSet(localStorage, 'socrates-theme', themeName);
             updateThemeMenu();
+            updateCodeRain();
+            updateFavicon();
+            // If the menu is open, treat this as the new baseline so a later
+            // close/revert does not undo the change.
+            const dropdown = document.getElementById('appHeaderMenuDropdown');
+            if (dropdown && dropdown.classList.contains('active')) {
+                menuBaseTheme = themeName;
+            }
+        }
+
+        function previewTheme(themeName) {
+            const valid = Object.prototype.hasOwnProperty.call(THEMES, themeName);
+            if (!valid) return;
+            const html = document.documentElement;
+            if (themeName === 'dark') {
+                html.removeAttribute('data-theme');
+            } else {
+                html.setAttribute('data-theme', themeName);
+            }
             updateCodeRain();
             updateFavicon();
         }
 
+        function revertTheme() {
+            if (menuBaseTheme !== null) {
+                previewTheme(menuBaseTheme);
+            }
+        }
+
+        function commitTheme(themeName) {
+            setTheme(themeName);
+            closeMenu();
+        }
+
         function toggleTheme() {
-            const order = ['dark', 'light', 'hacker'];
+            const order = ['dark', 'matte-black', 'hacker', 'light', 'sguil'];
             const current = getCurrentTheme();
             const nextIndex = (order.indexOf(current) + 1) % order.length;
-            setTheme(order[nextIndex]);
+            const nextTheme = order[nextIndex];
+            setTheme(nextTheme);
+            showToast('Switched to ' + THEMES[nextTheme].label + ' theme');
         }
 
         function updateThemeMenu() {
@@ -62,7 +112,57 @@
             // future dynamic menu generation.
         }
 
-        // Subtle code-rain background for Hacker Mode.
+        const GEAR_ICON_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
+
+        function renderGearMenu() {
+            return `
+                <div class="app-header-menu">
+                    <button class="app-header-menu-btn" onclick="toggleMenu()" title="Menu" id="appHeaderMenuBtn">
+                        ${GEAR_ICON_SVG}
+                    </button>
+                    <div class="app-header-menu-dropdown" id="appHeaderMenuDropdown">
+                        <button class="app-header-menu-item" onclick="showHelpModal(); closeMenu();">
+                            <span><svg class="theme-icon-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+                            <span>Help</span>
+                        </button>
+                        <div class="app-header-menu-sep"></div>
+                        <div class="app-header-menu-header">Dark Themes</div>
+                        <button class="app-header-menu-item"
+                                onmouseenter="previewTheme('dark')"
+                                onmouseleave="revertTheme()"
+                                onclick="commitTheme('dark')">
+                            <span>Midnight</span>
+                        </button>
+                        <button class="app-header-menu-item"
+                                onmouseenter="previewTheme('matte-black')"
+                                onmouseleave="revertTheme()"
+                                onclick="commitTheme('matte-black')">
+                            <span>Matte Black</span>
+                        </button>
+                        <button class="app-header-menu-item"
+                                onmouseenter="previewTheme('hacker')"
+                                onmouseleave="revertTheme()"
+                                onclick="commitTheme('hacker')">
+                            <span>Hacker</span>
+                        </button>
+                        <div class="app-header-menu-header">Light Themes</div>
+                        <button class="app-header-menu-item"
+                                onmouseenter="previewTheme('light')"
+                                onmouseleave="revertTheme()"
+                                onclick="commitTheme('light')">
+                            <span>Daylight</span>
+                        </button>
+                        <button class="app-header-menu-item"
+                                onmouseenter="previewTheme('sguil')"
+                                onmouseleave="revertTheme()"
+                                onclick="commitTheme('sguil')">
+                            <span>Sguil</span>
+                        </button>
+                    </div>
+                </div>`;
+        }
+
+        // Subtle code-rain background for Hacker theme.
         let codeRainCtx = null;
         let codeRainCols = [];
         let codeRainFontSize = 14;
@@ -73,10 +173,12 @@
         function resizeCodeRain() {
             const canvas = document.getElementById('codeRain');
             if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            codeRainCtx = ctx;
             const dpr = window.devicePixelRatio || 1;
             canvas.width = window.innerWidth * dpr;
             canvas.height = window.innerHeight * dpr;
-            codeRainCtx = canvas.getContext('2d');
             codeRainCtx.scale(dpr, dpr);
             codeRainFontSize = Math.max(12, Math.min(16, Math.floor(window.innerWidth / 120)));
             codeRainCtx.font = codeRainFontSize + 'px monospace';
@@ -126,6 +228,7 @@
         function startCodeRain() {
             if (codeRainAnimationId) return;
             resizeCodeRain();
+            if (!codeRainCtx) return;
             codeRainLastDraw = performance.now();
             codeRainAnimationId = requestAnimationFrame(drawCodeRain);
         }
@@ -152,7 +255,16 @@
         function updateFavicon() {
             const link = document.getElementById('faviconLink');
             if (!link) return;
-            link.href = getCurrentTheme() === 'hacker' ? 'static/favicon-hacker.svg' : 'static/favicon.svg';
+            const theme = getCurrentTheme();
+            let favicon = 'static/favicon.svg';
+            if (theme === 'hacker') {
+                favicon = 'static/favicon-hacker.svg';
+            } else if (theme === 'matte-black') {
+                favicon = 'static/favicon-matte-black.svg';
+            } else if (theme === 'sguil') {
+                favicon = 'static/favicon-sguil.svg';
+            }
+            link.href = favicon;
         }
 
         window.addEventListener('resize', resizeCodeRain);
@@ -166,12 +278,23 @@
 
         function toggleMenu() {
             const dropdown = document.getElementById('appHeaderMenuDropdown');
-            if (dropdown) dropdown.classList.toggle('active');
+            if (!dropdown) return;
+            const willOpen = !dropdown.classList.contains('active');
+            dropdown.classList.toggle('active');
+            if (willOpen) {
+                menuBaseTheme = getCurrentTheme();
+            } else {
+                // Closing without a commit reverts any preview.
+                revertTheme();
+                menuBaseTheme = null;
+            }
         }
 
         function closeMenu() {
             const dropdown = document.getElementById('appHeaderMenuDropdown');
             if (dropdown) dropdown.classList.remove('active');
+            revertTheme();
+            menuBaseTheme = null;
         }
 
         document.addEventListener('click', function(e) {
@@ -186,12 +309,15 @@
                 alert: '#ff6b6b',
                 anomaly: '#ff9800',
                 dns: '#66bb6a',
+                dnp3: '#26c6da',
                 filealerts: '#e91e63',
                 fileinfo: '#9c27b0',
                 flow: '#bc8cff',
                 ftp: '#00bcd4',
                 http: '#ffa726',
                 log: '#b0b0b0',
+                modbus: '#ab47bc',
+                pgsql: '#ff7043',
                 sigmaalert: '#ff6b6b',
                 stats: '#9e9e9e',
                 tls: '#58a6ff',
@@ -405,7 +531,7 @@
             } catch(e) {
                 console.error('Failed to load tab data:', e);
                 if (sectionEl) {
-                    sectionEl.innerHTML = `<div class="section-header">${typeLabels[eventType] || eventType.toUpperCase()}</div><div class="loading">Error loading data</div>`;
+                    sectionEl.innerHTML = `<div class="section-header">${escapeHtml(typeLabels[eventType] || eventType.toUpperCase())}</div><div class="loading">Error loading data</div>`;
                 }
             }
         }
@@ -418,20 +544,16 @@
                 detailRow.classList.toggle('visible');
                 
                 if (wasHidden) {
-                    const asciiDiv = detailRow.querySelector('[id^="ascii-"]');
+                    const asciiDiv = detailRow.querySelector('.stream-payload');
                     if (asciiDiv) {
-                        const id = asciiDiv.id;
-                        const parts = id.replace('ascii-', '').split('-');
-                        if (parts.length >= 4) {
-                            const srcIp = parts[0];
-                            const srcPort = parts[1];
-                            const dstIp = parts[2];
-                            const dstPort = parts[3];
-                            const pre = asciiDiv.querySelector('.ascii-transcript');
-                            if (pre && !pre.innerHTML) {
-                                pre.innerHTML = '<div style="color:var(--text-muted);padding:10px 0;display:flex;align-items:center;gap:8px;"><span class="ascii-loading"></span>Loading ASCII transcript...</div>';
-                                loadAsciiTranscript(srcIp, srcPort, dstIp, dstPort, pre);
-                            }
+                        const srcIp = asciiDiv.dataset.srcIp;
+                        const srcPort = asciiDiv.dataset.srcPort;
+                        const dstIp = asciiDiv.dataset.dstIp;
+                        const dstPort = asciiDiv.dataset.dstPort;
+                        const pre = asciiDiv.querySelector('.ascii-transcript');
+                        if (pre && !pre.innerHTML) {
+                            pre.innerHTML = '<div style="color:var(--text-muted);padding:10px 0;display:flex;align-items:center;gap:8px;"><span class="ascii-loading"></span>Loading ASCII transcript...</div>';
+                            loadAsciiTranscript(srcIp, srcPort, dstIp, dstPort, pre);
                         }
                     }
                 }
@@ -484,7 +606,7 @@
         }
         
         async function switchStreamView(view, src, sport, dst, dport, btn) {
-            const wrapper = btn.closest('div[id^="ascii-"]');
+            const wrapper = btn.closest('.stream-payload');
             const asciiEl = wrapper.querySelector('.ascii-transcript');
             const hexdumpEl = wrapper.querySelector('.hexdump-content');
             const tabs = wrapper.querySelectorAll('.view-tab');
@@ -567,9 +689,9 @@
         }
         
         function htmlRow(label, innerHtml, className, style) {
-            const cls = className ? ` class="${className}"` : '';
+            const valueCls = className ? `detail-value ${className}` : 'detail-value';
             const sty = style ? ` style="${style}"` : '';
-            return `<span style="color: var(--text-muted);">${escapeHtml(label)}</span><span${cls}${sty}>${innerHtml}</span>`;
+            return `<span class="detail-label">${escapeHtml(label)}</span><span class="${valueCls}"${sty}>${innerHtml}</span>`;
         }
         
         function htmlRowText(label, text, className, style) {
@@ -620,7 +742,9 @@
             if (!e.src_ip || !e.src_port || !e.dest_ip || !e.dest_port) return '';
             const srcIpJs = escapeJsString(e.src_ip);
             const dstIpJs = escapeJsString(e.dest_ip);
-            return `<div id="ascii-${e.src_ip}-${e.src_port}-${e.dest_ip}-${e.dest_port}" style="margin-top: 15px;"><div style="color: var(--text-muted); font-size: 0.85rem; border-bottom: 1px solid var(--bg-hover); padding-bottom: 5px; margin-bottom: 5px;">Payload</div><div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px;"><div class="view-tabs"><button class="view-tab active" onclick="switchStreamView('ascii','${srcIpJs}',${e.src_port},'${dstIpJs}',${e.dest_port},this)">ASCII Transcript</button><button class="view-tab" onclick="switchStreamView('hexdump','${srcIpJs}',${e.src_port},'${dstIpJs}',${e.dest_port},this)">Hexdump</button></div><button class="stream-btn" onclick="downloadPcap('${srcIpJs}','${e.src_port}','${dstIpJs}','${e.dest_port}')" style="margin-left: 12px;">Download PCAP</button></div><div class="stream-view-container" style="background: var(--bg-primary); padding: 15px; border-radius: 8px; font-size: 0.8rem; margin: 0;"><div class="ascii-transcript" style="white-space: pre-wrap; overflow-wrap: break-word;"></div><div class="hexdump-content" style="display: none;"></div></div></div>`;
+            const srcIpHtml = escapeHtml(e.src_ip);
+            const dstIpHtml = escapeHtml(e.dest_ip);
+            return `<div class="stream-payload" data-src-ip="${srcIpHtml}" data-src-port="${e.src_port}" data-dst-ip="${dstIpHtml}" data-dst-port="${e.dest_port}" style="margin-top: 15px;"><div style="color: var(--text-muted); font-size: 0.85rem; border-bottom: 1px solid var(--bg-hover); padding-bottom: 5px; margin-bottom: 5px;">Payload</div><div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px;"><div class="view-tabs"><button class="view-tab active" onclick="switchStreamView('ascii','${srcIpJs}',${e.src_port},'${dstIpJs}',${e.dest_port},this)">ASCII Transcript</button><button class="view-tab" onclick="switchStreamView('hexdump','${srcIpJs}',${e.src_port},'${dstIpJs}',${e.dest_port},this)">Hexdump</button></div><button class="stream-btn" onclick="downloadPcap('${srcIpJs}','${e.src_port}','${dstIpJs}','${e.dest_port}')" style="margin-left: 12px;">Download PCAP</button></div><div class="stream-view-container" style="background: var(--bg-primary); padding: 15px; border-radius: 8px; font-size: 0.8rem; margin: 0;"><div class="ascii-transcript" style="white-space: pre-wrap; overflow-wrap: break-word;"></div><div class="hexdump-content" style="display: none;"></div></div></div>`;
         }
 
         function renderAlertDetails(e) {
@@ -696,6 +820,121 @@
             return html;
         }
 
+        function renderModbusDetails(e) {
+            const m = e.modbus || {};
+            const req = m.request || {};
+            const resp = m.response || {};
+            let html = htmlSection('Modbus Details', COLORS.EVENT.modbus);
+            html += htmlRowText('Transaction ID', m.id);
+
+            html += htmlSection('Request', COLORS.EVENT.modbus);
+            html += htmlRowText('Function', req.function_code);
+            html += htmlRowText('Unit ID', req.unit_id);
+            html += htmlRowText('Access Type', req.access_type);
+            html += htmlRowText('Category', req.category);
+            html += htmlRowText('Error Flags', req.error_flags);
+            if (req.read) {
+                html += htmlRowText('Read Address', req.read.address);
+                html += htmlRowText('Read Quantity', req.read.quantity);
+            }
+            if (req.write) {
+                html += htmlRowText('Write Address', req.write.address);
+                html += htmlRowText('Write Data', req.write.data);
+            }
+            if (req.diagnostic) {
+                html += htmlRowText('Diagnostic Code', req.diagnostic.code);
+                html += htmlRowText('Diagnostic Data', req.diagnostic.data);
+            }
+
+            html += htmlSection('Response', COLORS.EVENT.modbus);
+            html += htmlRowText('Function', resp.function_code);
+            html += htmlRowText('Unit ID', resp.unit_id);
+            html += htmlRowText('Access Type', resp.access_type);
+            html += htmlRowText('Category', resp.category);
+            html += htmlRowText('Error Flags', resp.error_flags);
+            if (resp.read) {
+                html += htmlRowText('Read Data', resp.read.data);
+            }
+            if (resp.diagnostic) {
+                html += htmlRowText('Diagnostic Code', resp.diagnostic.code);
+                html += htmlRowText('Diagnostic Data', resp.diagnostic.data);
+            }
+            if (resp.exception) {
+                html += htmlRowText('Exception Code', resp.exception.code);
+            }
+            return html;
+        }
+
+        function renderDnp3Details(e) {
+            const d = e.dnp3 || {};
+            let html = htmlSection('DNP3 Details', COLORS.EVENT.dnp3);
+            html += htmlRowText('Type', d.type);
+            html += htmlRowText('Source Address', d.src);
+            html += htmlRowText('Destination Address', d.dst);
+            if (d.application) {
+                html += htmlRowText('Application Function', d.application.function_code);
+                html += htmlRowText('Complete', d.application.complete ? 'Yes' : 'No');
+            }
+            if (d.control) {
+                html += htmlRowText('Control Function', d.control.function_code);
+            }
+            if (d.iin && d.iin.indicators && d.iin.indicators.length) {
+                html += htmlRowText('IIN Indicators', d.iin.indicators.join(', '));
+            }
+            ['request', 'response'].forEach(dir => {
+                const obj = d[dir];
+                if (!obj) return;
+                html += htmlSection(dir.charAt(0).toUpperCase() + dir.slice(1), COLORS.EVENT.dnp3);
+                html += htmlRowText('Type', obj.type);
+                html += htmlRowText('Source', obj.src);
+                html += htmlRowText('Destination', obj.dst);
+                if (obj.application) {
+                    html += htmlRowText('Function', obj.application.function_code);
+                    html += htmlRowText('Complete', obj.application.complete ? 'Yes' : 'No');
+                }
+            });
+            return html;
+        }
+
+        function renderPgsqlDetails(e) {
+            const p = e.pgsql || {};
+            const req = p.request || {};
+            const resp = p.response || {};
+            let html = htmlSection('PostgreSQL Details', COLORS.EVENT.pgsql);
+            html += htmlRowText('TX ID', p.tx_id);
+
+            if (req.simple_query || req.message || req.protocol_version || req.startup_parameters || req.process_id !== undefined || req.sasl_authentication_mechanism) {
+                html += htmlSection('Request', COLORS.EVENT.pgsql);
+                html += htmlRowText('Query', req.simple_query);
+                html += htmlRowText('Message', req.message);
+                html += htmlRowText('Protocol Version', req.protocol_version);
+                if (req.startup_parameters && req.startup_parameters.user) {
+                    html += htmlRowText('User', req.startup_parameters.user);
+                }
+                html += htmlRowText('Process ID', req.process_id);
+                html += htmlRowText('SASL Mechanism', req.sasl_authentication_mechanism);
+            }
+
+            if (resp.command_completed || resp.code || resp.message || resp.data_rows !== undefined || resp.ssl_accepted !== undefined) {
+                html += htmlSection('Response', COLORS.EVENT.pgsql);
+                html += htmlRowText('Command Completed', resp.command_completed);
+                html += htmlRowText('Response Code', resp.code);
+                html += htmlRowText('Response Message', resp.message);
+                html += htmlRowText('Severity', resp.severity_non_localizable);
+                html += htmlRowText('Data Rows', resp.data_rows);
+                html += htmlRowText('Data Size', resp.data_size);
+                if (resp.ssl_accepted !== undefined) {
+                    html += htmlRowText('SSL Accepted', resp.ssl_accepted ? 'Yes' : 'No');
+                }
+                if (resp.file) {
+                    html += htmlRowText('Error File', resp.file);
+                    html += htmlRowText('Error Line', resp.line);
+                    html += htmlRowText('Routine', resp.routine);
+                }
+            }
+            return html;
+        }
+
         function renderFileAlertDetails(e) {
             const fa = e.filealerts || {};
             let html = htmlRow('Rule', `<span class="badge" style="background:${COLORS.FILE_ALERT.bg};color:${COLORS.FILE_ALERT.text}">${escapeHtml(fa.rule_name || '')}</span>`);
@@ -756,7 +995,10 @@
         const EVENT_RENDERERS = {
             alert: renderAlertDetails,
             dns: renderDnsDetails,
+            dnp3: renderDnp3Details,
             http: renderHttpDetails,
+            modbus: renderModbusDetails,
+            pgsql: renderPgsqlDetails,
             tls: renderTlsDetails,
             flow: renderFlowDetails,
             ftp: renderFtpDetails,
@@ -891,37 +1133,12 @@
             document.getElementById('inputBoxes').style.display = 'block';
             document.getElementById('appHeaderFilename').innerHTML = '';
             document.getElementById('appHeaderMeta').innerHTML = '<span style="color: var(--text-muted); font-size: 0.9rem;">Security Onion Containerized Rapid Analysis of Threats, Evil, and Sus</span>';
-            document.getElementById('appHeaderRight').innerHTML = `
-                <div class="app-header-menu">
-                    <button class="app-header-menu-btn" onclick="toggleMenu()" title="Menu" id="appHeaderMenuBtn">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                    </button>
-                    <div class="app-header-menu-dropdown" id="appHeaderMenuDropdown">
-                        <div class="app-header-menu-item theme-header">Theme</div>
-                        <button class="app-header-menu-item" onclick="setTheme('dark'); closeMenu();">
-                            <span><svg class="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
-                            <span>Dark Mode</span>
-                        </button>
-                        <button class="app-header-menu-item" onclick="setTheme('light'); closeMenu();">
-                            <span><svg class="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span>
-                            <span>Light Mode</span>
-                        </button>
-                        <button class="app-header-menu-item" onclick="setTheme('hacker'); closeMenu();">
-                            <span><svg class="theme-icon-hacker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="6 9 10 12 6 15"/><line x1="12" y1="15" x2="18" y2="15"/></svg></span>
-                            <span>Hacker Mode</span>
-                        </button>
-                        <div class="app-header-menu-sep"></div>
-                        <button class="app-header-menu-item" onclick="showHelpModal(); closeMenu();">
-                            <span><svg class="theme-icon-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
-                            <span>Help</span>
-                        </button>
-                    </div>
-                </div>`;
+            document.getElementById('appHeaderRight').innerHTML = renderGearMenu();
         }
 
         function shouldShowHelpModal() {
-            if (localStorage.getItem('socrates_hideHelp') === 'true') return false;
-            if (sessionStorage.getItem('socrates_helpShown') === 'true') return false;
+            if (safeStorageGet(localStorage, 'socrates_hideHelp') === 'true') return false;
+            if (safeStorageGet(sessionStorage, 'socrates_helpShown') === 'true') return false;
             return true;
         }
 
@@ -937,7 +1154,7 @@
                 modalTitle.textContent = 'Welcome to SO-CRATES!';
                 modalBody.innerHTML = WELCOME_HELP_CONTENT;
                 checkboxContainer.style.display = 'flex';
-                checkbox.checked = localStorage.getItem('socrates_hideHelp') !== 'true';
+                checkbox.checked = safeStorageGet(localStorage, 'socrates_hideHelp') !== 'true';
                 helpModal.classList.add('wide');
             } else {
                 modalTitle.textContent = 'Analysis Help';
@@ -963,11 +1180,11 @@
             document.getElementById('helpModal').classList.remove('active');
             const isWelcome = document.getElementById('inputBoxes').style.display !== 'none';
             if (isWelcome) {
-                sessionStorage.setItem('socrates_helpShown', 'true');
+                safeStorageSet(sessionStorage, 'socrates_helpShown', 'true');
                 if (!document.getElementById('helpShowAgain').checked) {
-                    localStorage.setItem('socrates_hideHelp', 'true');
+                    safeStorageSet(localStorage, 'socrates_hideHelp', 'true');
                 } else {
-                    localStorage.removeItem('socrates_hideHelp');
+                    safeStorageRemove(localStorage, 'socrates_hideHelp');
                 }
             }
         }
@@ -1005,10 +1222,10 @@
                 previousAnalysisCount = analyses.length;
                 if (analyses.length > 0) {
                     previousHtml = analyses.map(a => 
-                        `<div style="display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--bg-hover);">
-                            <a href="?file=${a.md5}" onclick="event.preventDefault(); loadAnalysis('${a.md5}');" style="color: var(--accent); text-decoration: none; flex: 1;">${FOLDER_ICON_SVG}${escapeHtml(a.name)}</a>
-                            <button data-md5="${a.md5}" data-name="${escapeHtml(a.name)}" data-action="reanalyze" style="background: var(--bg-hover); border: none; color: var(--accent); cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="Re-analyze">${REFRESH_ICON_SVG}</button>
-                            <button class="previous-analysis-delete" data-md5="${a.md5}" data-name="${escapeHtml(a.name)}" data-action="delete" style="background: var(--bg-hover); border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px;" title="Delete">${DELETE_ICON_SVG}</button>
+                        `<div class="previous-analysis-row" style="display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--bg-hover);">
+                            <a href="?file=${escapeHtml(a.md5)}" onclick="event.preventDefault(); loadAnalysis('${escapeJsString(a.md5)}');" style="color: var(--accent); text-decoration: none; flex: 1;">${FOLDER_ICON_SVG}${escapeHtml(a.name)}</a>
+                            <button data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="reanalyze" style="background: var(--bg-hover); border: none; color: var(--accent); cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="Re-analyze">${REFRESH_ICON_SVG}</button>
+                            <button class="previous-analysis-delete" data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="delete" style="background: var(--bg-hover); border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px;" title="Delete">${DELETE_ICON_SVG}</button>
                         </div>`
                     ).join('');
                 } else {
@@ -1064,16 +1281,16 @@
                              </div>
                          </div>
                      </div>
-                      <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover);">
-                          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                              <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; font-weight: 600;">${FOLDER_OPEN_ICON_SVG} Previous Analyses</div>
-                              ${deleteAllButtonHtml}
-                          </div>
-                         <div id="previousAnalysesList">${previousHtml}</div>
-                     </div>
+                       <div class="previous-analyses-section" style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover);">
+                           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                               <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; font-weight: 600;">${FOLDER_OPEN_ICON_SVG} Previous Analyses</div>
+                               ${deleteAllButtonHtml}
+                           </div>
+                          <div id="previousAnalysesList">${previousHtml}</div>
+                      </div>
                     <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover); margin-top: 20px;">
                         <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 10px; text-align: center;">SO-CRATES provides basic analysis. Need more advanced functionality?<br>Take a look at the full <a href="https://securityonion.net" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion</a> platform available in a free Community Edition!<br>If you need enterprise features, consider upgrading to <a href="https://securityonion.com/pro" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion Pro</a>!</div>
-                        <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+                        <table class="feature-table" style="width: 100%; border-collapse: collapse; margin-top: 15px;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--bg-hover);">
                                     <th style="text-align: left; padding: 10px; color: var(--text-muted); font-size: 0.8rem; text-transform: none; cursor: default;">Feature</th>
@@ -1237,7 +1454,11 @@
                 e.preventDefault();
                 showHelpModal();
             }
-            // Easter egg: type "31337" anywhere outside of input fields to activate Hacker Mode.
+            if (e.key === 't' && !e.ctrlKey && !e.altKey && !e.metaKey && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA' && !e.target.isContentEditable) {
+                e.preventDefault();
+                toggleTheme();
+            }
+            // Easter eggs: type "31337" for Hacker theme or "sguil" for Sguil theme.
             const tag = e.target.tagName;
             const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable;
             if (!isTyping && e.key.length === 1) {
@@ -1248,14 +1469,22 @@
                 if (keyBuffer === '31337') {
                     e.preventDefault();
                     setTheme('hacker');
-                    showEasterEggMessage('Hacker Mode activated. Welcome to the elite.');
+                    showToast('Switched to Hacker theme. You are truly 31337!');
+                    keyBuffer = '';
+                }
+                if (keyBuffer === 'sguil') {
+                    e.preventDefault();
+                    setTheme('sguil');
+                    showToast('Switched to Sguil theme.');
                     keyBuffer = '';
                 }
             }
         });
 
-        function showEasterEggMessage(message) {
+        function showToast(message) {
+            document.querySelectorAll('.socrates-toast').forEach(t => t.remove());
             const toast = document.createElement('div');
+            toast.className = 'socrates-toast';
             toast.textContent = message;
             toast.style.cssText = 'position: fixed; bottom: 20px; right: 20px; background: var(--bg-secondary); color: var(--accent); border: 1px solid var(--accent); padding: 12px 20px; border-radius: 6px; font-family: inherit; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: opacity 0.5s;';
             document.body.appendChild(toast);
@@ -1572,6 +1801,12 @@
                     return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Filename'];
                 case 'filealerts':
                     return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Rule Name', 'Tags'];
+                case 'modbus':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Function', 'Unit ID', 'Access Type', 'Category', 'Error Flags'];
+                case 'dnp3':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Type', 'Source Addr', 'Dest Addr', 'Function'];
+                case 'pgsql':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Query', 'Command', 'Rows', 'SSL'];
                 case 'log': {
                     const logEvents = tabDataCache['log'] || [];
                     const cols = discoverLogColumns(logEvents);
@@ -1658,6 +1893,32 @@
                     colSpan = 8;
                     row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><span class="badge" style="background:${COLORS.FILE_ALERT.bg};color:${COLORS.FILE_ALERT.text}">${escapeHtml(ruleName)}</span></td><td>${tagsHtml}</td></tr>`;
                     break;
+                case 'modbus': {
+                    const mr = e.modbus?.request || {};
+                    colSpan = 11;
+                    row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td><span class="badge" style="background:${COLORS.EVENT.modbus}33;color:${COLORS.EVENT.modbus}">${escapeHtml(mr.function_code || '')}</span></td><td>${escapeHtml(String(mr.unit_id || ''))}</td><td>${escapeHtml(mr.access_type || '')}</td><td>${escapeHtml(mr.category || '')}</td><td>${escapeHtml(mr.error_flags || '')}</td></tr>`;
+                    break;
+                }
+                case 'dnp3': {
+                    const dnp = e.dnp3 || {};
+                    const dnpType = dnp.type || dnp.request?.type || dnp.response?.type || '';
+                    const dnpSrc = dnp.src !== undefined ? dnp.src : (dnp.request?.src !== undefined ? dnp.request.src : '');
+                    const dnpDst = dnp.dst !== undefined ? dnp.dst : (dnp.request?.dst !== undefined ? dnp.request.dst : '');
+                    const dnpFunc = dnp.application?.function_code !== undefined ? dnp.application.function_code : (dnp.request?.application?.function_code !== undefined ? dnp.request.application.function_code : (dnp.response?.application?.function_code !== undefined ? dnp.response.application.function_code : ''));
+                    colSpan = 10;
+                    row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td>${escapeHtml(dnpType)}</td><td>${escapeHtml(String(dnpSrc))}</td><td>${escapeHtml(String(dnpDst))}</td><td>${escapeHtml(String(dnpFunc))}</td></tr>`;
+                    break;
+                }
+                case 'pgsql': {
+                    const pq = e.pgsql || {};
+                    const pqQuery = (pq.request?.simple_query || '').slice(0, 60);
+                    const pqCmd = pq.response?.command_completed || '';
+                    const pqRows = pq.response?.data_rows !== undefined ? pq.response.data_rows : '';
+                    const pqSsl = pq.response?.ssl_accepted !== undefined ? (pq.response.ssl_accepted ? 'Yes' : 'No') : '';
+                    colSpan = 10;
+                    row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td class="mono" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(pq.request?.simple_query || '')}">${escapeHtml(pqQuery)}</td><td>${escapeHtml(pqCmd)}</td><td>${escapeHtml(String(pqRows))}</td><td>${escapeHtml(pqSsl)}</td></tr>`;
+                    break;
+                }
                 default:
                     colSpan = 6;
                     row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td></tr>`;
@@ -2529,7 +2790,16 @@
                     }
                     case 'Log Source': extracted = alert.logsource || ''; break;
                     case 'Timestamp': extracted = alert.timestamp || ''; break;
-                    default: extracted = '';
+                    default: {
+                        // Dynamic column from original_log, matching getFilteredSigmaAlerts.
+                        try {
+                            const logObj = JSON.parse(alert.original_log || '{}');
+                            if (logObj && typeof logObj === 'object') {
+                                const field = _getFieldForLabel(col);
+                                extracted = String(logObj[field] || '');
+                            }
+                        } catch(e) { extracted = ''; }
+                    }
                 }
                 if (extracted !== val) return false;
             }
@@ -2543,12 +2813,7 @@
             
             eventTypes.forEach(type => {
                 const total = baseEventStats[type] || 0;
-                let filtered;
-                if (type === 'filealerts') {
-                    filtered = eventStats[type] || 0;
-                } else {
-                    filtered = filteredStats ? (filteredStats[type] || 0) : (eventStats[type] || 0);
-                }
+                const filtered = filteredStats ? (filteredStats[type] || 0) : (eventStats[type] || 0);
                 stats.push({
                     id: type,
                     label: typeLabels[type] || type.toUpperCase(),
@@ -2771,6 +3036,30 @@
                 case 'Rule Name': return e.filealerts?.rule_name || '';
                 case 'Tags': return (e.filealerts?.tags || []).join(', ');
                 case 'Author': return e.filealerts?.author || '';
+                case 'Function': {
+                    if (e.event_type === 'modbus') return e.modbus?.request?.function_code || '';
+                    if (e.event_type === 'dnp3') {
+                        return e.dnp3?.application?.function_code !== undefined ? String(e.dnp3.application.function_code) :
+                               (e.dnp3?.request?.application?.function_code !== undefined ? String(e.dnp3.request.application.function_code) :
+                               (e.dnp3?.response?.application?.function_code !== undefined ? String(e.dnp3.response.application.function_code) : ''));
+                    }
+                    return '';
+                }
+                case 'Unit ID': return e.modbus?.request?.unit_id !== undefined ? String(e.modbus.request.unit_id) : '';
+                case 'Access Type': return e.modbus?.request?.access_type || '';
+                case 'Error Flags': return e.modbus?.request?.error_flags || '';
+                case 'Source Addr': return e.dnp3?.src !== undefined ? String(e.dnp3.src) : (e.dnp3?.request?.src !== undefined ? String(e.dnp3.request.src) : '');
+                case 'Dest Addr': return e.dnp3?.dst !== undefined ? String(e.dnp3.dst) : (e.dnp3?.request?.dst !== undefined ? String(e.dnp3.request.dst) : '');
+                case 'Query': {
+                    if (e.event_type === 'pgsql') return e.pgsql?.request?.simple_query || '';
+                    return e.dns?.rrname || '';
+                }
+                case 'Command': {
+                    if (e.event_type === 'pgsql') return e.pgsql?.response?.command_completed || '';
+                    return e.ftp?.command || '';
+                }
+                case 'Rows': return e.pgsql?.response?.data_rows !== undefined ? String(e.pgsql.response.data_rows) : '';
+                case 'SSL': return e.pgsql?.response?.ssl_accepted !== undefined ? (e.pgsql.response.ssl_accepted ? 'Yes' : 'No') : '';
                 case 'Channel': {
                     try { const jd = _parseLogEventJson(e); return jd.Channel || jd.Provider_Name || e.app_proto || ''; } catch(e2) { return e.app_proto || ''; }
                 }
@@ -2790,6 +3079,9 @@
                     if (etype === 'ftp') return e.ftp?.command || '';
                     if (etype === 'anomaly') return e.anomaly?.message || '';
                     if (etype === 'fileinfo') return e.fileinfo?.filename || '';
+                    if (etype === 'modbus') return e.modbus?.request?.function_code || '';
+                    if (etype === 'dnp3') return e.dnp3?.type || e.dnp3?.request?.type || e.dnp3?.response?.type || '';
+                    if (etype === 'pgsql') return e.pgsql?.request?.simple_query || e.pgsql?.response?.command_completed || '';
                     if (etype === 'log') {
                         try {
                             const jd = _parseLogEventJson(e);
@@ -2828,7 +3120,7 @@
           let baseEventStats = {};
           var isLogAnalysisMode = false;
 
-        const EVENT_TYPE_ICONS = { alert: '🔴', dns: '🟢', http: '🟠', tls: '🔵', flow: '🟣', ftp: '📁', anomaly: '⚠️', fileinfo: '📄', filealerts: '🚨', log: '📋', sigmaalert: '🛡️' };
+        const EVENT_TYPE_ICONS = { alert: '🔴', dns: '🟢', dnp3: '⚡', http: '🟠', modbus: '🔧', pgsql: '🐘', tls: '🔵', flow: '🟣', ftp: '📁', anomaly: '⚠️', fileinfo: '📄', filealerts: '🚨', log: '📋', sigmaalert: '🛡️' };
         const ALL_EVENTS_COLUMNS = ['Time', 'Type', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Detail'];
         const EMPTY_FILTER_STATE_HTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.95rem;">${SEARCH_ICON_SVG} No events match the current filters</div>`;
         const AGG_COLLAPSED_HTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▸ Aggregation Tables</div></div>';
@@ -2865,6 +3157,11 @@
                 const filtered = getFilteredSigmaAlerts(alerts);
                 if (advancedMode) buildSigmaAlertAggregations(filtered, sectionId);
                 buildSigmaAlertSectionContent(sectionId, filtered);
+                return;
+            }
+            if (eventType === 'all') {
+                if (advancedMode) buildAggregationsSectionAll();
+                buildAllEvents();
                 return;
             }
             const events = tabDataCache[eventType] || sections[eventType] || [];
@@ -3122,7 +3419,7 @@
                 if (result.success) {
                     currentMd5 = md5;
                     currentFileName = result.file_name || md5;
-                    document.title = 'SO-CRATES - ' + currentFileName;
+                    document.title = 'SO-CRATES - ' + escapeHtml(currentFileName);
                     const urlParams = new URLSearchParams(window.location.search);
                     urlParams.set('file', md5);
                     const newUrl = window.location.pathname + '?' + urlParams.toString();
@@ -3189,35 +3486,10 @@
                     
                     document.getElementById('appHeaderFilename').innerHTML = `${FILE_ICON_SVG}${escapeHtml(currentFileName)}`;
                     document.getElementById('appHeaderMeta').innerHTML = `
-                        <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${FOLDER_ICON_SVG}${currentMd5}</span>
-                        <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${CALENDAR_ICON_SVG}${dateDisplay}</span>
+                        <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${FOLDER_ICON_SVG}${escapeHtml(currentMd5)}</span>
+                        <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${CALENDAR_ICON_SVG}${escapeHtml(dateDisplay)}</span>
                     `;
-                    document.getElementById('appHeaderRight').innerHTML = `
-                        <div class="app-header-menu">
-                            <button class="app-header-menu-btn" onclick="toggleMenu()" title="Menu" id="appHeaderMenuBtn">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                            </button>
-                            <div class="app-header-menu-dropdown" id="appHeaderMenuDropdown">
-                                <div class="app-header-menu-item theme-header">Theme</div>
-                                <button class="app-header-menu-item" onclick="setTheme('dark'); closeMenu();">
-                                    <span><svg class="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
-                                    <span>Dark Mode</span>
-                                </button>
-                                <button class="app-header-menu-item" onclick="setTheme('light'); closeMenu();">
-                                    <span><svg class="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span>
-                                    <span>Light Mode</span>
-                                </button>
-                                <button class="app-header-menu-item" onclick="setTheme('hacker'); closeMenu();">
-                                    <span><svg class="theme-icon-hacker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="6 9 10 12 6 15"/><line x1="12" y1="15" x2="18" y2="15"/></svg></span>
-                                    <span>Hacker Mode</span>
-                                </button>
-                                <div class="app-header-menu-sep"></div>
-                                <button class="app-header-menu-item" onclick="showHelpModal(); closeMenu();">
-                                    <span><svg class="theme-icon-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
-                                    <span>Help</span>
-                                </button>
-                            </div>
-                        </div>`;
+                    document.getElementById('appHeaderRight').innerHTML = renderGearMenu();
                     showAnalysisUI();
                     updateFilterBarVisibility();
                     

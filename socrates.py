@@ -36,7 +36,7 @@ from sigma_analyzer import (
 )
 import config
 
-VERSION = '2.0.0'
+VERSION = '2.1.0'
 PORT = int(os.environ.get('PORT', 8000))
 BIND_ADDRESS = os.environ.get('BIND_ADDRESS', '127.0.0.1')
 DATA_DIR = os.environ.get('DATA_DIR', os.path.expanduser('~/socrates-data'))
@@ -322,17 +322,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _resolve_md5_dir(self, md5):
         """Validate MD5 format and resolve to a safe data directory path.
 
-        Returns the absolute directory path, or raises ValueError with a
-        descriptive message if validation fails.
+        Returns a tuple (dir_path, error_message). On success error_message is
+        None; on failure dir_path is None and error_message is a safe,
+        non-internal string suitable for client responses.
         """
         if not md5:
-            raise ValueError('md5 parameter required')
+            return None, 'md5 parameter required'
         if not MD5_RE.match(md5):
-            raise ValueError('Invalid MD5')
+            return None, 'Invalid MD5'
         dir_path = os.path.join(DATA_DIR, md5)
         if not is_safe_path(DATA_DIR, dir_path):
-            raise ValueError('Invalid path')
-        return dir_path
+            return None, 'Invalid path'
+        return dir_path, None
 
     def _validate_stream_params(self, params):
         src = params.get('src', [''])[0]
@@ -341,16 +342,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         dport = params.get('dport', [''])[0]
         md5 = params.get('md5', [''])[0]
 
-        if not md5:
-            return None, 'md5 parameter required'
         if not (validate_ip(src) and validate_ip(dst) and validate_port(sport) and validate_port(dport)):
             return None, 'Invalid IP or port'
-        if not MD5_RE.match(md5):
-            return None, 'Invalid MD5'
-
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
-            return None, 'Invalid path'
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            return None, error
 
         pcap_files = [f for f in os.listdir(dir_path) if f.endswith(PCAP_EXTENSIONS)] if os.path.exists(dir_path) else []
         pcap = os.path.join(dir_path, pcap_files[0]) if pcap_files else None
@@ -421,14 +417,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def handle_get_events(self, params):
         md5 = params.get('md5', [''])[0]
-        if not md5:
-            self._send_json([])
-            return
-        if not MD5_RE.match(md5):
-            self._send_json([])
-            return
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
             self._send_json([])
             return
 
@@ -457,15 +447,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def handle_get_stats(self, params):
         md5 = params.get('md5', [''])[0]
-        if not md5:
-            self._send_json({'error': 'md5 parameter required'})
-            return
-        if not MD5_RE.match(md5):
-            self._send_json({})
-            return
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
-            self._send_json({})
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
             return
         db_file = os.path.join(dir_path, 'events.db')
         q_raw = params.get('q', [])
@@ -478,20 +462,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def handle_get_count(self, params):
         md5 = params.get('md5', [''])[0]
-        if not md5:
-            self._send_json({'error': 'md5 parameter required'})
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
             return
         event_type = params.get('type', [''])[0] or None
         q_raw = params.get('q', [])
         q = [x.strip()[:200] for x in q_raw if x.strip()] or None
 
-        if not MD5_RE.match(md5):
-            self._send_json({'count': 0})
-            return
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
-            self._send_json({'count': 0})
-            return
         db_file = os.path.join(dir_path, 'events.db')
 
         if os.path.exists(db_file):
@@ -677,13 +655,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def handle_get_load_analysis(self, params):
         md5 = params.get('md5', [''])[0]
-        if not MD5_RE.match(md5):
-            self._send_error(400, 'Invalid MD5')
-            return
-
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
-            self._send_error(400, 'Invalid path')
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
             return
 
         eve_path = os.path.join(dir_path, 'eve.json')
@@ -720,13 +694,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if data is None:
             return
         md5 = data.get('md5', '')
-        if not MD5_RE.match(md5):
-            self._send_error(400, 'Invalid MD5')
-            return
-
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
-            self._send_error(400, 'Invalid path')
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
             return
 
         if os.path.exists(dir_path) and os.path.isdir(dir_path):
@@ -760,13 +730,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def handle_get_pcap_path(self, params):
         md5 = params.get('md5', [''])[0]
-        if not MD5_RE.match(md5):
-            self._send_error(400, 'Invalid MD5')
-            return
-
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
-            self._send_error(400, 'Invalid path')
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
             return
         pcap_files = [f for f in os.listdir(dir_path) if f.endswith(PCAP_EXTENSIONS)] if os.path.exists(dir_path) else []
         if pcap_files:
@@ -783,14 +749,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def handle_get_sigma_alerts(self, params):
         md5 = params.get('md5', [''])[0]
-        if not md5:
-            self._send_json([])
-            return
-        if not MD5_RE.match(md5):
-            self._send_json([])
-            return
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
             self._send_json([])
             return
 
@@ -819,14 +779,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def handle_get_sigma_stats(self, params):
         md5 = params.get('md5', [''])[0]
-        if not md5:
-            self._send_json({})
-            return
-        if not MD5_RE.match(md5):
-            self._send_json({})
-            return
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
             self._send_json({})
             return
 
@@ -867,7 +821,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         pcap_data = f.read()
                     md5_hash = hashlib.md5(pcap_data).hexdigest()
                     dir_path = os.path.join(DATA_DIR, md5_hash)
-                    pcap_filename = os.path.basename(pcap_files[0])
+                    pcap_filename = sanitize_filename(os.path.basename(pcap_files[0]))
                     pcap_path = os.path.join(dir_path, pcap_filename)
                     eve_path = os.path.join(dir_path, 'eve.json')
                     name_path = os.path.join(dir_path, 'name.txt')
@@ -893,7 +847,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         file_bytes = f.read()
                     md5_hash = hashlib.md5(file_bytes).hexdigest()
                     dir_path = os.path.join(DATA_DIR, md5_hash)
-                    dest_path = os.path.join(dir_path, os.path.basename(first_file))
+                    dest_filename = sanitize_filename(os.path.basename(first_file))
+                    dest_path = os.path.join(dir_path, dest_filename)
                     db_path = os.path.join(dir_path, 'events.db')
                     name_path = os.path.join(dir_path, 'name.txt')
 
@@ -1045,37 +1000,80 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # POST handlers
     # ------------------------------------------------------------------
 
+    def _parse_multipart_file(self, body, content_type):
+        """Extract the first uploaded file from a multipart/form-data body.
+
+        Returns (file_data, filename) or (None, None) on failure.
+        """
+        boundary_match = re.search(r'boundary=("[^"]+"|[^;\s]+)', content_type, re.IGNORECASE)
+        if not boundary_match:
+            return None, None
+
+        boundary = boundary_match.group(1).strip().strip('"\'').encode()
+        if not boundary:
+            return None, None
+
+        delimiter = b'--' + boundary
+        pos = body.find(delimiter)
+        if pos == -1:
+            return None, None
+
+        # Skip preamble and the first boundary line.
+        pos += len(delimiter)
+        while pos < len(body) and body[pos:pos+2] == b'\r\n':
+            pos += 2
+
+        while pos < len(body):
+            next_delim = body.find(delimiter, pos)
+            if next_delim == -1:
+                return None, None
+
+            part = body[pos:next_delim]
+            header_end = part.find(b'\r\n\r\n')
+            if header_end != -1:
+                headers = part[:header_end].decode('utf-8', errors='replace')
+                filename = None
+                # Quoted filename (handles escaped quotes per RFC 6266).
+                cd_match = re.search(
+                    r'Content-Disposition:\s*form-data\s*;[^\r\n]*filename="((?:\\.|[^\\"])*)"',
+                    headers,
+                    re.IGNORECASE,
+                )
+                if cd_match:
+                    filename = cd_match.group(1).replace('\\"', '"').replace('\\\\', '\\')
+                else:
+                    # Unquoted filename.
+                    unquoted_match = re.search(
+                        r'Content-Disposition:\s*form-data\s*;[^\r\n]*filename=([^;\r\n]+)',
+                        headers,
+                        re.IGNORECASE,
+                    )
+                    if unquoted_match:
+                        filename = unquoted_match.group(1).strip()
+                if filename:
+                    file_data = part[header_end + 4:]
+                    # The CRLF before the boundary belongs to the boundary, not the body.
+                    if file_data.endswith(b'\r\n'):
+                        file_data = file_data[:-2]
+                    return file_data, filename
+
+            pos = next_delim + len(delimiter)
+            if body.startswith(b'--', pos):
+                break
+            if body.startswith(b'\r\n', pos):
+                pos += 2
+
+        return None, None
+
     def handle_post_upload(self):
         body = self._read_post_body(MAX_UPLOAD_SIZE)
         if body is None:
             return
 
         content_type = self.headers.get('Content-Type', '')
-        match = re.search(r'boundary=(.+)', content_type)
-        if not match:
-            self._send_error(400, 'Invalid request')
-            return
+        file_data, original_filename = self._parse_multipart_file(body, content_type)
 
-        boundary = match.group(1).encode()
-
-        parts = body.split(b'--' + boundary)
-        file_data = None
-        original_filename = 'unknown.pcap'
-
-        for part in parts:
-            if b'filename=' in part:
-                header_end = part.find(b'\r\n\r\n')
-                if header_end != -1:
-                    headers = part[:header_end].decode('utf-8', errors='replace')
-                    filename_match = re.search(r'filename="([^"]+)"', headers)
-                    if filename_match:
-                        original_filename = sanitize_filename(filename_match.group(1))
-                        file_data = part[header_end + 4:]
-                        if file_data.endswith(b'\r\n'):
-                            file_data = file_data[:-2]
-                        break
-
-        if not file_data:
+        if file_data is None:
             self._send_error(400, 'Invalid file')
             return
 
@@ -1175,15 +1173,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def handle_get_status(self, params):
         md5 = params.get('md5', [''])[0]
-        if not md5:
-            self._send_error(400, 'Missing MD5')
-            return
-        if not MD5_RE.match(md5):
-            self._send_error(400, 'Invalid MD5')
-            return
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
-            self._send_error(400, 'Invalid path')
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
             return
         self._send_json(self._build_status_response(dir_path))
 
@@ -1192,14 +1184,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if data is None:
             return
         md5 = data.get('md5', '')
-
-        if not MD5_RE.match(md5):
-            self._send_error(400, 'Invalid MD5')
-            return
-
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
-            self._send_error(400, 'Invalid path')
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
             return
         self._send_json(self._build_status_response(dir_path))
 
@@ -1208,14 +1195,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if data is None:
             return
         md5 = data.get('md5', '')
-
-        if not MD5_RE.match(md5):
-            self._send_error(400, 'Invalid MD5')
-            return
-
-        dir_path = os.path.join(DATA_DIR, md5)
-        if not is_safe_path(DATA_DIR, dir_path):
-            self._send_error(400, 'Invalid path')
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
             return
 
         if not os.path.exists(dir_path) or not os.path.isdir(dir_path):

@@ -106,6 +106,11 @@ The `json_data` column stores the complete original event, allowing the server t
 | `anomaly` | Protocol anomalies | `anomaly.message` |
 | `fileinfo` | File transfers | `fileinfo.filename`, `fileinfo.filetype` |
 | `filealerts` | YARA matches on extracted files | `rule_name`, `sha256`, `tags` |
+| `dnp3` | DNP3 industrial-control events | `dnp3.src`, `dnp3.dst`, `dnp3.type` |
+| `modbus` | Modbus industrial-control events | `modbus.request.function_code`, `modbus.request.unit_id` |
+| `pgsql` | PostgreSQL protocol events | `pgsql.request.simple_query`, `pgsql.response.command_completed` |
+| `log` | Imported log events (EVTX, JSON, CSV, XML, generic logs) | `original_log`, parsed dynamic fields |
+| `sigmaalert` | Sigma rule matches on imported logs | `title`, `severity`, `rule_level` |
 | `stats` | Suricata internal stats | (excluded from display) |
 
 ## UI
