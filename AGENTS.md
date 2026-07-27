@@ -94,6 +94,7 @@ SO-CRATES supports twenty-three themes via CSS custom properties:
 - **Use CSS variables** (`var(--bg-primary)`, `var(--text-primary)`, `var(--accent)`, etc.) instead of hardcoded hex values for all structural/theme colors.
 - **Add theme overrides** in the appropriate `[data-theme="..."]` block (e.g., `light`, `sguil`, `hacker`, `cga`, `matte-black`, `tokyo-night`, `retro-82`, `ethereal`, `lumon`, `catppuccin`, `catppuccin-latte`, `everforest`, `gruvbox`, `hackerman`, `kanagawa`, `miasma`, `nord`, `osaka-jade`, `ristretto`, `rose-pine`, `vantablack`, or `white`) when a default dark color lacks contrast or does not match the theme's aesthetic.
 - **Preserve hardcoded colors** only for functional/data-driven elements (event type colors, severity colors, ASCII transcript direction colors) that must stay consistent across themes.
+- **Don't define a variable in every theme block "for completeness" without a real consumer.** `--border-color`, `--accent-rgb`, and `--filter-bar-bg` were defined identically in all 23 theme blocks but never referenced via `var(--name)` anywhere in CSS/JS/HTML — removed as dead CSS (`test_dead_theme_vars_removed` locks this in). If you add a new per-theme variable, grep for `var(--your-name` before considering it done.
 - **Use `currentColor`** for inline SVG icons so they inherit the surrounding text color and adapt automatically.
 - **Avoid emojis** for UI icons when possible — use inline SVGs instead, since emojis render as full-color system glyphs that ignore CSS `color` and may be invisible in one theme.
 

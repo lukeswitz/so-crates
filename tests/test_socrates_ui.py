@@ -1711,6 +1711,18 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertNotIn('var(--welcome-', JS_CONTENT,
                          'JS must not reference --welcome-* variables')
 
+    def test_dead_theme_vars_removed(self):
+        """--border-color, --accent-rgb, --filter-bar-bg were defined in every
+        theme block but never consumed anywhere (verified via var(--name)
+        search across CSS/JS/HTML) - removed as dead CSS. Must not reappear."""
+        for name in ('--border-color', '--accent-rgb', '--filter-bar-bg'):
+            self.assertNotIn(f'{name}:', CSS_CONTENT,
+                             f'{name} is unused and must not be redefined without a real consumer')
+            self.assertNotIn(f'var({name}', CSS_CONTENT,
+                             f'var({name}) must not appear without also adding a definition')
+            self.assertNotIn(f'var({name}', JS_CONTENT,
+                             f'var({name}) must not appear without also adding a definition')
+
     def test_hacker_previous_analysis_delete_overrides(self):
         self.assertIn('[data-theme="hacker"] .previous-analysis-delete', CSS_CONTENT,
                       'Hacker theme must override previous analysis delete color')

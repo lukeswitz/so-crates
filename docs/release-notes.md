@@ -115,6 +115,18 @@ analyses from Suricata 7 too.
 
 ### Other fixes
 
+- **CGA theme's borders read as dark green instead of cyan**: `--bg-hover`
+  (`#004040`), used for nearly every border/panel-outline in the app,
+  had equal green/blue channels at low brightness — green dominates human
+  luminance perception far more than blue, so the color skewed
+  green-looking despite being a "pure cyan" hue numerically. Brightened to
+  `#008080` (with `--bg-hover-light` to `#00a3a3`) so blue registers
+  clearly alongside green.
+- **Dead CSS custom properties removed**: `--border-color`, `--accent-rgb`,
+  and `--filter-bar-bg` were defined identically in all 23 theme blocks but
+  never referenced anywhere via `var(--name)` in CSS/JS/HTML. Removed, with
+  a test (`test_dead_theme_vars_removed`) to keep them from quietly coming
+  back.
 - **Upload disk-space check used the wrong number**: `/api/upload`'s
   upfront disk-space check was sized against the raw `Content-Length` of
   the request, not the resolved upload-size ceiling (`effective_max`) — a
