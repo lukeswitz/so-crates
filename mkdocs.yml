@@ -1,0 +1,52 @@
+site_name: SO-CRATES
+site_description: Security Onion Containerized Rapid Analysis of Threats, Evil, and Sus
+site_url: https://dougburks.github.io/so-crates/
+repo_url: https://github.com/dougburks/so-crates
+repo_name: dougburks/so-crates
+docs_dir: docs
+
+plugins:
+  - glightbox
+  - search
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.footer
+  palette:
+    scheme: slate
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+
+nav:
+  - Home: index.md
+  - Interactive Demo: quick-demo.md
+  - Installation:
+    - Installation Overview: installation/index.md
+    - Docker: installation/docker.md
+    - Podman: installation/podman.md
+    - OhMyDebn: installation/ohmydebn.md
+    - Manual Installation: installation/manual.md
+  - Usage: usage.md
+  - Themes: themes.md
+  - Configuration: configuration.md
+  - Security: security.md
+  - Architecture:
+    - Architecture Overview: architecture/index.md
+    - Data Storage: architecture/data-storage.md
+    - Database: architecture/database.md
+    - Event Types: architecture/event-types.md
+    - UI: architecture/ui.md
+    - Security Model: architecture/security-model.md
+    - Test Coverage: architecture/testing.md
+  - API Reference: api.md
+  - Filtering: filtering.md
+  - Testing: testing.md
+  - Credits: credits.md
+  - Release Notes: release-notes.md
+  - License: license.md

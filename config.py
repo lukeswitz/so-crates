@@ -6,13 +6,24 @@ across the codebase.
 """
 
 # Size limits
-MAX_UPLOAD_SIZE = 1000 * 1024 * 1024       # 1000 MB
-MAX_EVE_SIZE = 1000 * 1024 * 1024          # 1000 MB
+# MAX_UPLOAD_SIZE is the hard ceiling enforced server-side (see
+# socrates.py's _resolve_upload_size_limit) - any client-requested override,
+# including the user-configurable frontend setting, is always clamped to
+# this value. DEFAULT_UPLOAD_SIZE is what's used when no override is sent
+# (preserves the old fixed ceiling for any caller that doesn't opt in).
+MAX_UPLOAD_SIZE = 5000 * 1024 * 1024       # 5000 MB
+DEFAULT_UPLOAD_SIZE = 1000 * 1024 * 1024   # 1000 MB
+MAX_EVE_SIZE = 5000 * 1024 * 1024          # 5000 MB
 MAX_REQUEST_BODY_SIZE = 1024 * 1024        # 1 MB
 MAX_TRANSCRIPT_SIZE = 100000               # characters
+DISK_SPACE_SAFETY_MARGIN = 100 * 1024 * 1024  # 100 MB buffer kept free on disk-space checks
 
 # Query / display limits
-MAX_QUERY_LIMIT = 5000
+# MAX_QUERY_LIMIT is the hard ceiling enforced server-side (see
+# socrates.py's _parse_pagination) - any client-requested `limit=`,
+# including the user-configurable frontend setting, is always clamped to
+# this value regardless of what the client asked for.
+MAX_QUERY_LIMIT = 100000
 MAX_TRANSCRIPT_LINES = 500
 MAX_HEXDUMP_PACKETS = 500
 
@@ -21,7 +32,7 @@ STREAM_TIMEOUT_SECONDS = 60
 URL_DOWNLOAD_TIMEOUT = 30
 SQLITE_TIMEOUT_SECONDS = 30
 FILE_COMMAND_TIMEOUT = 10
-YARA_DOWNLOAD_TIMEOUT = 60
+RULES_DOWNLOAD_TIMEOUT = 60
 YARA_SCAN_TIMEOUT = 300
 SURICATA_UPDATE_TIMEOUT = 60
 SURICATA_RUN_TIMEOUT = 300                 # 5 minutes max for a single PCAP
@@ -31,11 +42,14 @@ SIGMA_RUN_TIMEOUT = 300                    # 5 minutes max for Zircolite log ana
 ZIRCOLITE_VERSION = '3.7.1'
 SIGMA_RULES_SUBDIR = 'sigma-rules'
 
+# Uploads
+UPLOAD_TMP_SUBDIR = 'upload-tmp'
+
 # Search / analysis limits
 MAX_SEARCH_TERM_LENGTH = 200               # characters
 HASH_CHUNK_SIZE = 65536                    # bytes for incremental hashing
 MAX_STRINGS_READ_SIZE = 2 * 1024 * 1024    # 2 MB cap for string extraction
-MAX_ENTROPY_READ_SIZE = 10 * 1024 * 1024 # 10 MB cap for entropy calculation
+MAX_ENTROPY_READ_SIZE = 10 * 1024 * 1024   # 10 MB cap for entropy calculation
 
 # Thresholds
 STALE_THRESHOLD_SECONDS = 600              # 10 minutes

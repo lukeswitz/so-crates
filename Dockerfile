@@ -29,10 +29,20 @@ FROM debian:13-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# debian:13-slim's own repo only has Suricata 7.0.10, which is missing eve
+# logging for several protocols this app supports (enip/ntp - no output
+# module in 7.0.10 at all; websocket/pop3/mdns/ldap/arp - don't exist in
+# 7.0.10's app-layer protocol list at all). Suricata 8 is available via
+# Debian's own trixie-backports repo (8.0.6 as of writing, confirmed via
+# packages.debian.org) - this mirrors the exact upgrade path validated on a
+# real trixie install, rather than pulling in OISF's own third-party repo.
+# suricata-update is pulled from backports too (1.3.8 vs. regular trixie's
+# 1.3.4) - 1.3.8 fixes a real security issue (arbitrary file write via path
+# traversal in rule archive extraction: OISF redmine #8633), not just a
+# Suricata-8 compatibility nicety.
+RUN echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sources.list.d/trixie-backports.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    suricata \
-    suricata-update \
     tcpdump \
     tshark \
     yara \
@@ -42,6 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libimage-exiftool-perl \
     libxml2 \
     libxslt1.1 \
+    && apt-get install -y --no-install-recommends -t trixie-backports suricata suricata-update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=zircolite-builder /usr/local/lib/zircolite /usr/local/lib/zircolite

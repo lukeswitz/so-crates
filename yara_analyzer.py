@@ -7,6 +7,7 @@ on first run if internet is available.
 """
 
 import config
+import hashlib
 import json
 import os
 import re
@@ -14,8 +15,10 @@ import shutil
 import subprocess
 import tempfile
 import urllib.request
+import zipfile
 
 from file_analyzer import analyze_file
+from validators import is_host_reachable
 
 YARA_FORGE_URL = (
     'https://github.com/YARAHQ/yara-forge/releases/latest/download/'
@@ -62,7 +65,7 @@ def setup_yara_rules(data_dir=None):
             print(f'Warning: could not copy baked-in rules: {e}')
 
     # Try to download
-    if _has_internet_access():
+    if is_host_reachable('github.com', 443, timeout=5):
         print('Internet access detected — downloading YARA Forge rules...')
         try:
             _download_yara_forge_rules(rules_file)
@@ -76,22 +79,16 @@ def setup_yara_rules(data_dir=None):
     return None
 
 
-def _has_internet_access():
-    from validators import is_host_reachable
-    return is_host_reachable('github.com', 443, timeout=5)
-
-
 def _download_yara_forge_rules(dest_file):
     """Download latest YARA Forge full rules ZIP and extract the .yar file."""
     os.makedirs(os.path.dirname(dest_file), exist_ok=True)
     tmp_zip = dest_file + '.zip'
 
     req = urllib.request.Request(YARA_FORGE_URL, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=config.YARA_DOWNLOAD_TIMEOUT) as resp:
+    with urllib.request.urlopen(req, timeout=config.RULES_DOWNLOAD_TIMEOUT) as resp:
         with open(tmp_zip, 'wb') as f:
             f.write(resp.read())
 
-    import zipfile
     with zipfile.ZipFile(tmp_zip, 'r') as zf:
         member = 'packages/full/yara-rules-full.yar'
         with zf.open(member) as src, open(dest_file, 'wb') as dst:
@@ -128,29 +125,20 @@ def _run_yara_with_index(rules_file, list_path, filestore_dir=None):
     return _parse_yara_output(result.stdout, filestore_dir)
 
 
-def _scan_with_indexes(list_path, rules_file, dedup_key_fn, filestore_dir=None):
-    """Run YARA against the unified rule file and return deduplicated matches.
+def _dedup_matches(matches, key_fn):
+    """Deduplicate YARA matches, keeping the first occurrence of each key.
 
-    Args:
-        list_path: Path to the --scan-list file.
-        rules_file: Path to the YARA Forge rules file.
-        dedup_key_fn: Callable(match) -> hashable key for deduplication.
-        filestore_dir: Optional filestore directory for _run_yara_with_index.
-
-    Returns:
-        List of match dicts.
+    key_fn is applied to every match (including duplicates) so callers can
+    also normalize matches as a side effect.
     """
-    all_matches = []
     seen = set()
-
-    matches = _run_yara_with_index(rules_file, list_path, filestore_dir)
+    unique = []
     for m in matches:
-        key = dedup_key_fn(m)
+        key = key_fn(m)
         if key not in seen:
             seen.add(key)
-            all_matches.append(m)
-
-    return all_matches
+            unique.append(m)
+    return unique
 
 
 def run_yara_scan(filestore_dir, rules_file):
@@ -186,10 +174,9 @@ def run_yara_scan(filestore_dir, rules_file):
         list_path = list_file.name
 
     try:
-        return _scan_with_indexes(
-            list_path, rules_file,
-            dedup_key_fn=lambda m: (m['rule_name'], m['sha256']),
-            filestore_dir=filestore_dir
+        return _dedup_matches(
+            _run_yara_with_index(rules_file, list_path, filestore_dir),
+            key_fn=lambda m: (m['rule_name'], m['sha256'])
         )
     finally:
         try:
@@ -366,8 +353,6 @@ def scan_single_file(file_path, rules_file):
         sha1: str
         metadata: dict from file_analyzer.analyze_file
     """
-    import hashlib
-
     if not os.path.isfile(file_path):
         return [], '', '', '', {}
 
@@ -398,7 +383,10 @@ def scan_single_file(file_path, rules_file):
             m['sha256'] = file_sha256
             return (m['rule_name'], file_sha256)
 
-        matches = _scan_with_indexes(list_path, rules_file, dedup_key_fn=dedup_and_fix)
+        matches = _dedup_matches(
+            _run_yara_with_index(rules_file, list_path),
+            key_fn=dedup_and_fix
+        )
         return matches, file_sha256, file_md5, file_sha1, metadata
     finally:
         try:

@@ -18,25 +18,30 @@ import socket
 import threading
 
 from db import (
-    get_event_count_sqlite, get_event_types_sqlite, query_events_sqlite,
-    create_file_analysis_db, insert_sigma_alerts,
+    get_event_count_sqlite, get_event_types_sqlite, query_events_sqlite_json,
+    create_file_analysis_db, insert_sigma_alerts, init_empty_db,
     query_sigma_alerts_sqlite, get_sigma_stats_sqlite,
+    get_sigma_alert_count_sqlite, get_event_date_range_sqlite,
+    get_sankey_data_sqlite, get_aggregation_data_sqlite,
 )
 from validators import (
     validate_ip, validate_port, sanitize_filename, is_safe_path,
     validate_url_safety, resolve_safe_ips, validate_zip_extraction,
     is_log_file, is_log_file_by_extension, is_office_file_by_extension,
+    is_pcap_file,
 )
 from suricata_analyzer import (
-    REQUIRED_EXECUTABLES, check_executables, setup_suricata_config, spawn_suricata, _set_error
+    check_executables, setup_suricata_config, spawn_suricata,
+    _set_error, _set_phase, _clear_phase,
 )
 from yara_analyzer import check_yara_executable, setup_yara_rules, scan_single_file
 from sigma_analyzer import (
-    is_zircolite_available, setup_sigma_rules, run_sigma_pipeline, parse_zircolite_results
+    is_zircolite_available, setup_sigma_rules, run_sigma_pipeline,
+    parse_zircolite_results, import_zircolite_logs,
 )
 import config
 
-VERSION = '2.1.0'
+VERSION = '3.0.0'
 PORT = int(os.environ.get('PORT', 8000))
 BIND_ADDRESS = os.environ.get('BIND_ADDRESS', '127.0.0.1')
 DATA_DIR = os.environ.get('DATA_DIR', os.path.expanduser('~/socrates-data'))
@@ -49,7 +54,27 @@ SURICATA_DIR = os.path.join(DATA_DIR, 'suricata')
 PCAP_EXTENSIONS = ('.pcap', '.pcapng', '.cap', '.trace')
 MD5_RE = re.compile(r'^[a-f0-9]{32}$')
 
+# Pipeline output artifacts removed by /api/reanalyze before re-running analysis
+PCAP_ANALYSIS_ARTIFACTS = ('eve.json', 'events.db', '.phase', '.error', 'yara_matches.json', 'sigma_matches.json', '.meta', 'file_metadata.json')
+FILE_ANALYSIS_ARTIFACTS = ('events.db', '.error', 'yara_matches.json', 'sigma_matches.json', '.meta', 'zircolite.log', '.zircolite_events.db')
+
 MAX_URL_REDIRECTS = 5
+
+# Cache of the unfiltered (no search query) Sankey/aggregation result per
+# (md5, event_type) - the events table is written once by create_sqlite_db
+# and never mutated afterward except by delete/reanalyze (both evict below),
+# so caching it is safe and turns every repeat tab-view after the first into
+# a no-op instead of a multi-hundred-ms SQL recomputation.
+_SANKEY_CACHE = {}
+_AGGREGATION_CACHE = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def _evict_analysis_cache(md5):
+    with _CACHE_LOCK:
+        for cache in (_SANKEY_CACHE, _AGGREGATION_CACHE):
+            for key in [k for k in cache if k[0] == md5]:
+                del cache[key]
 
 
 class _FileTooLargeError(Exception):
@@ -106,7 +131,9 @@ def _fetch_url_safely(url, timeout, max_size, chunk_size=64 * 1024):
       - Redirect-based bypass: a public URL that 30x-redirects to a blocked
         address after the initial URL already passed validation.
 
-    Returns the response body as bytes.
+    Returns the path to a temp file (under _upload_tmp_dir()) containing the
+    downloaded body -- streamed directly to disk rather than buffered in
+    memory, so peak memory doesn't scale with the response size.
     Raises ValueError on validation/protocol failures, or _FileTooLargeError
     if the body exceeds max_size.
     """
@@ -139,28 +166,36 @@ def _fetch_url_safely(url, timeout, max_size, chunk_size=64 * 1024):
             if resp.status != 200:
                 raise ValueError(f'Server returned HTTP {resp.status}')
 
-            file_data = bytearray()
-            while True:
-                chunk = resp.read(chunk_size)
-                if not chunk:
-                    break
-                file_data.extend(chunk)
-                if len(file_data) > max_size:
-                    raise _FileTooLargeError('File too large')
-            return bytes(file_data)
+            fd, tmp_path = tempfile.mkstemp(dir=_upload_tmp_dir(), suffix='.download')
+            try:
+                total = 0
+                with os.fdopen(fd, 'wb') as f:
+                    while True:
+                        chunk = resp.read(chunk_size)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > max_size:
+                            raise _FileTooLargeError('File too large')
+                        f.write(chunk)
+                return tmp_path
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
         finally:
             conn.close()
 
     raise ValueError('Too many redirects')
 
 
-def _attempt_zip_extract(zip_ref, extract_dir, passwords):
+def _attempt_zip_extract(zip_ref, extract_dir, passwords, max_size=None):
     """Extract ZIP contents, trying passwords if needed.
 
     Returns True on success, False if extraction failed.
     Raises ValueError on zip slip or size violations.
     """
-    validate_zip_extraction(zip_ref, extract_dir)
+    validate_zip_extraction(zip_ref, extract_dir, max_size)
     extracted = False
     try:
         zip_ref.extractall(extract_dir)
@@ -179,21 +214,6 @@ def _attempt_zip_extract(zip_ref, extract_dir, passwords):
 
     return extracted
 
-
-
-def is_pcap_file(data):
-    """Detect if file data is a PCAP or PCAPNG by magic bytes."""
-    if len(data) < 4:
-        return False
-    magic = data[:4]
-    # Classic PCAP (microsecond or nanosecond timestamps), either endianness
-    if magic in (b'\xd4\xc3\xb2\xa1', b'\xa1\xb2\xc3\xd4',
-                 b'\x4d\x3c\xb2\xa1', b'\xa1\xb2\x3c\x4d'):
-        return True
-    # PCAPNG
-    if magic == b'\x0a\x0d\x0d\x0a':
-        return True
-    return False
 
 
 def _write_meta(dir_path, original, extracted, detected_type):
@@ -223,23 +243,137 @@ def _read_meta(dir_path):
     return None
 
 
-def _extract_zip_contents(zip_data, extract_dir, passwords=None):
-    """Extract all contents from zip_data into extract_dir.
+def _upload_tmp_dir():
+    """Scratch dir for in-progress uploads, on the same filesystem as DATA_DIR
+    so the final move into DATA_DIR/<md5>/... is an atomic rename rather than
+    a cross-device copy. Recomputed from the current DATA_DIR on every call
+    (not cached as a module constant) so it stays correct if DATA_DIR is
+    reassigned after import, as the test suite does.
+    """
+    d = os.path.join(DATA_DIR, config.UPLOAD_TMP_SUBDIR)
+    os.makedirs(d, exist_ok=True)
+    return d
 
-    Returns list of extracted file paths (excluding the temporary zip itself).
+
+def _cleanup_upload_tmp_dir():
+    """Remove any leftover entries from _upload_tmp_dir(). Meant to be called
+    once at startup, before the server accepts requests -- at that point,
+    anything found here is guaranteed orphaned (no upload can legitimately
+    be in progress yet), left behind by a process that died mid-upload
+    (crash, OOM-kill, kill -9) before its own request-scoped cleanup in
+    _process_uploaded_file/_fetch_url_safely/_parse_multipart_stream could
+    run. Those normal completion/exception paths already clean up after
+    themselves within a single request's lifetime; this just catches what
+    a hard process death leaves behind, which would otherwise accumulate
+    forever across restarts.
+    """
+    tmp_dir = _upload_tmp_dir()
+    for entry in os.listdir(tmp_dir):
+        path = os.path.join(tmp_dir, entry)
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                os.unlink(path)
+        except OSError:
+            pass
+
+
+def _find_pcap_file(dir_path):
+    """Find the analyzed pcap file within an analysis directory.
+
+    Tries the fast extension-based match first, then falls back to
+    magic-byte detection (is_pcap_file) over the remaining non-artifact
+    entries. The fallback matters because some real pcaps have no
+    recognized extension at all (e.g. Security Onion's
+    so-pcap.<timestamp> downloads) -- they were still correctly detected
+    and ingested as pcaps at upload time via magic bytes (see
+    _process_uploaded_file), so lookups here must use the same detection
+    method rather than relying on the filename alone.
+
+    Returns the filename (not full path), or None if not found.
+    """
+    if not os.path.exists(dir_path):
+        return None
+    entries = os.listdir(dir_path)
+    for f in entries:
+        if f.lower().endswith(PCAP_EXTENSIONS):
+            return f
+    for f in entries:
+        if f.startswith('.') or f in PCAP_ANALYSIS_ARTIFACTS or f == 'name.txt':
+            continue
+        full_path = os.path.join(dir_path, f)
+        if not os.path.isfile(full_path):
+            continue
+        try:
+            with open(full_path, 'rb') as fh:
+                if is_pcap_file(fh.read(4)):
+                    return f
+        except OSError:
+            continue
+    return None
+
+
+def _resolve_upload_size_limit(requested):
+    """Resolve the effective per-request upload-size ceiling from a
+    client-provided override (X-Max-Upload-Size header for /api/upload, or
+    the maxUploadSize JSON field for /api/load-url), clamped to the hard
+    server ceiling (config.MAX_UPLOAD_SIZE) -- mirrors _parse_pagination's
+    clamping semantics for MAX_QUERY_LIMIT. Falls back to
+    config.DEFAULT_UPLOAD_SIZE if the override is missing/malformed/
+    non-positive, matching the pre-existing default behavior for any
+    caller that doesn't send one.
+    """
+    try:
+        value = int(requested)
+    except (TypeError, ValueError):
+        return config.DEFAULT_UPLOAD_SIZE
+    if value <= 0:
+        return config.DEFAULT_UPLOAD_SIZE
+    return min(value, config.MAX_UPLOAD_SIZE)
+
+
+def _hash_file(path):
+    """MD5 of a file, streamed in HASH_CHUNK_SIZE chunks (mirrors the hashing
+    pattern in yara_analyzer.scan_single_file)."""
+    h = hashlib.md5()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(config.HASH_CHUNK_SIZE), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _hash_file_with_prefix(path, prefix_len=4096):
+    """Like _hash_file, but also returns the first prefix_len bytes in the
+    same pass, for callers that also need a magic-byte/content prefix (e.g.
+    is_pcap_file, is_log_file) without a second full-file read."""
+    h = hashlib.md5()
+    prefix = b''
+    with open(path, 'rb') as f:
+        first = True
+        for chunk in iter(lambda: f.read(config.HASH_CHUNK_SIZE), b''):
+            h.update(chunk)
+            if first:
+                prefix = chunk[:prefix_len]
+                first = False
+    return h.hexdigest(), prefix
+
+
+def _extract_zip_contents(zip_path, extract_dir, passwords=None, max_size=None):
+    """Extract all contents of the zip file at zip_path into extract_dir.
+
+    max_size is the decompression-size ceiling passed through to
+    validate_zip_extraction (defaults to config.MAX_UPLOAD_SIZE there);
+    callers should pass the resolved per-request effective_max so the
+    zip-bomb budget tracks what this particular upload was actually
+    allowed, not always the fixed hard ceiling.
+
+    Returns list of extracted file paths.
     Raises ValueError if extraction fails.
     """
-    tmp_zip = os.path.join(extract_dir, 'archive.zip')
-    with open(tmp_zip, 'wb') as f:
-        f.write(zip_data)
-
-    try:
-        with zipfile.ZipFile(tmp_zip, 'r') as zip_ref:
-            if not _attempt_zip_extract(zip_ref, extract_dir, passwords):
-                raise ValueError('Password-protected ZIP could not be opened.')
-    finally:
-        if os.path.exists(tmp_zip):
-            os.unlink(tmp_zip)
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        if not _attempt_zip_extract(zip_ref, extract_dir, passwords, max_size):
+            raise ValueError('Password-protected ZIP could not be opened.')
 
     # Return all extracted files recursively, excluding hidden/metadata files
     files = []
@@ -283,6 +417,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
+
+    def _send_raw_json(self, json_str, status=200):
+        """Like _send_json, but for a value that's already a JSON string
+        (e.g. query_events_sqlite_json's output) - writes it directly
+        without a redundant json.dumps() round-trip."""
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json_str.encode())
+
+    def _check_disk_space(self, required_bytes):
+        """Reject upfront if DATA_DIR's filesystem doesn't have enough free
+        space for an upload of required_bytes, leaving DISK_SPACE_SAFETY_MARGIN
+        free so a large upload can't run the disk down to exactly zero.
+
+        Returns True if there's enough room. Otherwise sends a 507 response
+        and returns False. Fails open (returns True) if free space can't be
+        determined, rather than blocking uploads over an unrelated stat error.
+        """
+        try:
+            free = shutil.disk_usage(DATA_DIR).free
+        except OSError:
+            return True
+        if free < required_bytes + config.DISK_SPACE_SAFETY_MARGIN:
+            self._send_error(507, 'Not enough disk space available for this upload')
+            return False
+        return True
 
     def _read_post_body(self, max_size):
         """Validate Content-Length and read POST body safely.
@@ -335,6 +496,55 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return None, 'Invalid path'
         return dir_path, None
 
+    def _parse_search_terms(self, params):
+        """Extract sanitized full-text search terms from query params."""
+        q_raw = params.get('q', [])
+        return [x.strip()[:config.MAX_SEARCH_TERM_LENGTH] for x in q_raw if x.strip()] or None
+
+    def _parse_pagination(self, params, default_limit=1000):
+        """Extract clamped (offset, limit) from query params, or None on bad input."""
+        try:
+            offset = int(params.get('offset', ['0'])[0])
+            limit = int(params.get('limit', [str(default_limit)])[0])
+        except ValueError:
+            return None
+        return max(0, offset), max(1, min(limit, config.MAX_QUERY_LIMIT))
+
+    def _non_artifact_files(self, dir_path):
+        """List user files in an analysis dir, excluding PCAPs and pipeline artifacts."""
+        if not os.path.exists(dir_path):
+            return []
+        return [f for f in os.listdir(dir_path)
+                if not f.lower().endswith(PCAP_EXTENSIONS + ('.zip', '.db', '.json', '.txt', '.phase'))
+                and not f.startswith('.')]
+
+    def _resolve_display_name(self, dir_path, md5):
+        """Resolve the human-readable display name for an analysis directory.
+
+        Priority: name.txt contents, first PCAP filename, first non-artifact
+        filename, then the MD5 itself.
+        """
+        name_path = os.path.join(dir_path, 'name.txt')
+        if os.path.exists(name_path) and is_safe_path(dir_path, name_path):
+            try:
+                with open(name_path, 'r') as f:
+                    display_name = f.read().strip()
+                if display_name:
+                    return display_name
+            except OSError:
+                pass
+
+        if os.path.exists(dir_path):
+            pcap_files = [f for f in os.listdir(dir_path) if f.lower().endswith(PCAP_EXTENSIONS)]
+            if pcap_files:
+                return pcap_files[0]
+
+        non_pcap_files = self._non_artifact_files(dir_path)
+        if non_pcap_files:
+            return non_pcap_files[0]
+
+        return md5
+
     def _validate_stream_params(self, params):
         src = params.get('src', [''])[0]
         sport = params.get('sport', [''])[0]
@@ -348,8 +558,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if error:
             return None, error
 
-        pcap_files = [f for f in os.listdir(dir_path) if f.endswith(PCAP_EXTENSIONS)] if os.path.exists(dir_path) else []
-        pcap = os.path.join(dir_path, pcap_files[0]) if pcap_files else None
+        pcap_file = _find_pcap_file(dir_path)
+        pcap = os.path.join(dir_path, pcap_file) if pcap_file else None
         if not pcap:
             return None, 'No pcap file found'
 
@@ -359,6 +569,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '/api/events': 'handle_get_events',
         '/api/stats': 'handle_get_stats',
         '/api/count': 'handle_get_count',
+        '/api/sankey-data': 'handle_get_sankey_data',
+        '/api/aggregation-data': 'handle_get_aggregation_data',
         '/api/download-stream': 'handle_get_download_stream',
         '/api/ascii-stream': 'handle_get_ascii_stream',
         '/api/hexdump-stream': 'handle_get_hexdump_stream',
@@ -366,7 +578,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '/api/load-analysis': 'handle_get_load_analysis',
         '/api/pcap-path': 'handle_get_pcap_path',
         '/api/version': 'handle_get_version',
+        '/api/limits': 'handle_get_limits',
         '/api/sigma-alerts': 'handle_get_sigma_alerts',
+        '/api/sigma-count': 'handle_get_sigma_count',
         '/api/sigma-stats': 'handle_get_sigma_stats',
         '/api/status': 'handle_get_status',
     }
@@ -422,24 +636,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json([])
             return
 
-        try:
-            offset = int(params.get('offset', ['0'])[0])
-            limit = int(params.get('limit', ['1000'])[0])
-        except ValueError:
+        pagination = self._parse_pagination(params)
+        if pagination is None:
             self._send_json([])
             return
+        offset, limit = pagination
 
-        offset = max(0, offset)
-        limit = max(1, min(limit, config.MAX_QUERY_LIMIT))
         event_type = params.get('type', [''])[0] or None
-        q_raw = params.get('q', [])
-        q = [x.strip()[:200] for x in q_raw if x.strip()] or None
+        q = self._parse_search_terms(params)
+        order_by = params.get('order_by', [''])[0] or None
+        sort_dir = params.get('sort_dir', ['asc'])[0]
 
         db_file = os.path.join(dir_path, 'events.db')
         if os.path.exists(db_file):
             try:
-                events = query_events_sqlite(db_file, event_type, offset, limit, q)
-                self._send_json(events)
+                json_str = query_events_sqlite_json(db_file, event_type, offset, limit, q, order_by, sort_dir)
+                self._send_raw_json(json_str)
             except Exception:
                 self._send_error(500, 'Database error')
         else:
@@ -452,13 +664,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_error(400, error)
             return
         db_file = os.path.join(dir_path, 'events.db')
-        q_raw = params.get('q', [])
-        q = [x.strip()[:200] for x in q_raw if x.strip()] or None
+        q = self._parse_search_terms(params)
 
-        stats = {}
+        counts = {}
+        date_range = {'min': None, 'max': None}
         if os.path.exists(db_file):
-            stats = get_event_types_sqlite(db_file, q)
-        self._send_json(stats)
+            counts = get_event_types_sqlite(db_file, q)
+            date_range = get_event_date_range_sqlite(db_file, q)
+        self._send_json({'counts': counts, 'date_range': date_range})
 
     def handle_get_count(self, params):
         md5 = params.get('md5', [''])[0]
@@ -467,8 +680,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_error(400, error)
             return
         event_type = params.get('type', [''])[0] or None
-        q_raw = params.get('q', [])
-        q = [x.strip()[:200] for x in q_raw if x.strip()] or None
+        q = self._parse_search_terms(params)
 
         db_file = os.path.join(dir_path, 'events.db')
 
@@ -477,6 +689,61 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         else:
             count = 0
         self._send_json({'count': count})
+
+    def handle_get_sankey_data(self, params):
+        md5 = params.get('md5', [''])[0]
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
+            return
+        event_type = params.get('type', [''])[0] or None
+        q = self._parse_search_terms(params)
+
+        db_file = os.path.join(dir_path, 'events.db')
+
+        if not os.path.exists(db_file):
+            self._send_json({'nodes': [], 'links': []})
+            return
+        if q is None:
+            cache_key = (md5, event_type)
+            with _CACHE_LOCK:
+                cached = _SANKEY_CACHE.get(cache_key)
+            if cached is not None:
+                self._send_json(cached)
+                return
+            data = get_sankey_data_sqlite(db_file, event_type, q)
+            with _CACHE_LOCK:
+                _SANKEY_CACHE[cache_key] = data
+        else:
+            data = get_sankey_data_sqlite(db_file, event_type, q)
+        self._send_json(data)
+
+    def handle_get_aggregation_data(self, params):
+        md5 = params.get('md5', [''])[0]
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
+            return
+        event_type = params.get('type', [''])[0] or None
+        q = self._parse_search_terms(params)
+
+        db_file = os.path.join(dir_path, 'events.db')
+        if not os.path.exists(db_file):
+            self._send_json({})
+            return
+        if q is None:
+            cache_key = (md5, event_type)
+            with _CACHE_LOCK:
+                cached = _AGGREGATION_CACHE.get(cache_key)
+            if cached is not None:
+                self._send_json(cached)
+                return
+            data = get_aggregation_data_sqlite(db_file, event_type, q)
+            with _CACHE_LOCK:
+                _AGGREGATION_CACHE[cache_key] = data
+        else:
+            data = get_aggregation_data_sqlite(db_file, event_type, q)
+        self._send_json(data)
 
     def handle_get_download_stream(self, params):
         result, error = self._validate_stream_params(params)
@@ -631,23 +898,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     eve_size = os.path.getsize(eve_path)
                     if eve_size > MAX_EVE_SIZE:
                         continue
-                name_path = os.path.join(dir_path, 'name.txt')
-                pcap_files = [f for f in os.listdir(dir_path) if f.endswith(PCAP_EXTENSIONS)]
-                non_pcap_files = [f for f in os.listdir(dir_path)
-                                  if not f.endswith(PCAP_EXTENSIONS + ('.zip', '.db', '.json', '.txt', '.phase'))
-                                  and not f.startswith('.')]
-
-                display_name = md5_dir
-                if os.path.exists(name_path) and is_safe_path(dir_path, name_path):
-                    with open(name_path, 'r') as f:
-                        display_name = f.read().strip()
-                elif pcap_files:
-                    display_name = pcap_files[0]
-                elif non_pcap_files:
-                    display_name = non_pcap_files[0]
 
                 if os.path.exists(eve_path) or os.path.exists(db_path):
-                    analyses.append({'md5': md5_dir, 'name': display_name})
+                    analyses.append({'md5': md5_dir, 'name': self._resolve_display_name(dir_path, md5_dir)})
 
             analyses.sort(key=lambda x: x['name'].lower())
 
@@ -662,8 +915,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         eve_path = os.path.join(dir_path, 'eve.json')
         db_path = os.path.join(dir_path, 'events.db')
-        name_path = os.path.join(dir_path, 'name.txt')
-        pcap_files = [f for f in os.listdir(dir_path) if f.endswith(PCAP_EXTENSIONS)] if os.path.exists(dir_path) else []
 
         if os.path.exists(eve_path) or os.path.exists(db_path):
             if os.path.exists(eve_path):
@@ -672,20 +923,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     self._send_error(400, f'Eve.json too large ({eve_size // (1024*1024)}MB, max {MAX_EVE_SIZE // (1024*1024)}MB)')
                     return
 
-            file_name = md5
-            if os.path.exists(name_path) and is_safe_path(dir_path, name_path):
-                with open(name_path, 'r') as f:
-                    file_name = f.read().strip()
-            elif pcap_files:
-                file_name = pcap_files[0]
-            else:
-                non_pcap_files = [f for f in os.listdir(dir_path)
-                                  if not f.endswith(PCAP_EXTENSIONS + ('.zip', '.db', '.json', '.txt', '.phase'))
-                                  and not f.startswith('.')]
-                if non_pcap_files:
-                    file_name = non_pcap_files[0]
-
-            self._send_json({'success': True, 'md5': md5, 'file_name': file_name})
+            self._send_json({'success': True, 'md5': md5, 'file_name': self._resolve_display_name(dir_path, md5)})
         else:
             self._send_error(404, 'Analysis not found')
 
@@ -701,6 +939,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         if os.path.exists(dir_path) and os.path.isdir(dir_path):
             shutil.rmtree(dir_path)
+            _evict_analysis_cache(md5)
             self._send_json({'success': True})
         else:
             self._send_error(404, 'Analysis not found')
@@ -726,6 +965,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if errors and deleted == 0:
             self._send_error(500, f'Could not delete analyses: {errors[0]}')
             return
+        with _CACHE_LOCK:
+            _SANKEY_CACHE.clear()
+            _AGGREGATION_CACHE.clear()
         self._send_json({'success': True, 'deleted': deleted})
 
     def handle_get_pcap_path(self, params):
@@ -734,18 +976,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if error:
             self._send_error(400, error)
             return
-        pcap_files = [f for f in os.listdir(dir_path) if f.endswith(PCAP_EXTENSIONS)] if os.path.exists(dir_path) else []
-        if pcap_files:
+        pcap_file = _find_pcap_file(dir_path)
+        if pcap_file:
             self.send_response(200)
             self.send_header('Content-Type', 'text/plain')
             self.end_headers()
             # Return only the filename, not the absolute path
-            self.wfile.write(pcap_files[0].encode())
+            self.wfile.write(pcap_file.encode())
         else:
             self._send_error(404, 'No pcap found')
 
     def handle_get_version(self, params):
         self._send_json({'version': VERSION})
+
+    def handle_get_limits(self, params):
+        self._send_json({'maxQueryLimit': config.MAX_QUERY_LIMIT, 'maxUploadSize': config.MAX_UPLOAD_SIZE})
 
     def handle_get_sigma_alerts(self, params):
         md5 = params.get('md5', [''])[0]
@@ -754,18 +999,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json([])
             return
 
-        try:
-            offset = int(params.get('offset', ['0'])[0])
-            limit = int(params.get('limit', ['1000'])[0])
-        except ValueError:
+        pagination = self._parse_pagination(params)
+        if pagination is None:
             self._send_json([])
             return
+        offset, limit = pagination
 
-        offset = max(0, offset)
-        limit = max(1, min(limit, config.MAX_QUERY_LIMIT))
         severity = params.get('severity', [''])[0] or None
-        q_raw = params.get('q', [])
-        q = [x.strip()[:200] for x in q_raw if x.strip()] or None
+        q = self._parse_search_terms(params)
 
         db_file = os.path.join(dir_path, 'events.db')
         if os.path.exists(db_file):
@@ -776,6 +1017,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._send_error(500, 'Database error')
         else:
             self._send_json([])
+
+    def handle_get_sigma_count(self, params):
+        md5 = params.get('md5', [''])[0]
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
+            return
+        q = self._parse_search_terms(params)
+        severity = params.get('severity', [''])[0] or None
+
+        db_file = os.path.join(dir_path, 'events.db')
+
+        if os.path.exists(db_file):
+            count = get_sigma_alert_count_sqlite(db_file, q, severity)
+        else:
+            count = 0
+        self._send_json({'count': count})
 
     def handle_get_sigma_stats(self, params):
         md5 = params.get('md5', [''])[0]
@@ -794,13 +1052,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         else:
             self._send_json({})
 
-    def _process_uploaded_file(self, file_data, original_filename, passwords=None):
+    def _process_uploaded_file(self, src_path, original_filename, passwords=None, effective_max=None):
         """Process uploaded or downloaded file: detect ZIP, extract, find PCAP, compute MD5, dispatch.
 
         Args:
-            file_data: Raw file bytes.
+            src_path: Path to the already-on-disk uploaded/downloaded file
+                (e.g. under _upload_tmp_dir()). This function takes ownership
+                of it -- it's moved into place on success and unlinked in all
+                other cases (dedup-return, zip extraction, failure).
             original_filename: Original filename for password derivation.
             passwords: Optional list of bytes passwords for ZIP extraction.
+            effective_max: The resolved per-request upload-size ceiling (see
+                _resolve_upload_size_limit), passed through to zip-bomb
+                decompression-size checks so it tracks what this particular
+                upload was actually allowed rather than always the fixed
+                hard ceiling. Defaults to config.MAX_UPLOAD_SIZE if not given.
 
         Returns:
             dict with 'status' and 'md5' keys.
@@ -808,111 +1074,106 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         Raises:
             ValueError: For extraction or validation failures.
         """
-        safe_filename = sanitize_filename(original_filename)
-        is_zip = file_data[:2] == b'PK'
+        try:
+            safe_filename = sanitize_filename(original_filename)
+            with open(src_path, 'rb') as f:
+                magic = f.read(2)
+            is_zip = magic == b'PK'
 
-        if is_zip and not is_office_file_by_extension(safe_filename):
-            tmp_dir = tempfile.mkdtemp()
-            try:
-                extracted_files = _extract_zip_contents(file_data, tmp_dir, passwords or [])
-                pcap_files = [f for f in extracted_files if f.lower().endswith(PCAP_EXTENSIONS)]
-                if pcap_files:
-                    with open(pcap_files[0], 'rb') as f:
-                        pcap_data = f.read()
-                    md5_hash = hashlib.md5(pcap_data).hexdigest()
-                    dir_path = os.path.join(DATA_DIR, md5_hash)
-                    pcap_filename = sanitize_filename(os.path.basename(pcap_files[0]))
-                    pcap_path = os.path.join(dir_path, pcap_filename)
-                    eve_path = os.path.join(dir_path, 'eve.json')
-                    name_path = os.path.join(dir_path, 'name.txt')
+            if is_zip and not is_office_file_by_extension(safe_filename):
+                tmp_dir = tempfile.mkdtemp(dir=_upload_tmp_dir())
+                try:
+                    extracted_files = _extract_zip_contents(src_path, tmp_dir, passwords or [], effective_max)
+                    pcap_files = [f for f in extracted_files if f.lower().endswith(PCAP_EXTENSIONS)]
+                    if pcap_files:
+                        md5_hash = _hash_file(pcap_files[0])
+                        dir_path = os.path.join(DATA_DIR, md5_hash)
+                        pcap_filename = sanitize_filename(os.path.basename(pcap_files[0]))
+                        pcap_path = os.path.join(dir_path, pcap_filename)
+                        eve_path = os.path.join(dir_path, 'eve.json')
+                        name_path = os.path.join(dir_path, 'name.txt')
 
-                    if os.path.exists(eve_path):
-                        return {'status': 'ready', 'md5': md5_hash}
+                        if os.path.exists(eve_path):
+                            return {'status': 'ready', 'md5': md5_hash}
 
-                    os.makedirs(dir_path, exist_ok=True)
-                    shutil.move(pcap_files[0], pcap_path)
-                    with open(name_path, 'w') as f:
-                        f.write(pcap_filename)
-                    _write_meta(dir_path, safe_filename, pcap_filename, 'pcap')
+                        os.makedirs(dir_path, exist_ok=True)
+                        shutil.move(pcap_files[0], pcap_path)
+                        with open(name_path, 'w') as f:
+                            f.write(pcap_filename)
+                        _write_meta(dir_path, safe_filename, pcap_filename, 'pcap')
 
-                    spawn_suricata(dir_path, pcap_path, os.path.join(SURICATA_DIR, 'suricata.yaml'), data_dir=DATA_DIR)
-                    return {'status': 'processing', 'md5': md5_hash, 'phase': 'network'}
-                else:
-                    # ZIP contained no PCAP — treat as standalone file archive
-                    non_hidden = [f for f in extracted_files if not os.path.basename(f).startswith('.')]
-                    if not non_hidden:
-                        raise ValueError('ZIP archive is empty')
-                    first_file = non_hidden[0]
-                    with open(first_file, 'rb') as f:
-                        file_bytes = f.read()
-                    md5_hash = hashlib.md5(file_bytes).hexdigest()
-                    dir_path = os.path.join(DATA_DIR, md5_hash)
-                    dest_filename = sanitize_filename(os.path.basename(first_file))
-                    dest_path = os.path.join(dir_path, dest_filename)
-                    db_path = os.path.join(dir_path, 'events.db')
-                    name_path = os.path.join(dir_path, 'name.txt')
-
-                    if os.path.exists(db_path):
-                        return {'status': 'ready', 'md5': md5_hash}
-
-                    os.makedirs(dir_path, exist_ok=True)
-                    shutil.move(first_file, dest_path)
-                    detected = 'log' if (is_log_file(file_bytes) or is_log_file_by_extension(dest_path)) else 'binary'
-                    _write_meta(dir_path, safe_filename, os.path.basename(dest_path), detected)
-                    if detected == 'log':
-                        self._analyze_log_file(dir_path, dest_path, os.path.basename(dest_path))
-                        return {'status': 'processing', 'md5': md5_hash, 'phase': 'logs'}
+                        spawn_suricata(dir_path, pcap_path, os.path.join(SURICATA_DIR, 'suricata.yaml'), data_dir=DATA_DIR)
+                        return {'status': 'processing', 'md5': md5_hash, 'phase': 'network'}
                     else:
-                        self._analyze_standalone_file(dir_path, dest_path, os.path.basename(dest_path))
-                        return {'status': 'processing', 'md5': md5_hash, 'phase': 'files'}
-            finally:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
-        else:
-            md5_hash = hashlib.md5(file_data).hexdigest()
-            dir_path = os.path.join(DATA_DIR, md5_hash)
-            dest_filename = safe_filename if safe_filename else 'uploaded'
-            dest_path = os.path.join(dir_path, dest_filename)
-            eve_path = os.path.join(dir_path, 'eve.json')
-            db_path = os.path.join(dir_path, 'events.db')
-            name_path = os.path.join(dir_path, 'name.txt')
+                        # ZIP contained no PCAP — treat as standalone file archive
+                        non_hidden = [f for f in extracted_files if not os.path.basename(f).startswith('.')]
+                        if not non_hidden:
+                            raise ValueError('ZIP archive is empty')
+                        first_file = non_hidden[0]
+                        md5_hash, prefix = _hash_file_with_prefix(first_file)
+                        dir_path = os.path.join(DATA_DIR, md5_hash)
+                        dest_filename = sanitize_filename(os.path.basename(first_file))
+                        dest_path = os.path.join(dir_path, dest_filename)
+                        db_path = os.path.join(dir_path, 'events.db')
+                        name_path = os.path.join(dir_path, 'name.txt')
 
-            if os.path.exists(eve_path) or os.path.exists(db_path):
-                return {'status': 'ready', 'md5': md5_hash}
+                        if os.path.exists(db_path):
+                            return {'status': 'ready', 'md5': md5_hash}
 
-            os.makedirs(dir_path, exist_ok=True)
-            with open(dest_path, 'wb') as f:
-                f.write(file_data)
-            with open(name_path, 'w') as f:
-                f.write(dest_filename)
-
-            if is_pcap_file(file_data):
-                detected = 'pcap'
-                spawn_suricata(dir_path, dest_path, os.path.join(SURICATA_DIR, 'suricata.yaml'), data_dir=DATA_DIR)
-                phase = 'network'
-            elif is_log_file(file_data) or is_log_file_by_extension(dest_path):
-                detected = 'log'
-                self._analyze_log_file(dir_path, dest_path, dest_filename)
-                phase = 'logs'
+                        os.makedirs(dir_path, exist_ok=True)
+                        shutil.move(first_file, dest_path)
+                        detected = 'log' if (is_log_file(prefix) or is_log_file_by_extension(dest_path)) else 'binary'
+                        _write_meta(dir_path, safe_filename, os.path.basename(dest_path), detected)
+                        if detected == 'log':
+                            self._analyze_log_file(dir_path, dest_path, os.path.basename(dest_path))
+                            return {'status': 'processing', 'md5': md5_hash, 'phase': 'logs'}
+                        else:
+                            self._analyze_standalone_file(dir_path, dest_path, os.path.basename(dest_path))
+                            return {'status': 'processing', 'md5': md5_hash, 'phase': 'files'}
+                finally:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
             else:
-                detected = 'binary'
-                self._analyze_standalone_file(dir_path, dest_path, dest_filename)
-                phase = 'files'
-            _write_meta(dir_path, dest_filename, dest_filename, detected)
-            return {'status': 'processing', 'md5': md5_hash, 'phase': phase}
+                md5_hash, prefix = _hash_file_with_prefix(src_path)
+                dir_path = os.path.join(DATA_DIR, md5_hash)
+                dest_filename = safe_filename if safe_filename else 'uploaded'
+                dest_path = os.path.join(dir_path, dest_filename)
+                eve_path = os.path.join(dir_path, 'eve.json')
+                db_path = os.path.join(dir_path, 'events.db')
+                name_path = os.path.join(dir_path, 'name.txt')
+
+                if os.path.exists(eve_path) or os.path.exists(db_path):
+                    return {'status': 'ready', 'md5': md5_hash}
+
+                os.makedirs(dir_path, exist_ok=True)
+                os.replace(src_path, dest_path)
+                with open(name_path, 'w') as f:
+                    f.write(dest_filename)
+
+                if is_pcap_file(prefix):
+                    detected = 'pcap'
+                    spawn_suricata(dir_path, dest_path, os.path.join(SURICATA_DIR, 'suricata.yaml'), data_dir=DATA_DIR)
+                    phase = 'network'
+                elif is_log_file(prefix) or is_log_file_by_extension(dest_path):
+                    detected = 'log'
+                    self._analyze_log_file(dir_path, dest_path, dest_filename)
+                    phase = 'logs'
+                else:
+                    detected = 'binary'
+                    self._analyze_standalone_file(dir_path, dest_path, dest_filename)
+                    phase = 'files'
+                _write_meta(dir_path, dest_filename, dest_filename, detected)
+                return {'status': 'processing', 'md5': md5_hash, 'phase': phase}
+        finally:
+            if os.path.exists(src_path):
+                os.unlink(src_path)
 
     def _analyze_standalone_file(self, dir_path, file_path, safe_filename):
         """Run standalone YARA analysis on a non-PCAP file in the background."""
         def run_analysis():
-            phase_file = os.path.join(dir_path, '.phase')
-            try:
-                with open(phase_file, 'w') as f:
-                    f.write('files')
-            except OSError:
-                pass
+            _set_phase(dir_path, 'files')
 
             try:
-                data_dir = os.environ.get('DATA_DIR', os.path.expanduser('~/socrates-data'))
-                rules_file = setup_yara_rules(data_dir)
+                rules_file = setup_yara_rules(DATA_DIR)
                 db_file = os.path.join(dir_path, 'events.db')
                 name_path = os.path.join(dir_path, 'name.txt')
 
@@ -931,42 +1192,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception as e:
                 _set_error(dir_path, f'Analysis failed: {e}')
             finally:
-                try:
-                    if os.path.exists(phase_file):
-                        os.unlink(phase_file)
-                except OSError:
-                    pass
+                _clear_phase(dir_path)
 
         threading.Thread(target=run_analysis, daemon=True).start()
 
     def _analyze_log_file(self, dir_path, file_path, safe_filename):
         """Run Zircolite Sigma analysis on a log file in the background."""
         def run_analysis():
-            from db import _db_connection, _init_db
-
-            phase_file = os.path.join(dir_path, '.phase')
-            try:
-                with open(phase_file, 'w') as f:
-                    f.write('logs')
-            except OSError:
-                pass
+            _set_phase(dir_path, 'logs')
 
             try:
-                data_dir = os.environ.get('DATA_DIR', os.path.expanduser('~/socrates-data'))
                 db_file = os.path.join(dir_path, 'events.db')
                 name_path = os.path.join(dir_path, 'name.txt')
 
                 if not is_zircolite_available():
                     _set_error(dir_path, 'Sigma analysis unavailable — Zircolite is not installed. Install with: pip3 install zircolite==3.7.1')
-                    with _db_connection(db_file) as conn:
-                        _init_db(conn)
+                    init_empty_db(db_file)
                 else:
                     try:
-                        success, zircolite_db = run_sigma_pipeline(dir_path, file_path, data_dir=data_dir)
+                        success, zircolite_db = run_sigma_pipeline(dir_path, file_path, data_dir=DATA_DIR)
                         if success:
                             # Import all log events from Zircolite's unified DB
                             if zircolite_db and os.path.exists(zircolite_db):
-                                from sigma_analyzer import import_zircolite_logs
                                 import_zircolite_logs(zircolite_db, db_file)
                                 try:
                                     os.unlink(zircolite_db)
@@ -978,8 +1225,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                             insert_sigma_alerts(db_file, alerts)
                         else:
                             # Rules missing or Zircolite failed: create empty DB so UI shows ready
-                            with _db_connection(db_file) as conn:
-                                _init_db(conn)
+                            init_empty_db(db_file)
                     except Exception as e:
                         _set_error(dir_path, f'Sigma analysis failed: {e}')
 
@@ -988,11 +1234,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception as e:
                 _set_error(dir_path, f'Log analysis failed: {e}')
             finally:
-                try:
-                    if os.path.exists(phase_file):
-                        os.unlink(phase_file)
-                except OSError:
-                    pass
+                _clear_phase(dir_path)
 
         threading.Thread(target=run_analysis, daemon=True).start()
 
@@ -1000,10 +1242,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # POST handlers
     # ------------------------------------------------------------------
 
-    def _parse_multipart_file(self, body, content_type):
-        """Extract the first uploaded file from a multipart/form-data body.
+    def _parse_multipart_stream(self, rfile, content_length, content_type, dest_dir, chunk_size=64 * 1024):
+        """Extract the first uploaded file from a streamed multipart/form-data
+        body, writing it directly to a temp file under dest_dir instead of
+        buffering the whole body in memory.
 
-        Returns (file_data, filename) or (None, None) on failure.
+        Returns (tmp_path, filename) or (None, None) on failure (any partial
+        temp file is cleaned up before returning in the failure case).
         """
         boundary_match = re.search(r'boundary=("[^"]+"|[^;\s]+)', content_type, re.IGNORECASE)
         if not boundary_match:
@@ -1014,66 +1259,119 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return None, None
 
         delimiter = b'--' + boundary
-        pos = body.find(delimiter)
-        if pos == -1:
-            return None, None
+        end_delim = b'\r\n--' + boundary
 
-        # Skip preamble and the first boundary line.
-        pos += len(delimiter)
-        while pos < len(body) and body[pos:pos+2] == b'\r\n':
-            pos += 2
+        remaining = [content_length]
 
-        while pos < len(body):
-            next_delim = body.find(delimiter, pos)
-            if next_delim == -1:
+        def read_chunk():
+            if remaining[0] <= 0:
+                return b''
+            chunk = rfile.read(min(chunk_size, remaining[0]))
+            if not chunk:
+                remaining[0] = 0
+                return b''
+            remaining[0] -= len(chunk)
+            return chunk
+
+        # Phase 1: accumulate a bounded buffer until we've seen the first
+        # boundary line AND the end of the part headers (both are small and
+        # near the start, so this never needs more than a small window --
+        # capped defensively in case of a malformed/boundary-less body).
+        MAX_HEADER_BUF = 64 * 1024
+        buf = b''
+        header_start = header_end = -1
+        while True:
+            chunk = read_chunk()
+            if chunk:
+                buf += chunk
+            delim_pos = buf.find(delimiter)
+            if delim_pos != -1:
+                header_start = delim_pos + len(delimiter)
+                if buf[header_start:header_start + 2] == b'\r\n':
+                    header_start += 2
+                header_end = buf.find(b'\r\n\r\n', header_start)
+                if header_end != -1:
+                    break
+            if not chunk:
+                return None, None
+            if len(buf) > MAX_HEADER_BUF:
                 return None, None
 
-            part = body[pos:next_delim]
-            header_end = part.find(b'\r\n\r\n')
-            if header_end != -1:
-                headers = part[:header_end].decode('utf-8', errors='replace')
-                filename = None
-                # Quoted filename (handles escaped quotes per RFC 6266).
-                cd_match = re.search(
-                    r'Content-Disposition:\s*form-data\s*;[^\r\n]*filename="((?:\\.|[^\\"])*)"',
-                    headers,
-                    re.IGNORECASE,
-                )
-                if cd_match:
-                    filename = cd_match.group(1).replace('\\"', '"').replace('\\\\', '\\')
-                else:
-                    # Unquoted filename.
-                    unquoted_match = re.search(
-                        r'Content-Disposition:\s*form-data\s*;[^\r\n]*filename=([^;\r\n]+)',
-                        headers,
-                        re.IGNORECASE,
-                    )
-                    if unquoted_match:
-                        filename = unquoted_match.group(1).strip()
-                if filename:
-                    file_data = part[header_end + 4:]
-                    # The CRLF before the boundary belongs to the boundary, not the body.
-                    if file_data.endswith(b'\r\n'):
-                        file_data = file_data[:-2]
-                    return file_data, filename
+        headers = buf[header_start:header_end].decode('utf-8', errors='replace')
+        filename = None
+        # Quoted filename (handles escaped quotes per RFC 6266).
+        cd_match = re.search(
+            r'Content-Disposition:\s*form-data\s*;[^\r\n]*filename="((?:\\.|[^\\"])*)"',
+            headers,
+            re.IGNORECASE,
+        )
+        if cd_match:
+            filename = cd_match.group(1).replace('\\"', '"').replace('\\\\', '\\')
+        else:
+            # Unquoted filename.
+            unquoted_match = re.search(
+                r'Content-Disposition:\s*form-data\s*;[^\r\n]*filename=([^;\r\n]+)',
+                headers,
+                re.IGNORECASE,
+            )
+            if unquoted_match:
+                filename = unquoted_match.group(1).strip()
+        if not filename:
+            return None, None
 
-            pos = next_delim + len(delimiter)
-            if body.startswith(b'--', pos):
-                break
-            if body.startswith(b'\r\n', pos):
-                pos += 2
-
-        return None, None
+        # Phase 2: stream the rest of the body to a temp file, holding back
+        # the last len(end_delim)-1 bytes at all times so an end-delimiter
+        # split across two chunk reads is still caught correctly.
+        fd, tmp_path = tempfile.mkstemp(dir=dest_dir)
+        hold = len(end_delim) - 1
+        found = False
+        try:
+            with os.fdopen(fd, 'wb') as out:
+                lookback = b''
+                pending = buf[header_end + 4:]
+                while True:
+                    window = lookback + pending
+                    idx = window.find(end_delim)
+                    if idx != -1:
+                        out.write(window[:idx])
+                        found = True
+                        break
+                    if len(window) > hold:
+                        out.write(window[:-hold])
+                        lookback = window[-hold:]
+                    else:
+                        lookback = window
+                    pending = read_chunk()
+                    if not pending:
+                        break
+            if not found:
+                os.unlink(tmp_path)
+                return None, None
+            return tmp_path, filename
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            raise
 
     def handle_post_upload(self):
-        body = self._read_post_body(MAX_UPLOAD_SIZE)
-        if body is None:
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+        except ValueError:
+            self._send_error(400, 'Invalid Content-Length')
+            return
+        effective_max = _resolve_upload_size_limit(self.headers.get('X-Max-Upload-Size'))
+        if content_length < 0 or content_length > effective_max:
+            self._send_error(400, 'Invalid Content-Length')
+            return
+        if not self._check_disk_space(effective_max):
             return
 
         content_type = self.headers.get('Content-Type', '')
-        file_data, original_filename = self._parse_multipart_file(body, content_type)
+        src_path, original_filename = self._parse_multipart_stream(
+            self.rfile, content_length, content_type, _upload_tmp_dir()
+        )
 
-        if file_data is None:
+        if src_path is None:
             self._send_error(400, 'Invalid file')
             return
 
@@ -1084,7 +1382,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             passwords.append(f'infected_{year}{month}{day}'.encode())
 
         try:
-            result = self._process_uploaded_file(file_data, original_filename, passwords)
+            result = self._process_uploaded_file(src_path, original_filename, passwords, effective_max)
             self._send_json(result)
         except ValueError as exc:
             self._send_error(400, str(exc))
@@ -1101,22 +1399,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_error(400, 'No URL provided')
             return
 
+        effective_max = _resolve_upload_size_limit(data.get('maxUploadSize'))
+        if not self._check_disk_space(effective_max):
+            return
+
         try:
-            file_data = _fetch_url_safely(url, config.URL_DOWNLOAD_TIMEOUT, MAX_UPLOAD_SIZE)
+            src_path = _fetch_url_safely(url, config.URL_DOWNLOAD_TIMEOUT, effective_max)
 
             parsed_url = urlparse(url)
             original_filename = os.path.basename(parsed_url.path)
             if not original_filename:
                 original_filename = 'downloaded'
 
-            passwords = []
+            passwords = [b'infected']
             if 'malware-traffic-analysis.net' in url:
                 date_match = re.search(r'/(\d{4})/(\d{2})/(\d{2})/', url)
                 if date_match:
                     year, month, day = date_match.groups()
-                    passwords.append(f'infected_{year}{month}{day}'.encode())
+                    passwords.insert(0, f'infected_{year}{month}{day}'.encode())
 
-            result = self._process_uploaded_file(file_data, original_filename, passwords)
+            result = self._process_uploaded_file(src_path, original_filename, passwords, effective_max)
             self._send_json(result)
         except _FileTooLargeError:
             self._send_error(413, 'File too large')
@@ -1156,7 +1458,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     pass
 
         phase = ''
-        if os.path.exists(phase_file):
+        phase_still_active = os.path.exists(phase_file)
+        if phase_still_active:
             try:
                 with open(phase_file, 'r') as f:
                     phase = f.read().strip()
@@ -1164,8 +1467,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 pass
 
         meta = _read_meta(dir_path)
-        response = {'status': 'ready' if os.path.exists(db_file) else 'processing'}
-        if not os.path.exists(db_file):
+        # events.db is created the instant create_sqlite_db opens its
+        # connection - well before the row-by-row ingest finishes - so its
+        # mere existence isn't sufficient for 'ready'. .phase stays set for
+        # exactly that import window (cleared only after ingest completes),
+        # so it must also be absent.
+        is_ready = os.path.exists(db_file) and not phase_still_active
+        response = {'status': 'ready' if is_ready else 'processing'}
+        if not is_ready:
             response['phase'] = phase
         if meta:
             response['meta'] = meta
@@ -1209,10 +1518,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_error(409, 'Analysis already in progress')
             return
 
-        pcap_files = [f for f in os.listdir(dir_path) if f.endswith(PCAP_EXTENSIONS)]
+        _evict_analysis_cache(md5)
+
+        pcap_file = _find_pcap_file(dir_path)
         non_pcap_files = [f for f in os.listdir(dir_path)
-                          if not f.endswith(PCAP_EXTENSIONS + ('.zip',))
-                          and f not in ('eve.json', 'events.db', '.phase', 'yara_matches.json', 'sigma_matches.json', 'name.txt', '.meta', 'zircolite.log', '.zircolite_events.db')]
+                          if f != pcap_file
+                          and not f.lower().endswith(PCAP_EXTENSIONS + ('.zip',))
+                          and f not in ('eve.json', 'events.db', '.phase', 'yara_matches.json', 'sigma_matches.json', 'name.txt', '.meta', 'zircolite.log', '.zircolite_events.db')
+                          and not f.startswith('.')]
 
         # Preserve existing .meta so we can rewrite it after cleanup
         meta_path = os.path.join(dir_path, '.meta')
@@ -1225,10 +1538,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 preserved_meta = None
 
         # Determine if this is a PCAP, log file, or standalone file analysis
-        if pcap_files:
-            pcap_path = os.path.join(dir_path, pcap_files[0])
+        if pcap_file:
+            pcap_path = os.path.join(dir_path, pcap_file)
 
-            for artifact in ('eve.json', 'events.db', '.phase', '.error', 'yara_matches.json', 'sigma_matches.json', '.meta'):
+            for artifact in PCAP_ANALYSIS_ARTIFACTS:
                 artifact_path = os.path.join(dir_path, artifact)
                 if os.path.exists(artifact_path):
                     try:
@@ -1258,7 +1571,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._send_error(409, 'Analysis already in progress')
         elif non_pcap_files:
             file_path = os.path.join(dir_path, non_pcap_files[0])
-            for artifact in ('events.db', '.error', 'yara_matches.json', 'sigma_matches.json', '.meta', 'zircolite.log', '.zircolite_events.db'):
+            for artifact in FILE_ANALYSIS_ARTIFACTS:
                 artifact_path = os.path.join(dir_path, artifact)
                 if os.path.exists(artifact_path):
                     try:
@@ -1293,6 +1606,8 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(script_dir)
     os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(os.path.join(DATA_DIR, config.UPLOAD_TMP_SUBDIR), exist_ok=True)
+    _cleanup_upload_tmp_dir()
 
     # Check for required executables
     missing = check_executables()
@@ -1311,7 +1626,7 @@ def main():
     """)
 
     # Run setup - handles rules download first
-    setup_suricata_config(DATA_DIR)
+    setup_suricata_config(DATA_DIR, enable_arp=bool(os.environ.get('ENABLE_ARP_LOGGING')))
     setup_yara_rules(DATA_DIR)
     setup_sigma_rules(DATA_DIR)
 

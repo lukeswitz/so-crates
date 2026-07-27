@@ -128,16 +128,17 @@ def resolve_safe_ips(hostname):
     return _resolve_and_validate_ips(hostname)
 
 
-def resolve_safe_ip(hostname):
-    """Resolve and validate hostname, returning one safe IP to connect to.
+def validate_zip_extraction(zip_ref, extract_path, max_size=None):
+    """Validate zip-slip safety and decompressed-size limits.
 
-    Convenience wrapper around resolve_safe_ips() for callers that only need
-    a single address and don't need multi-address fallback.
+    max_size defaults to config.MAX_UPLOAD_SIZE, but callers should pass the
+    caller's actual resolved per-request ceiling (see
+    socrates.py's _resolve_upload_size_limit) so a user who hasn't opted
+    into a higher personal upload limit doesn't get the full server hard
+    ceiling as their zip-bomb decompression budget.
     """
-    return resolve_safe_ips(hostname)[0]
-
-
-def validate_zip_extraction(zip_ref, extract_path):
+    if max_size is None:
+        max_size = config.MAX_UPLOAD_SIZE
     total_uncompressed = 0
     for member in zip_ref.namelist():
         member_path = os.path.realpath(os.path.join(extract_path, member))
@@ -145,21 +146,23 @@ def validate_zip_extraction(zip_ref, extract_path):
             raise ValueError(f"Zip slip detected: {member}")
         info = zip_ref.getinfo(member)
         total_uncompressed += info.file_size
-        if info.file_size > config.MAX_UPLOAD_SIZE:
+        if info.file_size > max_size:
             raise ValueError(f"ZIP member too large: {member}")
-    if total_uncompressed > config.MAX_UPLOAD_SIZE:
+    if total_uncompressed > max_size:
         raise ValueError("ZIP contents exceed maximum allowed size")
 
 
-def validate_pcap_content(data):
+def is_pcap_file(data):
+    """Detect if file data is a PCAP or PCAPNG by magic bytes."""
     if len(data) < 4:
         return False
     magic = data[:4]
-    if magic in (b'\xd4\xc3\xb2\xa1', b'\xa1\xb2\xc3\xd4'):
+    # Classic PCAP (microsecond or nanosecond timestamps), either endianness
+    if magic in (b'\xd4\xc3\xb2\xa1', b'\xa1\xb2\xc3\xd4',
+                 b'\x4d\x3c\xb2\xa1', b'\xa1\xb2\x3c\x4d'):
         return True
+    # PCAPNG
     if magic == b'\x0a\x0d\x0d\x0a':
-        return True
-    if magic in (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'):
         return True
     return False
 

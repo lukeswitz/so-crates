@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Regenerate all docs/images/*.png screenshots against a locally running SO-CRATES server.
+
+Requires: pip install -r requirements-screenshots.txt, and a running server
+(default http://127.0.0.1:8000/socrates.html - override with --base-url).
+Uses the app's own built-in "Sample pcap file" (DEFAULT_SAMPLE_URL in
+static/socrates.js) so it needs no pre-existing local analysis or hardcoded
+MD5 - it works on a clean checkout with an empty DATA_DIR.
+
+Usage:
+    python3 scripts/capture_screenshots.py [--base-url http://127.0.0.1:8000/socrates.html]
+"""
+
+import argparse
+import asyncio
+import os
+import shutil
+import sys
+
+from playwright.async_api import async_playwright
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+IMAGES_DIR = os.path.join(REPO_ROOT, 'docs', 'images')
+THEMES_DIR = os.path.join(IMAGES_DIR, 'themes')
+
+THEMES = [
+    'dark', 'light', 'sguil', 'hacker', 'cga', 'matte-black', 'tokyo-night',
+    'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte',
+    'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord',
+    'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white',
+]
+
+DEFAULT_VIEWPORT = {'width': 1600, 'height': 1000}
+
+
+def find_chromium():
+    for name in ('chromium', 'chromium-browser', 'google-chrome'):
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+async def main(base_url):
+    os.makedirs(THEMES_DIR, exist_ok=True)
+
+    async with async_playwright() as p:
+        launch_kwargs = {'headless': True}
+        chromium_path = find_chromium()
+        if chromium_path:
+            launch_kwargs['executable_path'] = chromium_path
+        browser = await p.chromium.launch(**launch_kwargs)
+        page = await browser.new_page(viewport=DEFAULT_VIEWPORT)
+
+        # 1. Welcome modal (fresh session -> auto-shows, Midnight/default theme)
+        await page.goto(base_url, wait_until='networkidle')
+        await page.wait_for_selector('#helpModal.active .modal-content', timeout=10000)
+        await page.wait_for_timeout(500)
+        modal = await page.query_selector('#helpModal .modal-content')
+        await modal.screenshot(path=os.path.join(IMAGES_DIR, 'so-crates-welcome.png'))
+        print('captured welcome')
+
+        # 2. Main screen (modal closed, upload/previous-analyses view)
+        await page.evaluate('closeHelpModal()')
+        await page.wait_for_timeout(500)
+        await page.screenshot(path=os.path.join(IMAGES_DIR, 'so-crates-main.png'))
+        print('captured main')
+
+        # 3. Load the app's own built-in sample pcap (self-contained, no fixture needed)
+        await page.click(".sample-card:has-text('Sample pcap file')")
+        await page.wait_for_selector('#statsGrid .stat-card', timeout=60000)
+        await page.wait_for_timeout(1000)
+        print('sample pcap loaded')
+
+        # Pin to the "All Events" tab explicitly - which tab loads active by
+        # default is not deterministic across load paths, and a consistent
+        # starting view keeps the theme screenshots consistent release to release.
+        all_events_card = page.locator(".stat-card:has-text('All Events')")
+        if await all_events_card.count() > 0:
+            await all_events_card.first.click()
+            await page.wait_for_timeout(500)
+
+        # 4. Theme sweep, on the pinned "All Events" view
+        for theme in THEMES:
+            await page.evaluate('(t) => setTheme(t)', theme)
+            await page.wait_for_timeout(400)
+            await page.screenshot(path=os.path.join(THEMES_DIR, f'{theme}.png'))
+        print(f'captured {len(THEMES)} theme screenshots')
+        await page.evaluate("setTheme('dark')")
+        await page.wait_for_timeout(300)
+
+        # 5. Analysis screen - Network Alerts tab
+        alerts_card = page.locator(".stat-card:has-text('Network Alerts')")
+        if await alerts_card.count() > 0:
+            await alerts_card.first.click()
+            await page.wait_for_timeout(800)
+        await page.screenshot(path=os.path.join(IMAGES_DIR, 'so-crates-analysis.png'))
+        print('captured analysis')
+
+        # 6/7. Expand a specific alert -> ASCII Transcript, then Hexdump. Prefer the
+        # AgentTesla FTP exfil alert (rich Alert Details section, real FTP session in
+        # the transcript); fall back to the first row / Flows tab if the sample data
+        # ever changes and that specific alert isn't present.
+        row_selector = '.section:not(.section-hidden):not(.agg-section) table tbody tr:not(.detail-row)'
+        target_row = page.locator(
+            f"{row_selector}:has-text('ET MALWARE AgentTesla Exfil via FTP')"
+        ).first
+        if await target_row.count() == 0:
+            target_row = page.locator(row_selector).first
+        await target_row.click()
+        await page.wait_for_timeout(300)
+        stream_payload = page.locator('.detail-row.visible .stream-payload').first
+        if await stream_payload.count() == 0:
+            flows_card = page.locator(".stat-card:has-text('Flows')")
+            if await flows_card.count() > 0:
+                await flows_card.first.click()
+                await page.wait_for_timeout(800)
+                target_row = page.locator(row_selector).first
+                await target_row.click()
+                await page.wait_for_timeout(300)
+                stream_payload = page.locator('.detail-row.visible .stream-payload').first
+
+        if await stream_payload.count() > 0:
+            await page.wait_for_timeout(1500)
+
+            # Scroll so the alert's summary row sits just below the fixed
+            # header, then take a plain viewport screenshot - matches what a
+            # user actually sees when they drill in: header, summary row, and
+            # the full detail (Connection info, Alert Details, and
+            # Payload/ASCII Transcript) together, for context. The full detail
+            # section alone (Timestamp through Rule) runs ~700px, so the
+            # default 1000px-tall viewport leaves almost no room to actually
+            # see the transcript/hexdump below it - grow the viewport for
+            # these two captures specifically.
+            await page.set_viewport_size({'width': DEFAULT_VIEWPORT['width'], 'height': 1800})
+            await page.wait_for_timeout(300)
+            await target_row.evaluate(
+                "(row) => { "
+                "const header = document.querySelector('.app-header'); "
+                "const headerHeight = header ? header.getBoundingClientRect().height : 0; "
+                "const rect = row.getBoundingClientRect(); "
+                "window.scrollBy(0, rect.top - headerHeight - 8); }"
+            )
+            await page.wait_for_timeout(300)
+            await page.screenshot(path=os.path.join(IMAGES_DIR, 'so-crates-transcript.png'))
+            print('captured transcript')
+
+            await stream_payload.locator("button.view-tab:has-text('Hexdump')").click()
+            await page.wait_for_timeout(1500)
+            expand_all_btn = stream_payload.locator("button:has-text('Expand All')")
+            if await expand_all_btn.count() > 0:
+                await expand_all_btn.click()
+                await page.wait_for_timeout(500)
+            await page.screenshot(path=os.path.join(IMAGES_DIR, 'so-crates-hexdump.png'))
+            print('captured hexdump')
+
+            await page.set_viewport_size(DEFAULT_VIEWPORT)
+            await page.wait_for_timeout(300)
+        else:
+            print('WARNING: no stream-payload found on either alert or flow rows - '
+                  'so-crates-transcript.png / so-crates-hexdump.png not updated', file=sys.stderr)
+
+        # 8. Aggregation Tables, expanded and actually filtered - click Source IP
+        # and Dest Port values from the AgentTesla alert to demonstrate the
+        # click-to-filter workflow, not just show the tables passively.
+        agg_toggle = page.locator('.section-toggle-bar', has_text='Aggregation Tables').first
+        if await agg_toggle.count() > 0:
+            await agg_toggle.click()
+            await page.wait_for_timeout(800)
+
+            source_ip_row = page.locator(
+                ".agg-table:has(.agg-header:has-text('Source IP')) .agg-row:has-text('10.2.3.101')"
+            ).first
+            if await source_ip_row.count() > 0:
+                await source_ip_row.click()
+                await page.wait_for_timeout(800)
+
+            dest_port_row = page.locator(
+                ".agg-table:has(.agg-header:has-text('Dest Port')) .agg-row:has-text('21')"
+            ).first
+            if await dest_port_row.count() > 0:
+                await dest_port_row.click()
+                await page.wait_for_timeout(800)
+
+            # Filtering rebuilds the data table, so re-expand the (now single,
+            # filtered) row to show its detail below, same as the reference.
+            filtered_row = page.locator(row_selector).first
+            if await filtered_row.count() > 0:
+                await filtered_row.click()
+                await page.wait_for_timeout(500)
+
+            # Collapse the Sankey Diagram (expanded by default) to leave room
+            # for the Aggregation Tables and Data Table below it in one shot.
+            sankey_toggle = page.locator('.section-toggle-bar', has_text='Sankey Diagram').first
+            if await sankey_toggle.count() > 0:
+                await sankey_toggle.click()
+                await page.wait_for_timeout(300)
+
+            await page.evaluate('window.scrollTo(0, 0)')
+            await page.set_viewport_size({'width': DEFAULT_VIEWPORT['width'], 'height': 1250})
+            await page.wait_for_timeout(300)
+            await page.screenshot(path=os.path.join(IMAGES_DIR, 'so-crates-aggregation-filtering.png'))
+            await page.set_viewport_size(DEFAULT_VIEWPORT)
+            await page.wait_for_timeout(300)
+            print('captured aggregation-filtering')
+        else:
+            print('WARNING: no aggregation toggle found - '
+                  'so-crates-aggregation-filtering.png not updated', file=sys.stderr)
+
+        await browser.close()
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--base-url', default='http://127.0.0.1:8000/socrates.html')
+    args = parser.parse_args()
+    asyncio.run(main(args.base_url))

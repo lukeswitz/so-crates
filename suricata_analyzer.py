@@ -42,35 +42,88 @@ def _enable_app_layer_protocols(config_content, protocols=('pgsql', 'modbus', 'd
     return config_content
 
 
-def _enable_eve_log_protocol_types(config_content, protocols=('modbus', 'dnp3')):
+def _enable_eve_log_protocol_types(config_content, protocols=('modbus', 'dnp3', 'enip', 'ntp')):
     """Enable EVE logging for protocols that are supported but not logged by default.
 
-    Suricata 7 supports `event_type: modbus` and `event_type: dnp3` records, but
-    neither is listed in the default eve-log `types` block. PostgreSQL is listed
-    but disabled by default. This helper turns on the pgsql logger and adds the
+    Suricata supports `event_type: modbus`, `event_type: dnp3`,
+    `event_type: enip`, and `event_type: ntp` records, but none of them is
+    listed in the default eve-log `types` block - confirmed against the
+    shipped /etc/suricata/suricata.yaml (only pgsql is listed there, and it's
+    disabled by default). This helper turns on the pgsql logger and adds the
     others just before the `stats` entry so they appear as standalone events.
+
+    'enip'/'ntp' history: this app originally shipped on Suricata 7.0.10,
+    where their app-layer parsers detected traffic fine (confirmed: a real
+    NTP capture showed 15 flows correctly tagged app_proto=ntp) but neither
+    had an eve-log *output module* compiled in at all - `No output module
+    named eve-log.ntp`/`eve-log.enip` at startup, zero events regardless of
+    config. Checked against Suricata's own source: rust/src/ntp/ had no
+    log.rs and rust/src/enip/ didn't exist yet at the `suricata-7.0.10` tag.
+    Now that this app runs on Suricata 8.0.6 (enip logging landed in 8.0.0,
+    ntp logging in 8.0.5 - confirmed against those release tags), both
+    loggers exist and 'enip'/'ntp' are back in the default tuple for real.
+    If this ever runs against an older Suricata again, re-check for the
+    `No output module` warning before assuming this config change does
+    anything.
+
+    REGRESSION (independent of the enip/ntp version history above): this
+    used to be one regex requiring `- pgsql:` to be followed only by
+    indented property lines up to `- stats:`. That's true only on a pristine
+    config - once a previous run had already inserted bare `- modbus:` /
+    `- dnp3:` header lines in between (exactly what this function itself
+    does), the regex could never match again, so re-running setup on an
+    already-provisioned install would silently stop adding any newly-added
+    protocol at all (confirmed by reproducing it: re-running against a real
+    already-processed suricata.yaml added nothing, while the same code
+    worked fine against a pristine /etc/suricata/suricata.yaml). Enabling
+    pgsql's logger and inserting the missing bare headers are now two
+    independent, idempotent steps instead of one fragile combined regex, so
+    this is safe to call repeatedly and safe to extend with new protocols
+    whenever that becomes appropriate.
     """
+    # Enable the pgsql logger if it is currently disabled - a no-op if it's
+    # already enabled or the pgsql block isn't found.
+    config_content = re.sub(
+        r'(?m)(^        - pgsql:\s*\n            )enabled: no$',
+        r'\1enabled: yes',
+        config_content
+    )
+
     new_types = [f'        - {p}:\n' for p in protocols
                  if f'        - {p}:' not in config_content]
-
-    def _replace_pgsql_block(m):
-        block = m.group(1)
-        # Enable the pgsql logger if it is currently disabled.
-        block = re.sub(
-            r'(?m)^(            enabled:) no$',
-            r'\1 yes',
-            block
-        )
-        return block + ''.join(new_types) + m.group(2)
+    if not new_types:
+        return config_content
 
     return re.sub(
-        r'(?m)^(        - pgsql:\s*\n(?:            .*\n)+)(        - stats:)',
-        _replace_pgsql_block,
+        r'(?m)^        - stats:',
+        lambda m: ''.join(new_types) + m.group(0),
+        config_content,
+        count=1
+    )
+
+
+def _enable_eve_log_arp(config_content):
+    """Enable the 'arp' eve-log entry, which ships disabled by default.
+
+    New in Suricata 8 (a decode-layer packet logger, not an app-layer
+    protocol - src_mac/src_ip/dest_mac/dest_ip/opcode per ARP packet, no
+    ports). Suricata's own shipped config comment says why it's off by
+    default: "Many events can be logged." Unlike modbus/dnp3/enip/ntp/pgsql
+    (which this app always force-enables because they're low-volume and
+    clearly valuable), arp's volume/signal tradeoff on a live network is a
+    real judgment call - so this is opt-in only, gated behind
+    setup_suricata_config()'s enable_arp parameter (set via the
+    ENABLE_ARP_LOGGING environment variable - see socrates.py's main()),
+    not force-enabled for every install.
+    """
+    return re.sub(
+        r'(?m)(^        - arp:\s*\n            )enabled: no\b',
+        r'\1enabled: yes',
         config_content
     )
 
 
-def setup_suricata_config(data_dir=None):
+def setup_suricata_config(data_dir=None, enable_arp=False):
     if data_dir is None:
         data_dir = os.path.expanduser('~/socrates-data')
     suricata_dir = os.path.join(data_dir, 'suricata')
@@ -106,6 +159,8 @@ def setup_suricata_config(data_dir=None):
         config_content = config_content.replace('/var/lib/suricata/rules', suricata_rules_dir)
         config_content = _enable_app_layer_protocols(config_content)
         config_content = _enable_eve_log_protocol_types(config_content)
+        if enable_arp:
+            config_content = _enable_eve_log_arp(config_content)
         # Enable file-store output for extracted file analysis
         config_content = re.sub(
             r'(\s+file-store:\s*\n\s+version:\s*\d+\s*\n\s+)enabled:\s*no',
@@ -151,6 +206,8 @@ def setup_suricata_config(data_dir=None):
             print("Baked-in rules copied successfully")
         except OSError as e:
             print(f'Warning: could not copy baked-in rules: {e}')
+    elif rules_exist:
+        print("No internet access and no baked-in rules found — using existing Suricata rules from a previous run")
     else:
         print("Warning: no baked-in rules found and no internet access — Suricata may not have rules to use")
 
@@ -170,6 +227,7 @@ def spawn_suricata(dir_path, pcap_path, suricata_config_path=None, data_dir=None
     if os.path.exists(phase_file):
         return False
 
+    _clear_error(dir_path)
     _set_phase(dir_path, 'network')
 
     def on_suricata_done():
