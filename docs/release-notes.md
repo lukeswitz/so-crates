@@ -84,8 +84,8 @@ analyses from Suricata 7 too.
 
 - Docs now live on a real site (MkDocs Material, deployed to GitHub Pages)
   instead of a single growing README plus a handful of unlinked `docs/*.md`
-  files. `README.md` is now a short landing page (tagline, screenshots, a
-  Quick Start, links out to the docs site); everything else — installation
+  files. `README.md` is now a short landing page (tagline, a screenshot,
+  and links out to the docs site); everything else — installation
   (Docker/Podman/OhMyDebn/Manual), usage, themes, configuration, security,
   architecture, the API reference, and the filtering design doc — is now
   properly cross-linked, searchable, and navigable instead of split across
