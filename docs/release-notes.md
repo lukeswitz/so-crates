@@ -115,18 +115,36 @@ analyses from Suricata 7 too.
 
 ### Other fixes
 
-- **CGA theme's borders read as dark green instead of cyan**: `--bg-hover`
-  (`#004040`), used for nearly every border/panel-outline in the app,
+- **CGA theme's borders read as dark green instead of cyan**: every
+  border/panel-outline in the app was driven by `--bg-hover`, which also
+  doubles as the hover-state background fill. CGA's `--bg-hover` (`#004040`)
   had equal green/blue channels at low brightness — green dominates human
   luminance perception far more than blue, so the color skewed
-  green-looking despite being a "pure cyan" hue numerically. Brightened to
-  `#008080` (with `--bg-hover-light` to `#00a3a3`) so blue registers
-  clearly alongside green.
-- **Dead CSS custom properties removed**: `--border-color`, `--accent-rgb`,
-  and `--filter-bar-bg` were defined identically in all 23 theme blocks but
+  green-looking despite being a "pure cyan" hue numerically. Fixed properly
+  by splitting borders into their own `--border-color` variable, distinct
+  from `--bg-hover`: CGA's `--border-color` is now the real CGA light-cyan
+  RGBI value (`#55ffff`, verified by sampling pixel colors from an actual
+  CGA Palette 1 High-Intensity game screenshot), while `--bg-hover` stays a
+  muted `#008080` teal so hover-state fills don't get uncomfortably bright
+  behind white text. Every other theme sets both variables to the same
+  value they always rendered as, so this is a no-visible-change refactor
+  for the other 22 themes.
+- **CGA header/footer now use bright light cyan instead of near-black**: the
+  dark `--bg-secondary` background shared with every panel/card was making
+  the header and footer blend into the rest of the black-on-teal UI in a
+  way that read poorly. CGA's `.app-header`/`.footer` now use the real CGA
+  light-cyan background (`#55ffff`) directly, with `--text-bright`/
+  `--text-muted` switched to dark colors scoped to that same rule for
+  legibility. The gear dropdown menu (a child of the header in the DOM, but
+  rendered on its own dark panel) resets those two variables back to their
+  normal light values so its own text doesn't inherit the header's dark
+  override.
+- **Dead CSS custom properties removed**: `--accent-rgb` and
+  `--filter-bar-bg` were defined identically in all 23 theme blocks but
   never referenced anywhere via `var(--name)` in CSS/JS/HTML. Removed, with
   a test (`test_dead_theme_vars_removed`) to keep them from quietly coming
-  back.
+  back. (`--border-color` was briefly removed alongside these for the same
+  reason, then reintroduced with the real purpose described above.)
 - **Upload disk-space check used the wrong number**: `/api/upload`'s
   upfront disk-space check was sized against the raw `Content-Length` of
   the request, not the resolved upload-size ceiling (`effective_max`) — a

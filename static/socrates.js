@@ -449,7 +449,7 @@
             </p>
             <table style="width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; color: var(--text-primary);">
                 <thead>
-                    <tr style="border-bottom: 1px solid var(--bg-hover);">
+                    <tr style="border-bottom: 1px solid var(--border-color);">
                         <th style="text-align: left; padding: 8px 12px; color: var(--text-muted); font-weight: 600; width: 18%;">File Type</th>
                         <th style="text-align: left; padding: 8px 12px; color: var(--text-muted); font-weight: 600; width: 40%;">File Extensions</th>
                         <th style="text-align: left; padding: 8px 12px; color: var(--text-muted); font-weight: 600; width: 18%;">Engine</th>
@@ -482,11 +482,11 @@
             </p>
         `; }
         const WELCOME_FEATURES_HTML = `
-            <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover); margin-top: 20px;">
+            <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color); margin-top: 20px;">
                 <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 10px; text-align: center;">SO-CRATES provides basic analysis. Need more advanced functionality?<br>Take a look at the full <a href="https://securityonion.net" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion</a> platform available in a free Community Edition!<br>If you need enterprise features, consider upgrading to <a href="https://securityonion.com/pro" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion Pro</a>!</div>
                 <table class="feature-table" style="width: 100%; border-collapse: collapse; margin-top: 15px;">
                     <thead>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <th style="text-align: left; padding: 10px; color: var(--text-muted); font-size: 0.8rem; text-transform: none; cursor: default;">Feature</th>
                             <th style="text-align: center; padding: 10px; color: var(--text-bright); font-size: 0.8rem; text-transform: none; cursor: default;">SO-CRATES</th>
                             <th style="text-align: center; padding: 10px; color: var(--text-bright); font-size: 0.8rem; text-transform: none; cursor: default;">Security Onion</th>
@@ -494,73 +494,73 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Import Files</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Investigate Alerts</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Slice and Dice Metadata</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Pivot to ASCII Transcript</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Download Carved PCAP</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Airgap / Offline Deployment</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Analyze Live Traffic</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Production Deployments</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Distributed Deployments</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Endpoint Visibility</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Log Management</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
-                        <tr style="border-bottom: 1px solid var(--bg-hover);">
+                        <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Case Management</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
@@ -971,7 +971,7 @@
         }
 
         function htmlSection(title, color) {
-            return `<span style="color: var(--text-muted); margin-top: 10px; grid-column: 1 / -1; border-bottom: 1px solid var(--bg-hover); padding-bottom: 5px; color: ${color};">${escapeHtml(title)}</span>`;
+            return `<span style="color: var(--text-muted); margin-top: 10px; grid-column: 1 / -1; border-bottom: 1px solid var(--border-color); padding-bottom: 5px; color: ${color};">${escapeHtml(title)}</span>`;
         }
 
         function renderMetadataRows(meta) {
@@ -1011,7 +1011,7 @@
             // attributes, so coerce to integers to guarantee they are numeric.
             const srcPort = parseInt(e.src_port, 10) || 0;
             const dstPort = parseInt(e.dest_port, 10) || 0;
-            return `<div class="stream-payload" data-src-ip="${srcIpHtml}" data-src-port="${srcPort}" data-dst-ip="${dstIpHtml}" data-dst-port="${dstPort}" style="margin-top: 15px;"><div style="color: var(--text-muted); font-size: 0.85rem; border-bottom: 1px solid var(--bg-hover); padding-bottom: 5px; margin-bottom: 5px;">Payload</div><div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px;"><div class="view-tabs"><button class="view-tab active" onclick="switchStreamView('ascii','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">ASCII Transcript</button><button class="view-tab" onclick="switchStreamView('hexdump','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">Hexdump</button></div><button class="stream-btn" onclick="downloadPcap('${srcIpJs}','${srcPort}','${dstIpJs}','${dstPort}')" style="margin-left: 12px;">Download PCAP</button></div><div class="stream-view-container" style="background: var(--bg-primary); padding: 15px; border-radius: 8px; font-size: 0.8rem; margin: 0;"><div class="ascii-transcript" style="white-space: pre-wrap; overflow-wrap: break-word;"></div><div class="hexdump-content" style="display: none;"></div></div></div>`;
+            return `<div class="stream-payload" data-src-ip="${srcIpHtml}" data-src-port="${srcPort}" data-dst-ip="${dstIpHtml}" data-dst-port="${dstPort}" style="margin-top: 15px;"><div style="color: var(--text-muted); font-size: 0.85rem; border-bottom: 1px solid var(--border-color); padding-bottom: 5px; margin-bottom: 5px;">Payload</div><div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px;"><div class="view-tabs"><button class="view-tab active" onclick="switchStreamView('ascii','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">ASCII Transcript</button><button class="view-tab" onclick="switchStreamView('hexdump','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">Hexdump</button></div><button class="stream-btn" onclick="downloadPcap('${srcIpJs}','${srcPort}','${dstIpJs}','${dstPort}')" style="margin-left: 12px;">Download PCAP</button></div><div class="stream-view-container" style="background: var(--bg-primary); padding: 15px; border-radius: 8px; font-size: 0.8rem; margin: 0;"><div class="ascii-transcript" style="white-space: pre-wrap; overflow-wrap: break-word;"></div><div class="hexdump-content" style="display: none;"></div></div></div>`;
         }
 
         function renderAlertDetails(e) {
@@ -1553,7 +1553,7 @@
                 previousAnalysisCount = analyses.length;
                 if (analyses.length > 0) {
                     previousHtml = analyses.map(a => 
-                        `<div class="previous-analysis-row" style="display: flex; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--bg-hover);">
+                        `<div class="previous-analysis-row" style="display: flex; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border-color);">
                             <a href="?file=${escapeHtml(a.md5)}" onclick="event.preventDefault(); loadAnalysis('${escapeJsString(a.md5)}');" style="color: var(--accent); text-decoration: none; flex: 1;">${FOLDER_ICON_SVG}${escapeHtml(a.name)}</a>
                             <button data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="reanalyze" class="previous-analysis-reanalyze" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="Re-analyze">${REFRESH_ICON_SVG}</button>
                             <button class="previous-analysis-delete" data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="delete" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px;" title="Delete">${DELETE_ICON_SVG}</button>
@@ -1573,7 +1573,7 @@
             document.getElementById('inputBoxes').innerHTML = `
                 <div style="max-width: 900px; margin: 0 auto;">
                     <div style="display: flex; flex-direction: column; gap: 20px; margin-bottom: 20px;">
-                        <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover); width: 100%; box-sizing: border-box;">
+                        <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color); width: 100%; box-sizing: border-box;">
                             <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; margin-bottom: 15px; font-weight: 600;">${DOWN_ARROW_ICON_SVG} Select a sample file, import a file from URL, or import a file from your local system</div>
                             <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 15px;">
                                 <div class="sample-card" onclick="loadSampleUrl('${DEFAULT_SAMPLE_URL}')">
@@ -1599,12 +1599,12 @@
                             </div>
                             <div style="text-align: center; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; text-transform: uppercase; margin-bottom: 15px;">— OR —</div>
                             <div style="display: flex; gap: 8px; margin-bottom: 15px;">
-                                <input type="text" id="pcapUrl" value="${DEFAULT_SAMPLE_URL}" onfocus="this.value=''" onkeydown="if(event.key==='Enter')loadFromUrl()" style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--bg-hover); padding: 8px 12px; border-radius: 4px; font-size: 0.95rem; flex: 1;">
+                                <input type="text" id="pcapUrl" value="${DEFAULT_SAMPLE_URL}" onfocus="this.value=''" onkeydown="if(event.key==='Enter')loadFromUrl()" style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 4px; font-size: 0.95rem; flex: 1;">
                                 <button onclick="loadFromUrl()" style="background: var(--accent); color: var(--bg-primary); padding: 8px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.95rem; border: none;">Go</button>
                             </div>
                             <div style="text-align: center; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; text-transform: uppercase; margin-bottom: 15px;">— OR —</div>
                             <input type="file" id="pcapUpload" onchange="uploadPcap()" style="display: none;">
-                            <div id="dropZone" style="background: var(--bg-primary); color: var(--accent); padding: 20px; border-radius: 4px; cursor: pointer; font-size: 0.95rem; border: 2px dashed var(--bg-hover); text-align: center; transition: border-color 0.2s, background 0.2s;"
+                            <div id="dropZone" style="background: var(--bg-primary); color: var(--accent); padding: 20px; border-radius: 4px; cursor: pointer; font-size: 0.95rem; border: 2px dashed var(--border-color); text-align: center; transition: border-color 0.2s, background 0.2s;"
                                  ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)"
                                  onclick="document.getElementById('pcapUpload').click()">
                                  <div style="font-size: 1.5rem; margin-bottom: 8px;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="2 13 6 9 10 13"></polyline></svg></div>
@@ -1612,7 +1612,7 @@
                              </div>
                          </div>
                      </div>
-                       <div class="previous-analyses-section" style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--bg-hover);">
+                       <div class="previous-analyses-section" style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color);">
                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                                <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; font-weight: 600;">${FOLDER_OPEN_ICON_SVG} Previous Analyses</div>
                                ${deleteAllButtonHtml}

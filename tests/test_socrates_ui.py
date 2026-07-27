@@ -1712,16 +1712,88 @@ class TestThemeAndMenu(unittest.TestCase):
                          'JS must not reference --welcome-* variables')
 
     def test_dead_theme_vars_removed(self):
-        """--border-color, --accent-rgb, --filter-bar-bg were defined in every
-        theme block but never consumed anywhere (verified via var(--name)
-        search across CSS/JS/HTML) - removed as dead CSS. Must not reappear."""
-        for name in ('--border-color', '--accent-rgb', '--filter-bar-bg'):
+        """--accent-rgb and --filter-bar-bg were defined in every theme block
+        but never consumed anywhere (verified via var(--name) search across
+        CSS/JS/HTML) - removed as dead CSS. Must not reappear. (--border-color
+        was removed alongside these too, but was later reintroduced with a
+        real purpose - see test_border_color_split_from_bg_hover - so it's
+        deliberately not checked here.)"""
+        for name in ('--accent-rgb', '--filter-bar-bg'):
             self.assertNotIn(f'{name}:', CSS_CONTENT,
                              f'{name} is unused and must not be redefined without a real consumer')
             self.assertNotIn(f'var({name}', CSS_CONTENT,
                              f'var({name}) must not appear without also adding a definition')
             self.assertNotIn(f'var({name}', JS_CONTENT,
                              f'var({name}) must not appear without also adding a definition')
+
+    def test_border_color_split_from_bg_hover(self):
+        """--border-color is a distinct variable from --bg-hover: --bg-hover
+        is for hover-state background fills, --border-color is for
+        border/outline decorations. Every theme must define both, and CSS
+        border declarations must reference --border-color rather than
+        --bg-hover (which would re-couple the two)."""
+        theme_blocks = re.findall(r'(?::root|\[data-theme="[^"]+"\])\s*\{([^}]*)\}', CSS_CONTENT, re.DOTALL)
+        theme_blocks_with_bg_hover = [b for b in theme_blocks if '--bg-hover:' in b]
+        self.assertGreaterEqual(len(theme_blocks_with_bg_hover), 23,
+                                'Expected at least 23 theme blocks defining --bg-hover')
+        for body in theme_blocks_with_bg_hover:
+            self.assertIn('--border-color:', body,
+                         'Every theme defining --bg-hover must also define --border-color')
+        self.assertNotIn('border-color: var(--bg-hover)', CSS_CONTENT,
+                         'Border declarations must use var(--border-color), not var(--bg-hover)')
+        self.assertNotRegex(CSS_CONTENT, r'border(?:-top|-bottom)?:\s*\d+px\s+(?:solid|dashed)\s+var\(--bg-hover\)',
+                            'Border declarations must use var(--border-color), not var(--bg-hover)')
+        # CGA's border should be a distinct, brighter cyan than its hover fill -
+        # the exact bug this split was introduced to fix (see release notes).
+        cga_block = next(b for b in theme_blocks if '--bg-hover: #008080' in b)
+        self.assertIn('--border-color: #55ffff', cga_block,
+                      'CGA border-color must be the bright CGA light cyan, distinct from the muted --bg-hover fill')
+
+    def test_cga_header_footer_light_cyan(self):
+        """CGA's header/footer use a bright light-cyan background (matching
+        the real CGA Palette 1 High-Intensity hue) instead of the dark
+        near-black bg-secondary every other theme uses there, with
+        --text-bright/--text-muted overridden to a dark color for legibility
+        against that bright background. The gear dropdown menu (a visual
+        child of the header, but rendered on its own dark bg-secondary
+        panel) must reset those same two variables back to their normal CGA
+        values so its own text doesn't inherit the header's dark override."""
+        header_footer_match = re.search(
+            r'\[data-theme="cga"\] \.app-header,\s*\[data-theme="cga"\] \.footer\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(header_footer_match,
+                             'CGA must override .app-header/.footer background')
+        body = header_footer_match.group(1)
+        self.assertIn('background: #55ffff', body,
+                     'CGA header/footer background must be the bright CGA light cyan')
+        self.assertIn('--text-bright: #000000', body,
+                     'CGA header/footer text-bright must switch to black for legibility on the bright cyan bg')
+        self.assertIn('--text-muted: #003333', body,
+                     'CGA header/footer text-muted must switch to a dark teal for legibility on the bright cyan bg')
+
+        dropdown_match = re.search(
+            r'\[data-theme="cga"\] \.app-header-menu-dropdown\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(dropdown_match,
+                             'CGA must reset the dropdown menu text vars back from the header override')
+        dropdown_body = dropdown_match.group(1)
+        self.assertIn('--text-bright: #ffffff', dropdown_body,
+                     "Dropdown menu must reset --text-bright to CGA's normal (light) value")
+        self.assertIn('--text-muted: #55aaaa', dropdown_body,
+                     "Dropdown menu must reset --text-muted to CGA's normal (light) value")
+
+        # The real (non-CGA-scoped) dropdown rule must appear before these
+        # CGA overrides in the file, or test_theme_menu_items_do_not_wrap's
+        # naive '.app-header-menu-dropdown {'.split() would grab the wrong
+        # (CGA override) block instead of the real rule's min-width.
+        real_rule_pos = CSS_CONTENT.index('.app-header-menu-dropdown { display: none;')
+        cga_override_pos = CSS_CONTENT.index('[data-theme="cga"] .app-header-menu-dropdown')
+        self.assertLess(real_rule_pos, cga_override_pos,
+                        "The base .app-header-menu-dropdown rule must come before CGA's override "
+                        "in the file, so naive substring-based CSS extraction in other tests still "
+                        "finds the real rule first")
 
     def test_hacker_previous_analysis_delete_overrides(self):
         self.assertIn('[data-theme="hacker"] .previous-analysis-delete', CSS_CONTENT,
@@ -2061,7 +2133,7 @@ class TestAggregationTables(unittest.TestCase):
         self.assertNotIn('.agg-bar', CSS_CONTENT)
 
     def test_agg_tables_have_borders(self):
-        self.assertIn('border: 1px solid var(--bg-hover)', CSS_CONTENT)
+        self.assertIn('border: 1px solid var(--border-color)', CSS_CONTENT)
 
     def test_agg_tables_wrap_with_flex(self):
         self.assertIn('flex-wrap: wrap', CSS_CONTENT)
