@@ -32,6 +32,7 @@ FAVICON_VANTABLACK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)
 FAVICON_WHITE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-white.svg')
 FAVICON_SGUIL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-sguil.svg')
 FAVICON_CGA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-cga.svg')
+FAVICON_C64_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-c64.svg')
 
 with open(HTML_PATH, 'r') as f:
     HTML_CONTENT = f.read()
@@ -91,6 +92,10 @@ class TestHTMLStructure(unittest.TestCase):
     def test_favicon_cga_file_exists(self):
         """static/favicon-cga.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_CGA_PATH), 'static/favicon-cga.svg must exist')
+
+    def test_favicon_c64_file_exists(self):
+        """static/favicon-c64.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_C64_PATH), 'static/favicon-c64.svg must exist')
 
     def test_favicon_matte_black_file_exists(self):
         """static/favicon-matte-black.svg must exist on disk."""
@@ -186,7 +191,7 @@ class TestHTMLStructure(unittest.TestCase):
         """updateFavicon() must point faviconLink at the per-theme SVG that
         exists in static/ (plain favicon.svg for the default dark theme)."""
         from tests.jsdom_helper import js_statements
-        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
         result = js_statements(f'''
             var link = document.getElementById('faviconLink');
             var out = {{}};
@@ -1118,7 +1123,7 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Menu dropdown container must exist in HTML')
 
     def test_theme_options_in_menu(self):
-        for theme in ('dark', 'light', 'sguil', 'hacker', 'cga', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white'):
+        for theme in ('dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white'):
             self.assertIn(f"commitTheme('{theme}')", HTML_CONTENT,
                           f'{theme} theme option must commit on click')
             self.assertIn(f"previewTheme('{theme}')", HTML_CONTENT,
@@ -1132,7 +1137,7 @@ class TestThemeAndMenu(unittest.TestCase):
         """renderGearMenu() must generate a button with preview/commit handlers
         for every theme in the THEMES registry."""
         from tests.jsdom_helper import js_statements
-        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
         result = js_statements(f'''
             var html = renderGearMenu();
             var missing = [];
@@ -1697,8 +1702,10 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('color: var(--accent)', label_block,
                       'Sample labels must use the theme accent color')
         card_hover_block = CSS_CONTENT.split('.sample-card:hover {')[1].split('}')[0]
-        self.assertIn('border-color: var(--accent)', card_hover_block,
-                      'Sample card hover border must use the theme accent color')
+        self.assertIn('border-color: var(--interactive-highlight, var(--accent))', card_hover_block,
+                      'Sample card hover border must use the theme accent color, with an '
+                      'optional --interactive-highlight override for themes (like C64) where '
+                      '--accent alone is not visually distinct from --border-color')
 
     def test_welcome_color_vars_removed(self):
         """--welcome-red/orange/yellow must be gone from themes and all consumers."""
@@ -1795,6 +1802,25 @@ class TestThemeAndMenu(unittest.TestCase):
                         "in the file, so naive substring-based CSS extraction in other tests still "
                         "finds the real rule first")
 
+    def test_c64_logo_text_uses_light_blue(self):
+        """The 'SO-CRATES' header logo link is normally --text-bright (white
+        in every theme, including C64). C64 overrides it to --text-primary
+        (light blue) instead, to match the rest of its header text rather
+        than standing out in white."""
+        self.assertIn('class="app-logo-text"', HTML_CONTENT,
+                      'The header logo link must carry the app-logo-text class')
+        override_match = re.search(
+            r'\[data-theme="c64"\] \.app-logo-text\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(override_match,
+                             'C64 must override .app-logo-text color')
+        self.assertIn('color: var(--text-primary) !important', override_match.group(1),
+                      'C64 logo text must use --text-primary (light blue), overriding the '
+                      'default --text-bright (white) with !important since the inline '
+                      'style="color: var(--text-bright)" on the element itself outranks a '
+                      'plain class selector')
+
     def test_hacker_previous_analysis_delete_overrides(self):
         self.assertIn('[data-theme="hacker"] .previous-analysis-delete', CSS_CONTENT,
                       'Hacker theme must override previous analysis delete color')
@@ -1857,13 +1883,13 @@ class TestThemeAndMenu(unittest.TestCase):
         result = js_statements('''
             var order = [];
             setTheme('dark');
-            for (var i = 0; i < 23; i++) {
+            for (var i = 0; i < 24; i++) {
                 toggleTheme();
                 order.push(document.documentElement.getAttribute('data-theme') || 'dark');
             }
             window.__jsdom_result = { order: order };
         ''')
-        self.assertEqual(result['order'], ['nord', 'osaka-jade', 'retro-82', 'ristretto', 'tokyo-night', 'vantablack', 'cga', 'hacker', 'sguil', 'catppuccin-latte', 'light', 'rose-pine', 'white', 'catppuccin', 'ethereal', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'lumon', 'matte-black', 'miasma', 'dark'],
+        self.assertEqual(result['order'], ['nord', 'osaka-jade', 'retro-82', 'ristretto', 'tokyo-night', 'vantablack', 'c64', 'cga', 'hacker', 'sguil', 'catppuccin-latte', 'light', 'rose-pine', 'white', 'catppuccin', 'ethereal', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'lumon', 'matte-black', 'miasma', 'dark'],
                          't hotkey cycle order must match menu order')
 
     def test_hacker_mode_easter_egg_exists(self):
@@ -1903,6 +1929,33 @@ class TestThemeAndMenu(unittest.TestCase):
         ''')
         self.assertEqual(result['theme'], 'cga',
                          'Typing cga after other keystrokes must still activate CGA theme')
+
+    def test_c64_easter_egg_exists(self):
+        """Typing c64 outside of input fields must activate the C64 theme."""
+        self.assertIn("keyBuffer.endsWith('c64')", JS_CONTENT,
+                      'JS must check for the c64 easter egg sequence')
+        self.assertIn("setTheme('c64')", JS_CONTENT,
+                      'Easter egg must activate C64')
+        self.assertIn('Switched to C64 theme', JS_CONTENT,
+                      'Easter egg activation message must reference C64 theme')
+
+    def test_c64_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: same class of bug as the cga easter egg - a code
+        shorter than the 5-char keyBuffer (like "c64") must actually trigger
+        after other keystrokes, not just in the first few keystrokes after
+        page load."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            function press(k) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
+            }
+            'xyz'.split('').forEach(press);
+            'c64'.split('').forEach(press);
+            window.__jsdom_result = { theme: getCurrentTheme() };
+        ''')
+        self.assertEqual(result['theme'], 'c64',
+                         'Typing c64 after other keystrokes must still activate C64 theme')
 
     def test_hacker_mode_easter_egg_ignores_input_fields(self):
         """Easter egg must not trigger while typing in form controls."""

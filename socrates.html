@@ -20,7 +20,7 @@
                     <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                 </svg>
             </a>
-            <a href="#" onclick="showWelcome(); return false;" style="color: var(--text-bright); text-decoration: none; font-size: 1.2rem; font-weight: 700;">SO-CRATES</a>
+            <a href="#" onclick="showWelcome(); return false;" class="app-logo-text" style="color: var(--text-bright); text-decoration: none; font-size: 1.2rem; font-weight: 700;">SO-CRATES</a>
             <span id="appHeaderFilename" class="app-header-filename"></span>
             <span id="appHeaderMeta" class="app-header-meta"></span>
         </div>
@@ -138,6 +138,12 @@
                         <span>Vantablack</span>
                     </button>
                     <div class="app-header-menu-header">Fun Themes</div>
+                    <button class="app-header-menu-item" data-theme-option="c64"
+                            onmouseenter="previewTheme('c64')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('c64')">
+                        <span>C64</span>
+                    </button>
                     <button class="app-header-menu-item" data-theme-option="cga"
                             onmouseenter="previewTheme('cga')"
                             onmouseleave="revertTheme()"

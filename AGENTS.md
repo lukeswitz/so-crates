@@ -65,7 +65,7 @@ When updating styles or frontend logic, edit the appropriate split file. Keep `s
 
 ### Theming Conventions
 
-SO-CRATES supports twenty-three themes via CSS custom properties:
+SO-CRATES supports twenty-four themes via CSS custom properties:
 
 - **Catppuccin** — dark theme based on the soothing pastel Catppuccin Mocha palette
 - **Ethereal** — dark blue theme with periwinkle accents and soft peach text
@@ -84,6 +84,7 @@ SO-CRATES supports twenty-three themes via CSS custom properties:
 - **Tokyo Night** — dark theme with blue/purple accents inspired by the Tokyo Night palette
 - **Vantablack** — pure monochrome theme with white text on true black
 - **CGA** — black background with the classic 4-color CGA Palette 1 High-Intensity hues (cyan, magenta, white)
+- **C64** — Commodore 64 blue-on-blue aesthetic, using the real Pepto/VICE C64 16-color palette (blue background, light-blue border/text/accent, cyan interactive highlight)
 - **Hacker** — green-on-black terminal aesthetic with a subtle code-rain background
 - **Sguil** — light theme inspired by the classic Sguil NSM interface, with gray chrome and navy headers
 - **Catppuccin Latte** — light theme based on the pastel Catppuccin Latte palette
@@ -92,11 +93,12 @@ SO-CRATES supports twenty-three themes via CSS custom properties:
 - **White** — pure monochrome light theme with black text on true white
 
 - **Use CSS variables** (`var(--bg-primary)`, `var(--text-primary)`, `var(--accent)`, etc.) instead of hardcoded hex values for all structural/theme colors.
-- **Add theme overrides** in the appropriate `[data-theme="..."]` block (e.g., `light`, `sguil`, `hacker`, `cga`, `matte-black`, `tokyo-night`, `retro-82`, `ethereal`, `lumon`, `catppuccin`, `catppuccin-latte`, `everforest`, `gruvbox`, `hackerman`, `kanagawa`, `miasma`, `nord`, `osaka-jade`, `ristretto`, `rose-pine`, `vantablack`, or `white`) when a default dark color lacks contrast or does not match the theme's aesthetic.
+- **Add theme overrides** in the appropriate `[data-theme="..."]` block (e.g., `light`, `sguil`, `hacker`, `cga`, `c64`, `matte-black`, `tokyo-night`, `retro-82`, `ethereal`, `lumon`, `catppuccin`, `catppuccin-latte`, `everforest`, `gruvbox`, `hackerman`, `kanagawa`, `miasma`, `nord`, `osaka-jade`, `ristretto`, `rose-pine`, `vantablack`, or `white`) when a default dark color lacks contrast or does not match the theme's aesthetic.
 - **Preserve hardcoded colors** only for functional/data-driven elements (event type colors, severity colors, ASCII transcript direction colors) that must stay consistent across themes.
 - **Don't define a variable in every theme block "for completeness" without a real consumer.** `--accent-rgb` and `--filter-bar-bg` were defined identically in all 23 theme blocks but never referenced via `var(--name)` anywhere in CSS/JS/HTML — removed as dead CSS (`test_dead_theme_vars_removed` locks this in). If you add a new per-theme variable, grep for `var(--your-name` before considering it done.
 - **`--bg-hover` and `--border-color` are deliberately separate variables.** `--bg-hover` is for hover-state background *fills* (table row hover, button hover); `--border-color` is for border/outline *decorations* (panel borders, header/footer dividers, input borders). Most themes set both to the same value since a muted color works fine for both roles, but don't assume they must match — CGA sets `--border-color` to a bright cyan (`#55ffff`, the real CGA light-cyan RGBI value) while keeping `--bg-hover` a much more muted teal (`#008080`), since a hover *fill* that bright would hurt text contrast but a 1px *border* reads fine at full brightness. `test_border_color_split_from_bg_hover` enforces that every theme defines both and that border declarations reference `var(--border-color)`, not `var(--bg-hover)`.
 - **A theme can override structural colors per-selector, not just per-variable, when a single shared variable can't express the look.** CGA's header/footer use `background: #55ffff` (bright light cyan) directly on `[data-theme="cga"] .app-header, [data-theme="cga"] .footer`, rather than repointing `--bg-secondary` (which every other panel/card also uses and would go bright cyan too). When doing this, override `--text-bright`/`--text-muted` scoped to the same selector for legibility against the new background — but if any descendant element (like the gear dropdown menu, a child of `.app-header` but visually its own dark panel) uses those same variables against its *own* different background, reset them back to their normal value scoped to that descendant, or its text will inherit the parent override and become illegible. See `test_cga_header_footer_light_cyan`. Also note the CSS-file-ordering gotcha this ran into: place such overrides *after* the base rule for any selector another test extracts via naive string-splitting (e.g. `.split('.app-header-menu-dropdown {')[1].split('}')[0]`), or the override becomes a second matching substring earlier in the file and the test grabs the wrong block.
+- **`--interactive-highlight` is an optional per-theme override for hover/focus/active border feedback.** Every hover/focus/active border rule (`.stat-card:hover`, `.stat-card.tab-active`, `.pagination-page-input:focus`, `.settings-number-input:focus`, `.drop-zone-active`, `.view-tab.active`, `.search-input:focus`, `.sample-card:hover`) reads `var(--interactive-highlight, var(--accent))` — a CSS fallback, so themes that don't define `--interactive-highlight` (all of them except C64) get exactly the old behavior (`--accent`) with zero risk. C64 needs this because its `--accent` is intentionally identical to `--border-color`/`--text-primary` (a deliberate flat, monochrome look the user asked for after trying a distinct accent color first) — without a separate highlight color, hovering/focusing would produce no visible change at all. C64 sets `--interactive-highlight: #67B6BD` (the real C64 palette Cyan — a different shade of blue, not a jarring color swap, per explicit user preference for "another shade of blue" over the initially-tried light green). If you add a new theme where `--accent` intentionally matches `--border-color`, check whether it needs `--interactive-highlight` too.
 - **Use `currentColor`** for inline SVG icons so they inherit the surrounding text color and adapt automatically.
 - **Avoid emojis** for UI icons when possible — use inline SVGs instead, since emojis render as full-color system glyphs that ignore CSS `color` and may be invisible in one theme.
 
@@ -124,7 +126,7 @@ Before cutting a release:
 
 1. **Regenerate screenshots.** Start the server (`python3 socrates.py`), then run
    `pip install -r requirements-screenshots.txt && python3 scripts/capture_screenshots.py`.
-   This refreshes all 6 `docs/images/so-crates-*.png` (Home page) and all 23
+   This refreshes all 6 `docs/images/so-crates-*.png` (Home page) and all 24
    `docs/images/themes/*.png` (Themes page) against the app's own built-in
    sample pcap (`DEFAULT_SAMPLE_URL` in `static/socrates.js`) — no local
    fixture or hardcoded MD5 needed, works on a clean checkout with an empty

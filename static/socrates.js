@@ -63,6 +63,7 @@
             sguil: { label: 'Sguil', group: 'fun' },
             hacker: { label: 'Hacker', group: 'fun' },
             cga: { label: 'CGA', group: 'fun' },
+            c64: { label: 'C64', group: 'fun' },
             'matte-black': { label: 'Matte Black', group: 'dark' },
             'tokyo-night': { label: 'Tokyo Night', group: 'dark' },
             'retro-82': { label: 'Retro 82', group: 'dark' },
@@ -1641,7 +1642,7 @@
                 toggleTheme();
             }
             // Easter eggs: type "31337" for Hacker theme, "sguil" for Sguil
-            // theme, or "cga" for CGA theme. Checked with endsWith() rather
+            // theme, "cga" for CGA theme, or "c64" for C64 theme. Checked with endsWith() rather
             // than === since the buffer holds the last 5 keys typed
             // session-wide - a code shorter than 5 characters (like "cga")
             // would otherwise only ever match in the first few keystrokes
@@ -1669,6 +1670,12 @@
                     e.preventDefault();
                     setTheme('cga');
                     showToast('Switched to CGA theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('c64')) {
+                    e.preventDefault();
+                    setTheme('c64');
+                    showToast('Switched to C64 theme.');
                     keyBuffer = '';
                 }
             }

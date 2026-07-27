@@ -1,6 +1,6 @@
 # Themes
 
-SO-CRATES includes twenty-three UI themes in three groups — Dark Themes, Fun Themes, and Light Themes. Press the `t` key to cycle through themes or choose one from the gear icon menu in the upper-right corner. The currently applied theme is marked with a ✓ in the menu (it follows hover previews), and your choice is persisted in the browser's `localStorage` and restored on the next visit.
+SO-CRATES includes twenty-four UI themes in three groups — Dark Themes, Fun Themes, and Light Themes. Press the `t` key to cycle through themes or choose one from the gear icon menu in the upper-right corner. The currently applied theme is marked with a ✓ in the menu (it follows hover previews), and your choice is persisted in the browser's `localStorage` and restored on the next visit.
 
 Click any screenshot below to zoom in.
 
@@ -43,6 +43,8 @@ Click any screenshot below to zoom in.
 
 Each Fun theme also has its own cheat code — type it anywhere outside a text field to switch instantly.
 
+- **C64** — Commodore 64 blue-on-blue aesthetic, using the real Pepto/VICE C64 16-color palette (blue background, light-blue border/text/accent, cyan interactive highlight). Cheat code: `c64`
+  <br><img src="../images/themes/c64.png" width="360" alt="C64 theme">
 - **CGA** — black background with the classic 4-color CGA Palette 1 High-Intensity hues (cyan, magenta, white). Cheat code: `cga`
   <br><img src="../images/themes/cga.png" width="360" alt="CGA theme">
 - **Hacker** — green-on-black terminal aesthetic with a subtle animated code-rain background. Cheat code: `31337`
