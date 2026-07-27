@@ -1618,6 +1618,32 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('[data-theme="sguil"]', CSS_CONTENT,
                       'CSS must have a Sguil theme override block')
 
+    def test_sguil_detail_value_matches_light_blue_zebra_row(self):
+        """REGRESSION: when a light-blue zebra row (nth-of-type(4n+3)) is
+        expanded, its .detail-value fields must also turn light blue - a
+        stark white .detail-value box against the light-blue detail-row
+        background looked like a patchwork of mismatched fields. .detail-label
+        deliberately keeps its own light-cyan background always (not
+        overridden here) - the user asked to keep that distinction, only
+        the value column needed to match the row color."""
+        override_match = re.search(
+            r'\[data-theme="sguil"\] #sections table tbody tr:nth-of-type\(4n\+3\):not\(\.detail-row\) \+ tr\.detail-row td,\s*'
+            r'\[data-theme="sguil"\] #sections table tbody tr:nth-of-type\(4n\+3\):not\(\.detail-row\) \+ tr\.detail-row \.detail-content,\s*'
+            r'\[data-theme="sguil"\] #sections table tbody tr:nth-of-type\(4n\+3\):not\(\.detail-row\) \+ tr\.detail-row \.log-detail-panel,\s*'
+            r'\[data-theme="sguil"\] #sections table tbody tr:nth-of-type\(4n\+3\):not\(\.detail-row\) \+ tr\.detail-row \.detail-value\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(override_match,
+                             'Sguil must override .detail-value (alongside td/.detail-content/.log-detail-panel) '
+                             'to light blue when following a light-blue zebra row')
+        self.assertIn('background: #e6f2ff', override_match.group(1))
+        self.assertNotRegex(
+            CSS_CONTENT,
+            r'nth-of-type\(4n\+3\):not\(\.detail-row\) \+ tr\.detail-row \.detail-label',
+            '.detail-label must NOT be overridden here - it keeps its own light-cyan '
+            'background on every row, by explicit user preference',
+        )
+
     def test_code_rain_canvas_exists(self):
         self.assertIn('id="codeRain"', HTML_CONTENT,
                       'HTML must include a code-rain canvas for Hacker')

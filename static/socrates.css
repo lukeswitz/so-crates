@@ -166,7 +166,8 @@
         }
         [data-theme="sguil"] #sections table tbody tr:nth-of-type(4n+3):not(.detail-row) + tr.detail-row td,
         [data-theme="sguil"] #sections table tbody tr:nth-of-type(4n+3):not(.detail-row) + tr.detail-row .detail-content,
-        [data-theme="sguil"] #sections table tbody tr:nth-of-type(4n+3):not(.detail-row) + tr.detail-row .log-detail-panel {
+        [data-theme="sguil"] #sections table tbody tr:nth-of-type(4n+3):not(.detail-row) + tr.detail-row .log-detail-panel,
+        [data-theme="sguil"] #sections table tbody tr:nth-of-type(4n+3):not(.detail-row) + tr.detail-row .detail-value {
             background: #e6f2ff;
         }
         [data-theme="sguil"] .detail-label {

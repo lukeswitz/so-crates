@@ -94,6 +94,12 @@ analyses from Suricata 7 too.
 - CGA's header/footer text (the "SO-CRATES" logo, tagline, filename, and
   date/MD5 metadata) is now the CGA magenta accent instead of black/dark
   teal, matching the rest of the CGA palette more closely.
+- **Sguil's expanded data-table rows had mismatched field backgrounds**:
+  when a light-blue zebra-striped row (`nth-of-type(4n+3)`) was expanded,
+  each field's *value* box stayed stark white instead of matching the
+  light-blue row, looking like a patchwork of mismatched boxes. `.detail-value`
+  now follows the row's light-blue background in that case; `.detail-label`
+  intentionally keeps its own light-cyan background on every row.
 
 ### Documentation
 
