@@ -65,7 +65,7 @@ When updating styles or frontend logic, edit the appropriate split file. Keep `s
 
 ### Theming Conventions
 
-SO-CRATES supports twenty-four themes via CSS custom properties:
+SO-CRATES supports twenty-five themes via CSS custom properties:
 
 - **Catppuccin** — dark theme based on the soothing pastel Catppuccin Mocha palette
 - **Ethereal** — dark blue theme with periwinkle accents and soft peach text
@@ -87,13 +87,14 @@ SO-CRATES supports twenty-four themes via CSS custom properties:
 - **C64** — Commodore 64 blue-on-blue aesthetic, using the real Pepto/VICE C64 16-color palette (blue background, light-blue border/text/accent, cyan interactive highlight)
 - **Hacker** — green-on-black terminal aesthetic with a subtle code-rain background
 - **Sguil** — light theme inspired by the classic Sguil NSM interface, with gray chrome and navy headers
+- **Vaporwave** — dark purple/navy theme with hot-pink accents and cyan/mint/pastel-yellow highlights, evoking the modern (2010s+) vaporwave internet aesthetic
 - **Catppuccin Latte** — light theme based on the pastel Catppuccin Latte palette
 - **Daylight** (light theme)
 - **Rose Pine** — light theme based on the warm Rosé Pine Dawn palette
 - **White** — pure monochrome light theme with black text on true white
 
 - **Use CSS variables** (`var(--bg-primary)`, `var(--text-primary)`, `var(--accent)`, etc.) instead of hardcoded hex values for all structural/theme colors.
-- **Add theme overrides** in the appropriate `[data-theme="..."]` block (e.g., `light`, `sguil`, `hacker`, `cga`, `c64`, `matte-black`, `tokyo-night`, `retro-82`, `ethereal`, `lumon`, `catppuccin`, `catppuccin-latte`, `everforest`, `gruvbox`, `hackerman`, `kanagawa`, `miasma`, `nord`, `osaka-jade`, `ristretto`, `rose-pine`, `vantablack`, or `white`) when a default dark color lacks contrast or does not match the theme's aesthetic.
+- **Add theme overrides** in the appropriate `[data-theme="..."]` block (e.g., `light`, `sguil`, `hacker`, `cga`, `c64`, `vaporwave`, `matte-black`, `tokyo-night`, `retro-82`, `ethereal`, `lumon`, `catppuccin`, `catppuccin-latte`, `everforest`, `gruvbox`, `hackerman`, `kanagawa`, `miasma`, `nord`, `osaka-jade`, `ristretto`, `rose-pine`, `vantablack`, or `white`) when a default dark color lacks contrast or does not match the theme's aesthetic.
 - **Preserve hardcoded colors** only for functional/data-driven elements (event type colors, severity colors, ASCII transcript direction colors) that must stay consistent across themes.
 - **Don't define a variable in every theme block "for completeness" without a real consumer.** `--accent-rgb` and `--filter-bar-bg` were defined identically in all 23 theme blocks but never referenced via `var(--name)` anywhere in CSS/JS/HTML — removed as dead CSS (`test_dead_theme_vars_removed` locks this in). If you add a new per-theme variable, grep for `var(--your-name` before considering it done.
 - **`--bg-hover` and `--border-color` are deliberately separate variables.** `--bg-hover` is for hover-state background *fills* (table row hover, button hover); `--border-color` is for border/outline *decorations* (panel borders, header/footer dividers, input borders). Most themes set both to the same value since a muted color works fine for both roles, but don't assume they must match — CGA sets `--border-color` to a bright cyan (`#55ffff`, the real CGA light-cyan RGBI value) while keeping `--bg-hover` a much more muted teal (`#008080`), since a hover *fill* that bright would hurt text contrast but a 1px *border* reads fine at full brightness. `test_border_color_split_from_bg_hover` enforces that every theme defines both and that border declarations reference `var(--border-color)`, not `var(--bg-hover)`.
@@ -102,7 +103,7 @@ SO-CRATES supports twenty-four themes via CSS custom properties:
 - **Use `currentColor`** for inline SVG icons so they inherit the surrounding text color and adapt automatically.
 - **Avoid emojis** for UI icons when possible — use inline SVGs instead, since emojis render as full-color system glyphs that ignore CSS `color` and may be invisible in one theme.
 
-Theme selection is in the gear icon menu in the upper right corner. The menu shows **Help** first, then a divider, then the **Dark Themes** section (alphabetical: Catppuccin … Vantablack), followed by the **Fun Themes** section (CGA, Hacker, Sguil), followed by the **Light Themes** section (alphabetical: Catppuccin Latte … White). The `toggleTheme()` hotkey cycle follows this same menu order. The currently applied theme is marked with a ✓ (accent-colored `::before` glyph): each theme button carries `data-theme-option="<key>"`, and `updateThemeMenu()` toggles the `theme-active` class to match `getCurrentTheme()`. It runs from `setTheme()`, `previewTheme()` (so the mark follows hover previews), `init()`, and after every `renderGearMenu()` re-render. Hovering a theme name previews it temporarily; clicking commits it. The user's choice is persisted to `localStorage` as `socrates-theme` and restored on page load to prevent a flash of unstyled content.
+Theme selection is in the gear icon menu in the upper right corner. The menu shows **Help** first, then a divider, then the **Dark Themes** section (alphabetical: Catppuccin … Vantablack), followed by the **Light Themes** section (alphabetical: Catppuccin Latte … White), followed by the **Fun Themes** section (C64, CGA, Hacker, Sguil, Vaporwave) — this order is `THEME_GROUP_ORDER = ['dark', 'light', 'fun']` in `static/socrates.js`. The `toggleTheme()` hotkey cycle follows this same menu order. The currently applied theme is marked with a ✓ (accent-colored `::before` glyph): each theme button carries `data-theme-option="<key>"`, and `updateThemeMenu()` toggles the `theme-active` class to match `getCurrentTheme()`. It runs from `setTheme()`, `previewTheme()` (so the mark follows hover previews), `init()`, and after every `renderGearMenu()` re-render. Hovering a theme name previews it temporarily; clicking commits it. The user's choice is persisted to `localStorage` as `socrates-theme` and restored on page load to prevent a flash of unstyled content.
 
 To add a new theme:
 
@@ -126,7 +127,7 @@ Before cutting a release:
 
 1. **Regenerate screenshots.** Start the server (`python3 socrates.py`), then run
    `pip install -r requirements-screenshots.txt && python3 scripts/capture_screenshots.py`.
-   This refreshes all 6 `docs/images/so-crates-*.png` (Home page) and all 24
+   This refreshes all 6 `docs/images/so-crates-*.png` (Home page) and all 25
    `docs/images/themes/*.png` (Themes page) against the app's own built-in
    sample pcap (`DEFAULT_SAMPLE_URL` in `static/socrates.js`) — no local
    fixture or hardcoded MD5 needed, works on a clean checkout with an empty

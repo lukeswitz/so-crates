@@ -1,6 +1,6 @@
 # Themes
 
-SO-CRATES includes twenty-four UI themes in three groups — Dark Themes, Fun Themes, and Light Themes. Press the `t` key to cycle through themes or choose one from the gear icon menu in the upper-right corner. The currently applied theme is marked with a ✓ in the menu (it follows hover previews), and your choice is persisted in the browser's `localStorage` and restored on the next visit.
+SO-CRATES includes twenty-five UI themes in three groups — Dark Themes, Fun Themes, and Light Themes. Press the `t` key to cycle through themes or choose one from the gear icon menu in the upper-right corner. The currently applied theme is marked with a ✓ in the menu (it follows hover previews), and your choice is persisted in the browser's `localStorage` and restored on the next visit.
 
 Click any screenshot below to zoom in.
 
@@ -39,6 +39,17 @@ Click any screenshot below to zoom in.
 - **Vantablack** — pure monochrome theme with white text on true black
   <br><img src="../images/themes/vantablack.png" width="360" alt="Vantablack theme">
 
+## Light Themes
+
+- **Catppuccin Latte** — light theme based on the pastel Catppuccin Latte palette
+  <br><img src="../images/themes/catppuccin-latte.png" width="360" alt="Catppuccin Latte theme">
+- **Daylight** — SO-CRATES default light theme
+  <br><img src="../images/themes/light.png" width="360" alt="Daylight theme">
+- **Rose Pine** — light theme based on the warm Rosé Pine Dawn palette
+  <br><img src="../images/themes/rose-pine.png" width="360" alt="Rose Pine theme">
+- **White** — pure monochrome light theme with black text on true white
+  <br><img src="../images/themes/white.png" width="360" alt="White theme">
+
 ## Fun Themes
 
 Each Fun theme also has its own cheat code — type it anywhere outside a text field to switch instantly.
@@ -51,14 +62,5 @@ Each Fun theme also has its own cheat code — type it anywhere outside a text f
   <br><img src="../images/themes/hacker.png" width="360" alt="Hacker theme">
 - **Sguil** — light theme inspired by the classic Sguil NSM interface, with gray chrome and navy headers. Cheat code: `sguil`
   <br><img src="../images/themes/sguil.png" width="360" alt="Sguil theme">
-
-## Light Themes
-
-- **Catppuccin Latte** — light theme based on the pastel Catppuccin Latte palette
-  <br><img src="../images/themes/catppuccin-latte.png" width="360" alt="Catppuccin Latte theme">
-- **Daylight** — SO-CRATES default light theme
-  <br><img src="../images/themes/light.png" width="360" alt="Daylight theme">
-- **Rose Pine** — light theme based on the warm Rosé Pine Dawn palette
-  <br><img src="../images/themes/rose-pine.png" width="360" alt="Rose Pine theme">
-- **White** — pure monochrome light theme with black text on true white
-  <br><img src="../images/themes/white.png" width="360" alt="White theme">
+- **Vaporwave** — dark purple/navy theme with hot-pink accents and cyan/mint/pastel-yellow highlights, evoking the modern (2010s+) vaporwave internet aesthetic. Cheat code: `vapor`
+  <br><img src="../images/themes/vaporwave.png" width="360" alt="Vaporwave theme">

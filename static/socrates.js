@@ -64,6 +64,7 @@
             hacker: { label: 'Hacker', group: 'fun' },
             cga: { label: 'CGA', group: 'fun' },
             c64: { label: 'C64', group: 'fun' },
+            vaporwave: { label: 'Vaporwave', group: 'fun' },
             'matte-black': { label: 'Matte Black', group: 'dark' },
             'tokyo-night': { label: 'Tokyo Night', group: 'dark' },
             'retro-82': { label: 'Retro 82', group: 'dark' },
@@ -85,7 +86,7 @@
         };
 
         const THEME_GROUP_LABELS = { dark: 'Dark Themes', fun: 'Fun Themes', light: 'Light Themes' };
-        const THEME_GROUP_ORDER = ['dark', 'fun', 'light'];
+        const THEME_GROUP_ORDER = ['dark', 'light', 'fun'];
 
         // Menu/hotkey cycle order: group by section (Dark, Fun, Light),
         // alphabetical by label within each section.
@@ -1642,7 +1643,8 @@
                 toggleTheme();
             }
             // Easter eggs: type "31337" for Hacker theme, "sguil" for Sguil
-            // theme, "cga" for CGA theme, or "c64" for C64 theme. Checked with endsWith() rather
+            // theme, "cga" for CGA theme, "c64" for C64 theme, or "vapor" for
+            // Vaporwave theme. Checked with endsWith() rather
             // than === since the buffer holds the last 5 keys typed
             // session-wide - a code shorter than 5 characters (like "cga")
             // would otherwise only ever match in the first few keystrokes
@@ -1676,6 +1678,12 @@
                     e.preventDefault();
                     setTheme('c64');
                     showToast('Switched to C64 theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('vapor')) {
+                    e.preventDefault();
+                    setTheme('vaporwave');
+                    showToast('Switched to Vaporwave theme.');
                     keyBuffer = '';
                 }
             }

@@ -33,6 +33,7 @@ FAVICON_WHITE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.
 FAVICON_SGUIL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-sguil.svg')
 FAVICON_CGA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-cga.svg')
 FAVICON_C64_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-c64.svg')
+FAVICON_VAPORWAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-vaporwave.svg')
 
 with open(HTML_PATH, 'r') as f:
     HTML_CONTENT = f.read()
@@ -96,6 +97,10 @@ class TestHTMLStructure(unittest.TestCase):
     def test_favicon_c64_file_exists(self):
         """static/favicon-c64.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_C64_PATH), 'static/favicon-c64.svg must exist')
+
+    def test_favicon_vaporwave_file_exists(self):
+        """static/favicon-vaporwave.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_VAPORWAVE_PATH), 'static/favicon-vaporwave.svg must exist')
 
     def test_favicon_matte_black_file_exists(self):
         """static/favicon-matte-black.svg must exist on disk."""
@@ -191,7 +196,7 @@ class TestHTMLStructure(unittest.TestCase):
         """updateFavicon() must point faviconLink at the per-theme SVG that
         exists in static/ (plain favicon.svg for the default dark theme)."""
         from tests.jsdom_helper import js_statements
-        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
         result = js_statements(f'''
             var link = document.getElementById('faviconLink');
             var out = {{}};
@@ -1123,7 +1128,7 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Menu dropdown container must exist in HTML')
 
     def test_theme_options_in_menu(self):
-        for theme in ('dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white'):
+        for theme in ('dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white'):
             self.assertIn(f"commitTheme('{theme}')", HTML_CONTENT,
                           f'{theme} theme option must commit on click')
             self.assertIn(f"previewTheme('{theme}')", HTML_CONTENT,
@@ -1137,7 +1142,7 @@ class TestThemeAndMenu(unittest.TestCase):
         """renderGearMenu() must generate a button with preview/commit handlers
         for every theme in the THEMES registry."""
         from tests.jsdom_helper import js_statements
-        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
         result = js_statements(f'''
             var html = renderGearMenu();
             var missing = [];
@@ -1207,8 +1212,10 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertLess(light_index, light_btn_index,
                         'Light Themes header must appear before Light theme button')
 
-    def test_fun_themes_between_dark_and_light(self):
-        """Fun Themes section (Hacker, Sguil) sits between Dark and Light sections."""
+    def test_fun_themes_after_light(self):
+        """Fun Themes section (C64, CGA, Hacker, Sguil, Vaporwave) sits after
+        the Light Themes section, matching THEME_GROUP_ORDER = ['dark',
+        'light', 'fun'] in static/socrates.js."""
         fun_index = HTML_CONTENT.find('>Fun Themes</div>')
         dark_index = HTML_CONTENT.find('>Dark Themes</div>')
         light_index = HTML_CONTENT.find('>Light Themes</div>')
@@ -1217,38 +1224,55 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertGreater(fun_index, -1, 'Fun Themes header must exist')
         self.assertLess(dark_index, fun_index,
                         'Fun Themes header must appear after Dark Themes header')
-        self.assertLess(fun_index, light_index,
-                        'Fun Themes header must appear before Light Themes header')
-        self.assertLess(fun_index, hacker_btn_index,
+        self.assertLess(light_index, fun_index,
+                        'Fun Themes header must appear after Light Themes header')
+        self.assertGreater(hacker_btn_index, fun_index,
                         'Hacker button must appear inside the Fun Themes section')
-        self.assertLess(fun_index, sguil_btn_index,
+        self.assertGreater(sguil_btn_index, fun_index,
                         'Sguil button must appear inside the Fun Themes section')
-        self.assertLess(hacker_btn_index, light_index,
-                        'Hacker button must appear before the Light Themes section')
-        self.assertLess(sguil_btn_index, light_index,
-                        'Sguil button must appear before the Light Themes section')
+        self.assertGreater(hacker_btn_index, light_index,
+                        'Hacker button must appear after the Light Themes section')
+        self.assertGreater(sguil_btn_index, light_index,
+                        'Sguil button must appear after the Light Themes section')
+
+    def test_theme_group_order_fun_after_light(self):
+        self.assertIn("const THEME_GROUP_ORDER = ['dark', 'light', 'fun'];", JS_CONTENT,
+                      'THEME_GROUP_ORDER must place Fun Themes after Light Themes')
 
     def test_dark_themes_alphabetical(self):
         """Dark Themes section must list themes in alphabetical order by label,
         and renderGearMenu() must match the static HTML menu order."""
-        dark_section = HTML_CONTENT.split('>Dark Themes</div>')[1].split('>Fun Themes</div>')[0]
+        dark_section = HTML_CONTENT.split('>Dark Themes</div>')[1].split('>Light Themes</div>')[0]
         labels = re.findall(r'<span>([^<]+)</span>', dark_section)
         self.assertEqual(labels, sorted(labels),
                          'Dark Themes in HTML menu must be in alphabetical order')
-        js_labels = self._rendered_gear_menu_section_labels('Dark Themes', 'Fun Themes')
+        js_labels = self._rendered_gear_menu_section_labels('Dark Themes', 'Light Themes')
         self.assertEqual(js_labels, labels,
                          'renderGearMenu Dark Themes order must match the HTML menu')
 
     def test_light_themes_alphabetical(self):
         """Light Themes section must list themes in alphabetical order by label,
         and renderGearMenu() must match the static HTML menu order."""
-        light_section = HTML_CONTENT.split('>Light Themes</div>')[1].split('</div>')[0]
+        light_section = HTML_CONTENT.split('>Light Themes</div>')[1].split('>Fun Themes</div>')[0]
         labels = re.findall(r'<span>([^<]+)</span>', light_section)
         self.assertEqual(labels, sorted(labels),
                          'Light Themes in HTML menu must be in alphabetical order')
-        js_labels = self._rendered_gear_menu_section_labels('Light Themes', None)
+        js_labels = self._rendered_gear_menu_section_labels('Light Themes', 'Fun Themes')
         self.assertEqual(js_labels, labels,
                          'renderGearMenu Light Themes order must match the HTML menu')
+
+    def test_fun_themes_alphabetical(self):
+        """Fun Themes section must list themes in alphabetical order by label,
+        and renderGearMenu() must match the static HTML menu order. Fun
+        Themes is the last section in the menu, so unlike Dark/Light there's
+        no following header to split on."""
+        fun_section = HTML_CONTENT.split('>Fun Themes</div>')[1].split('</div>')[0]
+        labels = re.findall(r'<span>([^<]+)</span>', fun_section)
+        self.assertEqual(labels, sorted(labels),
+                         'Fun Themes in HTML menu must be in alphabetical order')
+        js_labels = self._rendered_gear_menu_section_labels('Fun Themes', None)
+        self.assertEqual(js_labels, labels,
+                         'renderGearMenu Fun Themes order must match the HTML menu')
 
     def _rendered_gear_menu_section_labels(self, start_header, end_header):
         """Evaluate renderGearMenu() in JSDOM and extract the <span> labels of
@@ -1759,12 +1783,14 @@ class TestThemeAndMenu(unittest.TestCase):
     def test_cga_header_footer_light_cyan(self):
         """CGA's header/footer use a bright light-cyan background (matching
         the real CGA Palette 1 High-Intensity hue) instead of the dark
-        near-black bg-secondary every other theme uses there, with
-        --text-bright/--text-muted overridden to a dark color for legibility
-        against that bright background. The gear dropdown menu (a visual
-        child of the header, but rendered on its own dark bg-secondary
-        panel) must reset those same two variables back to their normal CGA
-        values so its own text doesn't inherit the header's dark override."""
+        near-black bg-secondary every other theme uses there, with both
+        --text-bright and --text-muted overridden to the CGA magenta
+        accent (rather than black/dark-teal, per explicit user preference)
+        for legibility against that bright background. The gear dropdown
+        menu (a visual child of the header, but rendered on its own dark
+        bg-secondary panel) must reset those same two variables back to
+        their normal CGA values so its own text doesn't inherit the
+        header's override."""
         header_footer_match = re.search(
             r'\[data-theme="cga"\] \.app-header,\s*\[data-theme="cga"\] \.footer\s*\{([^}]*)\}',
             CSS_CONTENT,
@@ -1774,10 +1800,10 @@ class TestThemeAndMenu(unittest.TestCase):
         body = header_footer_match.group(1)
         self.assertIn('background: #55ffff', body,
                      'CGA header/footer background must be the bright CGA light cyan')
-        self.assertIn('--text-bright: #000000', body,
-                     'CGA header/footer text-bright must switch to black for legibility on the bright cyan bg')
-        self.assertIn('--text-muted: #003333', body,
-                     'CGA header/footer text-muted must switch to a dark teal for legibility on the bright cyan bg')
+        self.assertIn('--text-bright: #ff55ff', body,
+                     'CGA header/footer text-bright must switch to the CGA magenta accent for legibility on the bright cyan bg')
+        self.assertIn('--text-muted: #ff55ff', body,
+                     'CGA header/footer text-muted must also switch to the CGA magenta accent, per explicit user preference')
 
         dropdown_match = re.search(
             r'\[data-theme="cga"\] \.app-header-menu-dropdown\s*\{([^}]*)\}',
@@ -1883,13 +1909,13 @@ class TestThemeAndMenu(unittest.TestCase):
         result = js_statements('''
             var order = [];
             setTheme('dark');
-            for (var i = 0; i < 24; i++) {
+            for (var i = 0; i < 25; i++) {
                 toggleTheme();
                 order.push(document.documentElement.getAttribute('data-theme') || 'dark');
             }
             window.__jsdom_result = { order: order };
         ''')
-        self.assertEqual(result['order'], ['nord', 'osaka-jade', 'retro-82', 'ristretto', 'tokyo-night', 'vantablack', 'c64', 'cga', 'hacker', 'sguil', 'catppuccin-latte', 'light', 'rose-pine', 'white', 'catppuccin', 'ethereal', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'lumon', 'matte-black', 'miasma', 'dark'],
+        self.assertEqual(result['order'], ['nord', 'osaka-jade', 'retro-82', 'ristretto', 'tokyo-night', 'vantablack', 'catppuccin-latte', 'light', 'rose-pine', 'white', 'c64', 'cga', 'hacker', 'sguil', 'vaporwave', 'catppuccin', 'ethereal', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'lumon', 'matte-black', 'miasma', 'dark'],
                          't hotkey cycle order must match menu order')
 
     def test_hacker_mode_easter_egg_exists(self):
@@ -1956,6 +1982,33 @@ class TestThemeAndMenu(unittest.TestCase):
         ''')
         self.assertEqual(result['theme'], 'c64',
                          'Typing c64 after other keystrokes must still activate C64 theme')
+
+    def test_vaporwave_easter_egg_exists(self):
+        """Typing vapor outside of input fields must activate the Vaporwave theme."""
+        self.assertIn("keyBuffer.endsWith('vapor')", JS_CONTENT,
+                      'JS must check for the vapor easter egg sequence')
+        self.assertIn("setTheme('vaporwave')", JS_CONTENT,
+                      'Easter egg must activate Vaporwave')
+        self.assertIn('Switched to Vaporwave theme', JS_CONTENT,
+                      'Easter egg activation message must reference Vaporwave theme')
+
+    def test_vaporwave_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: same class of bug as the cga/c64 easter eggs - "vapor"
+        is exactly 5 characters (the buffer's full capacity), so this also
+        verifies the buffer-fill edge case works via endsWith(), not just
+        codes shorter than 5 characters."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            function press(k) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
+            }
+            'xyz'.split('').forEach(press);
+            'vapor'.split('').forEach(press);
+            window.__jsdom_result = { theme: getCurrentTheme() };
+        ''')
+        self.assertEqual(result['theme'], 'vaporwave',
+                         'Typing vapor after other keystrokes must still activate Vaporwave theme')
 
     def test_hacker_mode_easter_egg_ignores_input_fields(self):
         """Easter egg must not trigger while typing in form controls."""

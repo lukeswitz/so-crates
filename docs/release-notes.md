@@ -71,20 +71,29 @@ analyses from Suricata 7 too.
 
 ### UI
 
-- 19 new themes (24 total, up from 5), grouped into Dark / Fun / Light
-  sections in the gear menu, each with its own favicon — including two new
-  retro-computing themes: **CGA** (classic 4-color CGA Palette 1
-  High-Intensity — black background, cyan/magenta/white) and **C64**
-  (Commodore 64 blue-on-blue aesthetic, using the real Pepto/VICE C64
-  16-color palette — blue background, light-blue border/text/accent
-  (including the header's "SO-CRATES" logo, matching the rest of the header
-  text) for a deliberately flat, monochrome resting look, with a distinct
-  cyan `--interactive-highlight` for hover/focus/active borders so those
-  states are still visible).
+- 20 new themes (25 total, up from 5), grouped into Dark / Fun / Light
+  sections in the gear menu, each with its own favicon — including three
+  new Fun themes: **CGA** (classic 4-color CGA Palette 1 High-Intensity —
+  black background, cyan/magenta/white), **C64** (Commodore 64 blue-on-blue
+  aesthetic, using the real Pepto/VICE C64 16-color palette — blue
+  background, light-blue border/text/accent, including the header's
+  "SO-CRATES" logo, for a deliberately flat, monochrome resting look, with a
+  distinct cyan `--interactive-highlight` for hover/focus/active borders so
+  those states are still visible), and **Vaporwave** (a modern, non-retro
+  counterpart to the other three — dark purple/navy background with hot-pink
+  accents and cyan/mint/pastel-yellow highlights, evoking the 2010s+
+  vaporwave internet aesthetic rather than nostalgia for old hardware).
 - The active theme is now marked with a checkmark in the gear menu.
-- Each Fun theme (C64, CGA, Hacker, Sguil) now has its own typed cheat
-  code — type it anywhere outside a text field to switch instantly. See
+- Each Fun theme (C64, CGA, Hacker, Sguil, Vaporwave) now has its own typed
+  cheat code — type it anywhere outside a text field to switch instantly. See
   [Themes](themes.md) for the codes.
+- The gear menu's Fun Themes section now appears after Light Themes
+  instead of between Dark and Light (`THEME_GROUP_ORDER` in
+  `static/socrates.js` is now `['dark', 'light', 'fun']`); the `t` hotkey
+  cycle follows the same updated order.
+- CGA's header/footer text (the "SO-CRATES" logo, tagline, filename, and
+  date/MD5 metadata) is now the CGA magenta accent instead of black/dark
+  teal, matching the rest of the CGA palette more closely.
 
 ### Documentation
 
@@ -96,7 +105,7 @@ analyses from Suricata 7 too.
   architecture, the API reference, and the filtering design doc — is now
   properly cross-linked, searchable, and navigable instead of split across
   files with no shared nav.
-- The Themes page shows a real screenshot of every one of the 24 themes,
+- The Themes page shows a real screenshot of every one of the 25 themes,
   grouped under Dark/Fun/Light headings, click-to-zoom.
 - Added `scripts/capture_screenshots.py` to regenerate every docs screenshot
   in one run against the app's own built-in sample pcap — no local fixture

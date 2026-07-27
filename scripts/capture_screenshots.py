@@ -24,7 +24,7 @@ IMAGES_DIR = os.path.join(REPO_ROOT, 'docs', 'images')
 THEMES_DIR = os.path.join(IMAGES_DIR, 'themes')
 
 THEMES = [
-    'dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'matte-black', 'tokyo-night',
+    'dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night',
     'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte',
     'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord',
     'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white',

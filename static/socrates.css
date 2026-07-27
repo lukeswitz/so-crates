@@ -265,6 +265,34 @@
             --help-icon-color: #ffffff;
         }
 
+        [data-theme="vaporwave"] {
+            --bg-primary: #1a1033;
+            --bg-secondary: #2d1b4e;
+            --bg-tertiary: #3d2465;
+            --bg-hover: #4a2f7a;
+            --bg-hover-light: #5c3d94;
+            --border-color: #01CDFE;
+            --text-primary: #e0d9ff;
+            --text-bright: #ffffff;
+            --text-muted: #a78bc8;
+            --accent: #FF71CE;
+            --accent-hover: #ff94dd;
+            --bg-drop-active: #3d2465;
+            --modal-backdrop: rgba(0,0,0,0.85);
+            --badge-danger-text: #FF71CE;
+            --danger-bg: #4a1a3a;
+            --badge-bg-neutral: #2d1b4e;
+            --badge-warning-text: #FFFB96;
+            --badge-success-text: #05FFA1;
+            --tag-red-text: #FF71CE;
+            --tag-purple-text: #B967FF;
+            --tag-orange-text: #FFFB96;
+            --tag-blue-text: #01CDFE;
+            --tag-gray-text: #a78bc8;
+            --tag-green-text: #05FFA1;
+            --help-icon-color: #ffffff;
+        }
+
         [data-theme="matte-black"] {
             --bg-primary: #121212;
             --bg-secondary: #1a1a1a;
@@ -1018,8 +1046,8 @@
         [data-theme="cga"] .app-header,
         [data-theme="cga"] .footer {
             background: #55ffff;
-            --text-bright: #000000;
-            --text-muted: #003333;
+            --text-bright: #ff55ff;
+            --text-muted: #ff55ff;
         }
         [data-theme="cga"] .app-header-menu-dropdown {
             --text-bright: #ffffff;
