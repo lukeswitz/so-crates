@@ -8,11 +8,14 @@ images; non-Docker deployments download on first run if internet is available.
 
 import json
 import os
+import re
 import shutil
+import sqlite3
 import subprocess
 import urllib.request
 
 import config
+from db import import_log_events
 from validators import is_host_reachable
 
 ZIRCOLITE_RULES_URLS = {
@@ -20,7 +23,6 @@ ZIRCOLITE_RULES_URLS = {
     'linux': 'https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_linux.json',
 }
 BAKED_IN_SIGMA_DIR = '/usr/share/sigma-rules'
-SIGMA_RULES_SUBDIR = config.SIGMA_RULES_SUBDIR
 
 
 ZIRCOLITE_BUNDLED_PATH = os.path.expanduser('~/socrates-data/zircolite/zircolite.py')
@@ -70,7 +72,7 @@ def setup_sigma_rules(data_dir=None):
     """
     if data_dir is None:
         data_dir = os.path.expanduser('~/socrates-data')
-    rules_dir = os.path.join(data_dir, SIGMA_RULES_SUBDIR)
+    rules_dir = os.path.join(data_dir, config.SIGMA_RULES_SUBDIR)
     os.makedirs(rules_dir, exist_ok=True)
 
     result = {}
@@ -93,7 +95,7 @@ def setup_sigma_rules(data_dir=None):
                 print(f'Warning: could not copy baked-in Sigma rules: {e}')
 
         # Try to download
-        if _has_internet_access():
+        if is_host_reachable('github.com', 443, timeout=5):
             try:
                 _download_rule_file(url, rules_file)
                 result[ruleset_name] = rules_file
@@ -106,15 +108,11 @@ def setup_sigma_rules(data_dir=None):
     return result
 
 
-def _has_internet_access():
-    return is_host_reachable('github.com', 443, timeout=5)
-
-
 def _download_rule_file(url, dest_file):
     """Download a single rule file from URL to dest_file."""
     os.makedirs(os.path.dirname(dest_file), exist_ok=True)
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=config.YARA_DOWNLOAD_TIMEOUT) as resp:
+    with urllib.request.urlopen(req, timeout=config.RULES_DOWNLOAD_TIMEOUT) as resp:
         with open(dest_file, 'wb') as f:
             f.write(resp.read())
 
@@ -171,7 +169,6 @@ def _detect_log_type(log_path):
     # Fallback: if we see common Windows event IDs (4-digit numbers in JSON),
     # lean toward Windows
     if basename.endswith('.json') or basename.endswith('.jsonl'):
-        import re
         if re.search(r'"EventID"\s*:\s*\d{3,5}', text):
             return 'windows'
 
@@ -250,8 +247,6 @@ def import_zircolite_logs(zircolite_db_path, events_db_path):
     if not os.path.exists(zircolite_db_path):
         return 0
 
-    import sqlite3
-
     log_events = []
     conn = None
     try:
@@ -308,7 +303,6 @@ def import_zircolite_logs(zircolite_db_path, events_db_path):
             pass
 
     if log_events:
-        from db import import_log_events
         import_log_events(events_db_path, log_events)
 
     return len(log_events)
@@ -396,12 +390,14 @@ def parse_zircolite_results(output_json):
             if not logsource:
                 logsource = match.get('Channel') or match.get('Provider_Name', '')
 
+            rule_level = (detection.get('rule_level') or 'low').lower()
+
             alert = {
                 'timestamp': timestamp,
                 'rule_title': detection.get('title', 'Unknown'),
                 'rule_id': detection.get('id', ''),
-                'severity': detection.get('rule_level', 'low').lower(),
-                'level': detection.get('rule_level', 'low').lower(),
+                'severity': rule_level,
+                'level': rule_level,
                 'logsource': logsource,
                 'tags': tags,
                 'mitre_techniques': mitre_techniques,

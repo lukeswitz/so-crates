@@ -13,7 +13,27 @@ CSS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'stati
 FAVICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon.svg')
 FAVICON_HACKER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-hacker.svg')
 FAVICON_MATTE_BLACK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-matte-black.svg')
+FAVICON_TOKYO_NIGHT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-tokyo-night.svg')
+FAVICON_RETRO_82_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-retro-82.svg')
+FAVICON_ETHEREAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-ethereal.svg')
+FAVICON_LUMON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-lumon.svg')
+FAVICON_CATPPUCCIN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-catppuccin.svg')
+FAVICON_CATPPUCCIN_LATTE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-catppuccin-latte.svg')
+FAVICON_EVERFOREST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-everforest.svg')
+FAVICON_GRUVBOX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-gruvbox.svg')
+FAVICON_HACKERMAN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-hackerman.svg')
+FAVICON_KANAGAWA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-kanagawa.svg')
+FAVICON_MIASMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-miasma.svg')
+FAVICON_NORD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-nord.svg')
+FAVICON_OSAKA_JADE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-osaka-jade.svg')
+FAVICON_RISTRETTO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-ristretto.svg')
+FAVICON_ROSE_PINE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-rose-pine.svg')
+FAVICON_VANTABLACK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-vantablack.svg')
+FAVICON_WHITE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-white.svg')
 FAVICON_SGUIL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-sguil.svg')
+FAVICON_CGA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-cga.svg')
+FAVICON_C64_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-c64.svg')
+FAVICON_VAPORWAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-vaporwave.svg')
 
 with open(HTML_PATH, 'r') as f:
     HTML_CONTENT = f.read()
@@ -70,9 +90,89 @@ class TestHTMLStructure(unittest.TestCase):
         """static/favicon-hacker.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_HACKER_PATH), 'static/favicon-hacker.svg must exist')
 
+    def test_favicon_cga_file_exists(self):
+        """static/favicon-cga.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_CGA_PATH), 'static/favicon-cga.svg must exist')
+
+    def test_favicon_c64_file_exists(self):
+        """static/favicon-c64.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_C64_PATH), 'static/favicon-c64.svg must exist')
+
+    def test_favicon_vaporwave_file_exists(self):
+        """static/favicon-vaporwave.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_VAPORWAVE_PATH), 'static/favicon-vaporwave.svg must exist')
+
     def test_favicon_matte_black_file_exists(self):
         """static/favicon-matte-black.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_MATTE_BLACK_PATH), 'static/favicon-matte-black.svg must exist')
+
+    def test_favicon_tokyo_night_file_exists(self):
+        """static/favicon-tokyo-night.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_TOKYO_NIGHT_PATH), 'static/favicon-tokyo-night.svg must exist')
+
+    def test_favicon_retro_82_file_exists(self):
+        """static/favicon-retro-82.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_RETRO_82_PATH), 'static/favicon-retro-82.svg must exist')
+
+    def test_favicon_ethereal_file_exists(self):
+        """static/favicon-ethereal.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_ETHEREAL_PATH), 'static/favicon-ethereal.svg must exist')
+
+    def test_favicon_lumon_file_exists(self):
+        """static/favicon-lumon.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_LUMON_PATH), 'static/favicon-lumon.svg must exist')
+
+    def test_favicon_catppuccin_file_exists(self):
+        """static/favicon-catppuccin.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_CATPPUCCIN_PATH), 'static/favicon-catppuccin.svg must exist')
+
+    def test_favicon_catppuccin_latte_file_exists(self):
+        """static/favicon-catppuccin-latte.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_CATPPUCCIN_LATTE_PATH), 'static/favicon-catppuccin-latte.svg must exist')
+
+    def test_favicon_everforest_file_exists(self):
+        """static/favicon-everforest.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_EVERFOREST_PATH), 'static/favicon-everforest.svg must exist')
+
+    def test_favicon_gruvbox_file_exists(self):
+        """static/favicon-gruvbox.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_GRUVBOX_PATH), 'static/favicon-gruvbox.svg must exist')
+
+    def test_favicon_hackerman_file_exists(self):
+        """static/favicon-hackerman.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_HACKERMAN_PATH), 'static/favicon-hackerman.svg must exist')
+
+    def test_favicon_kanagawa_file_exists(self):
+        """static/favicon-kanagawa.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_KANAGAWA_PATH), 'static/favicon-kanagawa.svg must exist')
+
+    def test_favicon_miasma_file_exists(self):
+        """static/favicon-miasma.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_MIASMA_PATH), 'static/favicon-miasma.svg must exist')
+
+    def test_favicon_nord_file_exists(self):
+        """static/favicon-nord.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_NORD_PATH), 'static/favicon-nord.svg must exist')
+
+    def test_favicon_osaka_jade_file_exists(self):
+        """static/favicon-osaka-jade.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_OSAKA_JADE_PATH), 'static/favicon-osaka-jade.svg must exist')
+
+    def test_favicon_ristretto_file_exists(self):
+        """static/favicon-ristretto.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_RISTRETTO_PATH), 'static/favicon-ristretto.svg must exist')
+
+    def test_favicon_rose_pine_file_exists(self):
+        """static/favicon-rose-pine.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_ROSE_PINE_PATH), 'static/favicon-rose-pine.svg must exist')
+
+    def test_favicon_vantablack_file_exists(self):
+        """static/favicon-vantablack.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_VANTABLACK_PATH), 'static/favicon-vantablack.svg must exist')
+
+    def test_favicon_white_file_exists(self):
+        """static/favicon-white.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_WHITE_PATH), 'static/favicon-white.svg must exist')
 
     def test_favicon_sguil_file_exists(self):
         """static/favicon-sguil.svg must exist on disk."""
@@ -89,14 +189,34 @@ class TestHTMLStructure(unittest.TestCase):
         """JS must contain updateFavicon logic to swap favicon based on theme."""
         self.assertIn('function updateFavicon(', JS_CONTENT,
                       'updateFavicon function must exist')
-        self.assertIn('favicon-hacker.svg', JS_CONTENT,
-                      'updateFavicon must reference the Hacker favicon')
-        self.assertIn('favicon-matte-black.svg', JS_CONTENT,
-                      'updateFavicon must reference the Matte Black favicon')
-        self.assertIn('favicon-sguil.svg', JS_CONTENT,
-                      'updateFavicon must reference the Sguil favicon')
         self.assertIn('getCurrentTheme()', JS_CONTENT,
                       'updateFavicon must check the current theme')
+
+    def test_favicon_swaps_for_every_theme(self):
+        """updateFavicon() must point faviconLink at the per-theme SVG that
+        exists in static/ (plain favicon.svg for the default dark theme)."""
+        from tests.jsdom_helper import js_statements
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
+        result = js_statements(f'''
+            var link = document.getElementById('faviconLink');
+            var out = {{}};
+            var themes = {json.dumps(themes)};
+            themes.forEach(function(t) {{
+                if (t === 'dark') document.documentElement.removeAttribute('data-theme');
+                else document.documentElement.setAttribute('data-theme', t);
+                updateFavicon();
+                out[t] = link.getAttribute('href');
+            }});
+            window.__jsdom_result = out;
+        ''')
+        static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static')
+        for theme in themes:
+            expected = 'static/favicon.svg' if theme in ('dark', 'light') else f'static/favicon-{theme}.svg'
+            self.assertEqual(result[theme], expected,
+                             f'updateFavicon must select {expected} for the {theme} theme')
+            svg_file = os.path.basename(expected)
+            self.assertTrue(os.path.isfile(os.path.join(static_dir, svg_file)),
+                            f'{svg_file} must exist in static/')
 
     def test_valid_doctype(self):
         self.assertTrue(HTML_CONTENT.startswith('<!DOCTYPE html>'))
@@ -194,13 +314,18 @@ class TestCSSLayout(unittest.TestCase):
         self.assertIn('position: sticky', CSS_CONTENT)
 
     def test_no_horizontal_scrollbars(self):
-        """No element should force horizontal scrolling; content must wrap instead."""
-        self.assertNotIn('overflow-x: auto', CSS_CONTENT,
-                         'No horizontal scrollbars allowed; content must wrap')
+        """The page itself must never require horizontal scrolling; general
+        content wraps instead. Dense data tables are the documented exception
+        (WCAG 1.4.10 Reflow explicitly exempts data tables from the no-2D-
+        scroll rule) and may scroll horizontally within their own scoped
+        wrapper, never the page - table-layout:auto lets columns size to
+        their own content instead of being forced into a fixed split."""
         self.assertIn('overflow-wrap: break-word', CSS_CONTENT,
                       'Long content must wrap with break-word')
-        self.assertIn('table-layout: fixed', CSS_CONTENT,
-                      'Table must use fixed layout to prevent expansion beyond viewport')
+        self.assertIn('.table-scroll-wrapper { overflow-x: auto; }', CSS_CONTENT,
+                      'Table horizontal scroll must be scoped to its own wrapper, not the page')
+        self.assertIn('table-layout: auto', CSS_CONTENT,
+                      'Tables use auto layout so columns size to their own content')
 
     def test_detail_row_allows_text_wrapping(self):
         """Detail rows must override the global td nowrap so content can wrap."""
@@ -244,6 +369,17 @@ class TestCSSLayout(unittest.TestCase):
         self.assertIn('ascii-loading', JS_CONTENT,
                       'toggleRow must use ascii-loading spinner class')
 
+    def test_sankey_diagram_shows_loading_indicator(self):
+        """updateSankeyDiagram must show a loading spinner while fetching,
+        reusing the same ascii-loading pattern as the ASCII transcript -
+        the diagram can take 500ms+ on large datasets and previously popped
+        in with no feedback."""
+        update_fn = JS_CONTENT.split('async function updateSankeyDiagram()')[1].split('\n        }')[0]
+        self.assertIn('Loading Sankey diagram', update_fn,
+                      'updateSankeyDiagram must set loading text before fetching')
+        self.assertIn('ascii-loading', update_fn,
+                      'updateSankeyDiagram must use the ascii-loading spinner class')
+
     def test_detail_grid_can_shrink(self):
         """formatEvent grid must set min-width: 0 so columns shrink on narrow viewports."""
         self.assertIn('min-width: 0', JS_CONTENT,
@@ -272,7 +408,7 @@ class TestJavaScriptFunctions(unittest.TestCase):
         self.assertIn('function formatEvent', JS_CONTENT)
 
     def test_has_sort_table(self):
-        self.assertIn('function sortTable', JS_CONTENT)
+        self.assertIn('function sortCurrentTable', JS_CONTENT)
 
     def test_has_show_loading(self):
         self.assertIn('function showLoading', JS_CONTENT)
@@ -338,7 +474,7 @@ class TestJavaScriptFunctions(unittest.TestCase):
         self.assertIn('function handleHelpBackdropClick', JS_CONTENT)
 
     def test_has_welcomeHelpContent(self):
-        self.assertIn('const WELCOME_HELP_CONTENT', JS_CONTENT)
+        self.assertIn('function getWelcomeHelpContent', JS_CONTENT)
 
     def test_has_showAnalysisUI(self):
         self.assertIn('function showAnalysisUI', JS_CONTENT)
@@ -450,8 +586,10 @@ class TestJavaScriptDataStructures(unittest.TestCase):
         self.assertIn("alert: '#ff6b6b'", JS_CONTENT,
                       'COLORS.EVENT.alert must be red')
 
-    def test_has_event_type_icons_constant(self):
-        self.assertIn('EVENT_TYPE_ICONS', JS_CONTENT)
+    def test_all_events_type_column_uses_color_dot(self):
+        self.assertIn('valueDotSpan(COLORS.EVENT[etype])', JS_CONTENT,
+                      'All Events Type column must render a value-dot colored via COLORS.EVENT, '
+                      'matching the dot used for Protocol/Method/etc rather than an emoji icon')
 
     def test_has_all_events_columns_constant(self):
         self.assertIn('ALL_EVENTS_COLUMNS', JS_CONTENT)
@@ -469,7 +607,7 @@ class TestJavaScriptDataStructures(unittest.TestCase):
 
     def test_has_global_state(self):
         self.assertIn('let allEvents', JS_CONTENT)
-        self.assertIn('let sections', JS_CONTENT)
+        self.assertIn('let tabDataCache', JS_CONTENT)
         self.assertIn('let eventTypes', JS_CONTENT)
         self.assertIn('let currentMd5', JS_CONTENT)
 
@@ -520,8 +658,12 @@ class TestJavaScriptLogic(unittest.TestCase):
         self.assertIn('pcap', JS_CONTENT)
 
     def test_date_range_display(self):
-        self.assertIn('ts[0]', JS_CONTENT)
-        self.assertIn('ts[ts.length-1]', JS_CONTENT)
+        """Date range comes from the server's /api/stats date_range field
+        (not a client-side scan of allEvents, which would defeat lazy
+        loading)."""
+        self.assertIn('statsData.date_range', JS_CONTENT)
+        self.assertIn('rangeMin', JS_CONTENT)
+        self.assertIn('rangeMax', JS_CONTENT)
 
     def test_event_type_sorting(self):
         self.assertIn("function sortEventTypes", JS_CONTENT)
@@ -609,8 +751,8 @@ class TestUXFeatures(unittest.TestCase):
 
     def test_welcome_help_lightbulb_uses_help_icon_color(self):
         """Static welcome help modal lightbulb icons must use --help-icon-color."""
-        welcome_match = re.search(r'const WELCOME_HELP_CONTENT = `', JS_CONTENT)
-        self.assertIsNotNone(welcome_match, 'WELCOME_HELP_CONTENT must exist')
+        welcome_match = re.search(r'function getWelcomeHelpContent\(\) \{ return `', JS_CONTENT)
+        self.assertIsNotNone(welcome_match, 'getWelcomeHelpContent must exist')
         start = welcome_match.end()
         # Find the closing backtick of the template literal.
         pos = start
@@ -667,8 +809,8 @@ class TestUXFeatures(unittest.TestCase):
 
     def test_header_has_file_icon(self):
         """Header filename must have a file icon prefix."""
-        self.assertIn('📄', JS_CONTENT,
-                      'App header filename must have 📄 icon')
+        self.assertIn('FILE_ICON_SVG', JS_CONTENT,
+                      'App header filename must be prefixed with FILE_ICON_SVG')
         self.assertIn('currentFileName', JS_CONTENT,
                       'App header must display currentFileName')
 
@@ -986,13 +1128,34 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Menu dropdown container must exist in HTML')
 
     def test_theme_options_in_menu(self):
-        for theme in ('dark', 'light', 'sguil', 'hacker', 'matte-black'):
+        for theme in ('dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white'):
             self.assertIn(f"commitTheme('{theme}')", HTML_CONTENT,
                           f'{theme} theme option must commit on click')
             self.assertIn(f"previewTheme('{theme}')", HTML_CONTENT,
                           f'{theme} theme option must preview on hover')
+            self.assertIn(f'data-theme-option="{theme}"', HTML_CONTENT,
+                          f'{theme} theme option must carry data-theme-option in HTML')
         self.assertIn('revertTheme()', HTML_CONTENT,
                       'Theme options must revert on mouseleave')
+
+    def test_theme_options_in_rendered_gear_menu(self):
+        """renderGearMenu() must generate a button with preview/commit handlers
+        for every theme in the THEMES registry."""
+        from tests.jsdom_helper import js_statements
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
+        result = js_statements(f'''
+            var html = renderGearMenu();
+            var missing = [];
+            var themes = {json.dumps(themes)};
+            themes.forEach(function(t) {{
+                if (html.indexOf('data-theme-option="' + t + '"') === -1) missing.push('data-theme-option:' + t);
+                if (html.indexOf("commitTheme('" + t + "')") === -1) missing.push('commitTheme:' + t);
+                if (html.indexOf("previewTheme('" + t + "')") === -1) missing.push('previewTheme:' + t);
+            }});
+            window.__jsdom_result = missing;
+        ''')
+        self.assertEqual(result, [],
+                         f'renderGearMenu output is missing theme entries: {result}')
 
     def test_theme_header_separate_class(self):
         """Theme section headings must be distinct non-interactive headers."""
@@ -1000,6 +1163,8 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Theme heading must use app-header-menu-header class')
         self.assertIn('>Dark Themes</div>', HTML_CONTENT,
                       'Dark Themes heading must exist in menu')
+        self.assertIn('>Fun Themes</div>', HTML_CONTENT,
+                      'Fun Themes heading must exist in menu')
         self.assertIn('>Light Themes</div>', HTML_CONTENT,
                       'Light Themes heading must exist in menu')
         self.assertNotIn('>Theme</div>', HTML_CONTENT,
@@ -1047,6 +1212,83 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertLess(light_index, light_btn_index,
                         'Light Themes header must appear before Light theme button')
 
+    def test_fun_themes_after_light(self):
+        """Fun Themes section (C64, CGA, Hacker, Sguil, Vaporwave) sits after
+        the Light Themes section, matching THEME_GROUP_ORDER = ['dark',
+        'light', 'fun'] in static/socrates.js."""
+        fun_index = HTML_CONTENT.find('>Fun Themes</div>')
+        dark_index = HTML_CONTENT.find('>Dark Themes</div>')
+        light_index = HTML_CONTENT.find('>Light Themes</div>')
+        hacker_btn_index = HTML_CONTENT.find('commitTheme(\'hacker\')')
+        sguil_btn_index = HTML_CONTENT.find('commitTheme(\'sguil\')')
+        self.assertGreater(fun_index, -1, 'Fun Themes header must exist')
+        self.assertLess(dark_index, fun_index,
+                        'Fun Themes header must appear after Dark Themes header')
+        self.assertLess(light_index, fun_index,
+                        'Fun Themes header must appear after Light Themes header')
+        self.assertGreater(hacker_btn_index, fun_index,
+                        'Hacker button must appear inside the Fun Themes section')
+        self.assertGreater(sguil_btn_index, fun_index,
+                        'Sguil button must appear inside the Fun Themes section')
+        self.assertGreater(hacker_btn_index, light_index,
+                        'Hacker button must appear after the Light Themes section')
+        self.assertGreater(sguil_btn_index, light_index,
+                        'Sguil button must appear after the Light Themes section')
+
+    def test_theme_group_order_fun_after_light(self):
+        self.assertIn("const THEME_GROUP_ORDER = ['dark', 'light', 'fun'];", JS_CONTENT,
+                      'THEME_GROUP_ORDER must place Fun Themes after Light Themes')
+
+    def test_dark_themes_alphabetical(self):
+        """Dark Themes section must list themes in alphabetical order by label,
+        and renderGearMenu() must match the static HTML menu order."""
+        dark_section = HTML_CONTENT.split('>Dark Themes</div>')[1].split('>Light Themes</div>')[0]
+        labels = re.findall(r'<span>([^<]+)</span>', dark_section)
+        self.assertEqual(labels, sorted(labels),
+                         'Dark Themes in HTML menu must be in alphabetical order')
+        js_labels = self._rendered_gear_menu_section_labels('Dark Themes', 'Light Themes')
+        self.assertEqual(js_labels, labels,
+                         'renderGearMenu Dark Themes order must match the HTML menu')
+
+    def test_light_themes_alphabetical(self):
+        """Light Themes section must list themes in alphabetical order by label,
+        and renderGearMenu() must match the static HTML menu order."""
+        light_section = HTML_CONTENT.split('>Light Themes</div>')[1].split('>Fun Themes</div>')[0]
+        labels = re.findall(r'<span>([^<]+)</span>', light_section)
+        self.assertEqual(labels, sorted(labels),
+                         'Light Themes in HTML menu must be in alphabetical order')
+        js_labels = self._rendered_gear_menu_section_labels('Light Themes', 'Fun Themes')
+        self.assertEqual(js_labels, labels,
+                         'renderGearMenu Light Themes order must match the HTML menu')
+
+    def test_fun_themes_alphabetical(self):
+        """Fun Themes section must list themes in alphabetical order by label,
+        and renderGearMenu() must match the static HTML menu order. Fun
+        Themes is the last section in the menu, so unlike Dark/Light there's
+        no following header to split on."""
+        fun_section = HTML_CONTENT.split('>Fun Themes</div>')[1].split('</div>')[0]
+        labels = re.findall(r'<span>([^<]+)</span>', fun_section)
+        self.assertEqual(labels, sorted(labels),
+                         'Fun Themes in HTML menu must be in alphabetical order')
+        js_labels = self._rendered_gear_menu_section_labels('Fun Themes', None)
+        self.assertEqual(js_labels, labels,
+                         'renderGearMenu Fun Themes order must match the HTML menu')
+
+    def _rendered_gear_menu_section_labels(self, start_header, end_header):
+        """Evaluate renderGearMenu() in JSDOM and extract the <span> labels of
+        the named theme section (up to the next section header, if any)."""
+        from tests.jsdom_helper import js_statements
+        end = f"'{end_header}'" if end_header else 'null'
+        return js_statements(f'''
+            var html = renderGearMenu();
+            var section = html.split('>' + '{start_header}' + '</div>')[1];
+            var endHeader = {end};
+            if (endHeader) section = section.split('>' + endHeader + '</div>')[0];
+            var re = /<span>([^<]+)<\\/span>/g, m, labels = [];
+            while ((m = re.exec(section)) !== null) labels.push(m[1]);
+            window.__jsdom_result = labels;
+        ''')
+
     def test_renderGearMenu_helper_exists(self):
         """The gear menu markup must live in a single shared helper."""
         self.assertIn('function renderGearMenu(', JS_CONTENT,
@@ -1083,6 +1325,69 @@ class TestThemeAndMenu(unittest.TestCase):
                          'hovering a theme should preview it')
         self.assertEqual(result['reverted'], 'dark',
                          'leaving a theme item should revert to the baseline')
+
+    def test_update_theme_menu_marks_active_theme(self):
+        """The active theme checkmark must track setTheme and hover previews."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('nord');
+            var afterSet = document.querySelectorAll('.app-header-menu-item.theme-active');
+            var nordActive = document.querySelector('[data-theme-option="nord"]').classList.contains('theme-active');
+            previewTheme('lumon');
+            var afterPreview = document.querySelectorAll('.app-header-menu-item.theme-active');
+            var lumonActive = document.querySelector('[data-theme-option="lumon"]').classList.contains('theme-active');
+            var nordStillActive = document.querySelector('[data-theme-option="nord"]').classList.contains('theme-active');
+            window.__jsdom_result = {
+                setCount: afterSet.length,
+                nordActive: nordActive,
+                previewCount: afterPreview.length,
+                lumonActive: lumonActive,
+                nordStillActive: nordStillActive
+            };
+        ''')
+        self.assertEqual(result['setCount'], 1, 'exactly one menu item must be marked active')
+        self.assertTrue(result['nordActive'], 'setTheme(nord) must mark the Nord item active')
+        self.assertEqual(result['previewCount'], 1, 'exactly one menu item must be marked active after preview')
+        self.assertTrue(result['lumonActive'], 'previewTheme(lumon) must move the active mark to Lumon')
+        self.assertFalse(result['nordStillActive'], 'previewTheme must clear the previous active mark')
+
+    def test_active_theme_checkmark_css_exists(self):
+        self.assertIn('.app-header-menu-item[data-theme-option]::before', CSS_CONTENT,
+                      'CSS must reserve checkmark space on theme menu items only')
+        self.assertIn('.app-header-menu-item[data-theme-option].theme-active::before', CSS_CONTENT,
+                      'CSS must define the active-theme checkmark')
+        block = CSS_CONTENT.split('.app-header-menu-item[data-theme-option].theme-active::before')[1].split('}')[0]
+        self.assertIn("content: '✓'", block,
+                      'Active-theme checkmark content must be ✓')
+        self.assertIn('var(--accent)', block,
+                      'Active-theme checkmark must use the accent color')
+
+    def test_checkmark_space_not_applied_to_help_item(self):
+        """REGRESSION: the Help menu item must not reserve checkmark space
+        (it is not a theme item, so the bare ::before rule must not exist)."""
+        self.assertNotIn('.app-header-menu-item::before', CSS_CONTENT,
+                         'Checkmark space must be scoped to [data-theme-option], not all menu items')
+        help_btn = HTML_CONTENT.split('onclick="showHelpModal(); closeMenu();"')[0].split('<button')[-1]
+        self.assertNotIn('data-theme-option', help_btn,
+                         'Help menu item must not carry data-theme-option')
+
+    def test_theme_menu_items_do_not_wrap(self):
+        """REGRESSION: menu items must not wrap (Catppuccin Latte wrapped when the
+        checkmark ::before was added without widening the dropdown)."""
+        item_block = CSS_CONTENT.split('.app-header-menu-item {')[1].split('}')[0]
+        self.assertIn('white-space: nowrap', item_block,
+                      'Menu items must use white-space: nowrap so long theme names stay on one line')
+        dropdown_block = CSS_CONTENT.split('.app-header-menu-dropdown {')[1].split('}')[0]
+        self.assertIn('min-width: 180px', dropdown_block,
+                      'Dropdown min-width must be at least 180px to fit the checkmark plus the longest theme name')
+
+    def test_update_theme_menu_implementation(self):
+        self.assertIn("querySelectorAll('.app-header-menu-item[data-theme-option]')", JS_CONTENT,
+                      'updateThemeMenu must query theme items by data-theme-option')
+        self.assertIn("classList.toggle('theme-active'", JS_CONTENT,
+                      'updateThemeMenu must toggle the theme-active class')
+        self.assertIn('aria-current', JS_CONTENT,
+                      'updateThemeMenu must set aria-current for accessibility')
 
     def test_theme_click_commits_and_closes_menu(self):
         from tests.jsdom_helper import js_statements
@@ -1127,6 +1432,23 @@ class TestThemeAndMenu(unittest.TestCase):
         sguil_block = CSS_CONTENT.split('[data-theme="sguil"] {')[1].split('}')[0]
         hacker_block = CSS_CONTENT.split('[data-theme="hacker"] {')[1].split('}')[0]
         matte_black_block = CSS_CONTENT.split('[data-theme="matte-black"] {')[1].split('}')[0]
+        tokyo_night_block = CSS_CONTENT.split('[data-theme="tokyo-night"] {')[1].split('}')[0]
+        retro_82_block = CSS_CONTENT.split('[data-theme="retro-82"] {')[1].split('}')[0]
+        ethereal_block = CSS_CONTENT.split('[data-theme="ethereal"] {')[1].split('}')[0]
+        lumon_block = CSS_CONTENT.split('[data-theme="lumon"] {')[1].split('}')[0]
+        catppuccin_block = CSS_CONTENT.split('[data-theme="catppuccin"] {')[1].split('}')[0]
+        catppuccin_latte_block = CSS_CONTENT.split('[data-theme="catppuccin-latte"] {')[1].split('}')[0]
+        everforest_block = CSS_CONTENT.split('[data-theme="everforest"] {')[1].split('}')[0]
+        gruvbox_block = CSS_CONTENT.split('[data-theme="gruvbox"] {')[1].split('}')[0]
+        hackerman_block = CSS_CONTENT.split('[data-theme="hackerman"] {')[1].split('}')[0]
+        kanagawa_block = CSS_CONTENT.split('[data-theme="kanagawa"] {')[1].split('}')[0]
+        miasma_block = CSS_CONTENT.split('[data-theme="miasma"] {')[1].split('}')[0]
+        nord_block = CSS_CONTENT.split('[data-theme="nord"] {')[1].split('}')[0]
+        osaka_jade_block = CSS_CONTENT.split('[data-theme="osaka-jade"] {')[1].split('}')[0]
+        ristretto_block = CSS_CONTENT.split('[data-theme="ristretto"] {')[1].split('}')[0]
+        rose_pine_block = CSS_CONTENT.split('[data-theme="rose-pine"] {')[1].split('}')[0]
+        vantablack_block = CSS_CONTENT.split('[data-theme="vantablack"] {')[1].split('}')[0]
+        white_block = CSS_CONTENT.split('[data-theme="white"] {')[1].split('}')[0]
         self.assertIn('--help-icon-color:', root_block,
                       'Dark theme must define --help-icon-color')
         self.assertIn('--help-icon-color:', light_block,
@@ -1137,6 +1459,40 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Hacker theme must define --help-icon-color')
         self.assertIn('--help-icon-color:', matte_black_block,
                       'Matte Black theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', tokyo_night_block,
+                      'Tokyo Night theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', retro_82_block,
+                      'Retro 82 theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', ethereal_block,
+                      'Ethereal theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', lumon_block,
+                      'Lumon theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', catppuccin_block,
+                      'Catppuccin theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', catppuccin_latte_block,
+                      'Catppuccin Latte theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', everforest_block,
+                      'Everforest theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', gruvbox_block,
+                      'Gruvbox theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', hackerman_block,
+                      'Hackerman theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', kanagawa_block,
+                      'Kanagawa theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', miasma_block,
+                      'Miasma theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', nord_block,
+                      'Nord theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', osaka_jade_block,
+                      'Osaka Jade theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', ristretto_block,
+                      'Ristretto theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', rose_pine_block,
+                      'Rose Pine theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', vantablack_block,
+                      'Vantablack theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', white_block,
+                      'White theme must define --help-icon-color')
         self.assertIn('var(--accent)', hacker_block,
                       'Hacker theme --help-icon-color should map to accent green')
         self.assertIn('var(--accent)', matte_black_block,
@@ -1190,9 +1546,103 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('[data-theme="matte-black"]', CSS_CONTENT,
                       'CSS must have a Matte Black theme override block')
 
+    def test_tokyo_night_theme_override_exists(self):
+        self.assertIn('[data-theme="tokyo-night"]', CSS_CONTENT,
+                      'CSS must have a Tokyo Night theme override block')
+
+    def test_retro_82_theme_override_exists(self):
+        self.assertIn('[data-theme="retro-82"]', CSS_CONTENT,
+                      'CSS must have a Retro 82 theme override block')
+
+    def test_ethereal_theme_override_exists(self):
+        self.assertIn('[data-theme="ethereal"]', CSS_CONTENT,
+                      'CSS must have an Ethereal theme override block')
+
+    def test_lumon_theme_override_exists(self):
+        self.assertIn('[data-theme="lumon"]', CSS_CONTENT,
+                      'CSS must have a Lumon theme override block')
+
+    def test_catppuccin_theme_override_exists(self):
+        self.assertIn('[data-theme="catppuccin"]', CSS_CONTENT,
+                      'CSS must have a Catppuccin theme override block')
+
+    def test_catppuccin_latte_theme_override_exists(self):
+        self.assertIn('[data-theme="catppuccin-latte"]', CSS_CONTENT,
+                      'CSS must have a Catppuccin Latte theme override block')
+
+    def test_everforest_theme_override_exists(self):
+        self.assertIn('[data-theme="everforest"]', CSS_CONTENT,
+                      'CSS must have an Everforest theme override block')
+
+    def test_gruvbox_theme_override_exists(self):
+        self.assertIn('[data-theme="gruvbox"]', CSS_CONTENT,
+                      'CSS must have a Gruvbox theme override block')
+
+    def test_hackerman_theme_override_exists(self):
+        self.assertIn('[data-theme="hackerman"]', CSS_CONTENT,
+                      'CSS must have a Hackerman theme override block')
+
+    def test_kanagawa_theme_override_exists(self):
+        self.assertIn('[data-theme="kanagawa"]', CSS_CONTENT,
+                      'CSS must have a Kanagawa theme override block')
+
+    def test_miasma_theme_override_exists(self):
+        self.assertIn('[data-theme="miasma"]', CSS_CONTENT,
+                      'CSS must have a Miasma theme override block')
+
+    def test_nord_theme_override_exists(self):
+        self.assertIn('[data-theme="nord"]', CSS_CONTENT,
+                      'CSS must have a Nord theme override block')
+
+    def test_osaka_jade_theme_override_exists(self):
+        self.assertIn('[data-theme="osaka-jade"]', CSS_CONTENT,
+                      'CSS must have an Osaka Jade theme override block')
+
+    def test_ristretto_theme_override_exists(self):
+        self.assertIn('[data-theme="ristretto"]', CSS_CONTENT,
+                      'CSS must have a Ristretto theme override block')
+
+    def test_rose_pine_theme_override_exists(self):
+        self.assertIn('[data-theme="rose-pine"]', CSS_CONTENT,
+                      'CSS must have a Rose Pine theme override block')
+
+    def test_vantablack_theme_override_exists(self):
+        self.assertIn('[data-theme="vantablack"]', CSS_CONTENT,
+                      'CSS must have a Vantablack theme override block')
+
+    def test_white_theme_override_exists(self):
+        self.assertIn('[data-theme="white"]', CSS_CONTENT,
+                      'CSS must have a White theme override block')
+
     def test_sguil_theme_override_exists(self):
         self.assertIn('[data-theme="sguil"]', CSS_CONTENT,
                       'CSS must have a Sguil theme override block')
+
+    def test_sguil_detail_value_matches_light_blue_zebra_row(self):
+        """REGRESSION: when a light-blue zebra row (nth-of-type(4n+3)) is
+        expanded, its .detail-value fields must also turn light blue - a
+        stark white .detail-value box against the light-blue detail-row
+        background looked like a patchwork of mismatched fields. .detail-label
+        deliberately keeps its own light-cyan background always (not
+        overridden here) - the user asked to keep that distinction, only
+        the value column needed to match the row color."""
+        override_match = re.search(
+            r'\[data-theme="sguil"\] #sections table tbody tr:nth-of-type\(4n\+3\):not\(\.detail-row\) \+ tr\.detail-row td,\s*'
+            r'\[data-theme="sguil"\] #sections table tbody tr:nth-of-type\(4n\+3\):not\(\.detail-row\) \+ tr\.detail-row \.detail-content,\s*'
+            r'\[data-theme="sguil"\] #sections table tbody tr:nth-of-type\(4n\+3\):not\(\.detail-row\) \+ tr\.detail-row \.log-detail-panel,\s*'
+            r'\[data-theme="sguil"\] #sections table tbody tr:nth-of-type\(4n\+3\):not\(\.detail-row\) \+ tr\.detail-row \.detail-value\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(override_match,
+                             'Sguil must override .detail-value (alongside td/.detail-content/.log-detail-panel) '
+                             'to light blue when following a light-blue zebra row')
+        self.assertIn('background: #e6f2ff', override_match.group(1))
+        self.assertNotRegex(
+            CSS_CONTENT,
+            r'nth-of-type\(4n\+3\):not\(\.detail-row\) \+ tr\.detail-row \.detail-label',
+            '.detail-label must NOT be overridden here - it keeps its own light-cyan '
+            'background on every row, by explicit user preference',
+        )
 
     def test_code_rain_canvas_exists(self):
         self.assertIn('id="codeRain"', HTML_CONTENT,
@@ -1214,6 +1664,74 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn("'matte-black':", JS_CONTENT,
                       'THEMES registry must include the matte-black theme')
 
+    def test_tokyo_night_theme_in_registry(self):
+        self.assertIn("'tokyo-night':", JS_CONTENT,
+                      'THEMES registry must include the tokyo-night theme')
+
+    def test_retro_82_theme_in_registry(self):
+        self.assertIn("'retro-82':", JS_CONTENT,
+                      'THEMES registry must include the retro-82 theme')
+
+    def test_ethereal_theme_in_registry(self):
+        self.assertIn("'ethereal':", JS_CONTENT,
+                      'THEMES registry must include the ethereal theme')
+
+    def test_lumon_theme_in_registry(self):
+        self.assertIn("'lumon':", JS_CONTENT,
+                      'THEMES registry must include the lumon theme')
+
+    def test_catppuccin_theme_in_registry(self):
+        self.assertIn("'catppuccin':", JS_CONTENT,
+                      'THEMES registry must include the catppuccin theme')
+
+    def test_catppuccin_latte_theme_in_registry(self):
+        self.assertIn("'catppuccin-latte':", JS_CONTENT,
+                      'THEMES registry must include the catppuccin-latte theme')
+
+    def test_everforest_theme_in_registry(self):
+        self.assertIn("'everforest':", JS_CONTENT,
+                      'THEMES registry must include the everforest theme')
+
+    def test_gruvbox_theme_in_registry(self):
+        self.assertIn("'gruvbox':", JS_CONTENT,
+                      'THEMES registry must include the gruvbox theme')
+
+    def test_hackerman_theme_in_registry(self):
+        self.assertIn("'hackerman':", JS_CONTENT,
+                      'THEMES registry must include the hackerman theme')
+
+    def test_kanagawa_theme_in_registry(self):
+        self.assertIn("'kanagawa':", JS_CONTENT,
+                      'THEMES registry must include the kanagawa theme')
+
+    def test_miasma_theme_in_registry(self):
+        self.assertIn("'miasma':", JS_CONTENT,
+                      'THEMES registry must include the miasma theme')
+
+    def test_nord_theme_in_registry(self):
+        self.assertIn("'nord':", JS_CONTENT,
+                      'THEMES registry must include the nord theme')
+
+    def test_osaka_jade_theme_in_registry(self):
+        self.assertIn("'osaka-jade':", JS_CONTENT,
+                      'THEMES registry must include the osaka-jade theme')
+
+    def test_ristretto_theme_in_registry(self):
+        self.assertIn("'ristretto':", JS_CONTENT,
+                      'THEMES registry must include the ristretto theme')
+
+    def test_rose_pine_theme_in_registry(self):
+        self.assertIn("'rose-pine':", JS_CONTENT,
+                      'THEMES registry must include the rose-pine theme')
+
+    def test_vantablack_theme_in_registry(self):
+        self.assertIn("'vantablack':", JS_CONTENT,
+                      'THEMES registry must include the vantablack theme')
+
+    def test_white_theme_in_registry(self):
+        self.assertIn("'white':", JS_CONTENT,
+                      'THEMES registry must include the white theme')
+
     def test_sguil_theme_in_registry(self):
         self.assertIn("sguil:", JS_CONTENT,
                       'THEMES registry must include the sguil theme')
@@ -1222,11 +1740,138 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('[data-theme="hacker"] .search-btn', CSS_CONTENT,
                       'Hacker theme must override search button styling')
 
-    def test_hacker_sample_card_overrides(self):
-        self.assertIn('[data-theme="hacker"] .sample-card-red', CSS_CONTENT,
-                      'Hacker theme must override sample card styling')
-        self.assertIn('[data-theme="hacker"] .sample-red', CSS_CONTENT,
-                      'Hacker theme must override sample label color')
+    def test_sample_cards_use_accent(self):
+        """Sample cards must use theme accent colors, not hardcoded red/orange/yellow."""
+        for cls in ('sample-card-red', 'sample-card-orange', 'sample-card-yellow',
+                    'sample-red', 'sample-orange', 'sample-yellow'):
+            self.assertNotIn(cls, CSS_CONTENT,
+                             f'{cls} must be removed from CSS in favor of accent-based styling')
+            self.assertNotIn(cls, JS_CONTENT,
+                             f'{cls} must be removed from sample markup in favor of accent-based styling')
+        label_block = CSS_CONTENT.split('.sample-card .sample-label {')[1].split('}')[0]
+        self.assertIn('color: var(--accent)', label_block,
+                      'Sample labels must use the theme accent color')
+        card_hover_block = CSS_CONTENT.split('.sample-card:hover {')[1].split('}')[0]
+        self.assertIn('border-color: var(--interactive-highlight, var(--accent))', card_hover_block,
+                      'Sample card hover border must use the theme accent color, with an '
+                      'optional --interactive-highlight override for themes (like C64) where '
+                      '--accent alone is not visually distinct from --border-color')
+
+    def test_welcome_color_vars_removed(self):
+        """--welcome-red/orange/yellow must be gone from themes and all consumers."""
+        self.assertNotIn('--welcome-red', CSS_CONTENT,
+                         '--welcome-red must be removed from CSS')
+        self.assertNotIn('--welcome-orange', CSS_CONTENT,
+                         '--welcome-orange must be removed from CSS')
+        self.assertNotIn('--welcome-yellow', CSS_CONTENT,
+                         '--welcome-yellow must be removed from CSS')
+        self.assertNotIn('var(--welcome-', JS_CONTENT,
+                         'JS must not reference --welcome-* variables')
+
+    def test_dead_theme_vars_removed(self):
+        """--accent-rgb and --filter-bar-bg were defined in every theme block
+        but never consumed anywhere (verified via var(--name) search across
+        CSS/JS/HTML) - removed as dead CSS. Must not reappear. (--border-color
+        was removed alongside these too, but was later reintroduced with a
+        real purpose - see test_border_color_split_from_bg_hover - so it's
+        deliberately not checked here.)"""
+        for name in ('--accent-rgb', '--filter-bar-bg'):
+            self.assertNotIn(f'{name}:', CSS_CONTENT,
+                             f'{name} is unused and must not be redefined without a real consumer')
+            self.assertNotIn(f'var({name}', CSS_CONTENT,
+                             f'var({name}) must not appear without also adding a definition')
+            self.assertNotIn(f'var({name}', JS_CONTENT,
+                             f'var({name}) must not appear without also adding a definition')
+
+    def test_border_color_split_from_bg_hover(self):
+        """--border-color is a distinct variable from --bg-hover: --bg-hover
+        is for hover-state background fills, --border-color is for
+        border/outline decorations. Every theme must define both, and CSS
+        border declarations must reference --border-color rather than
+        --bg-hover (which would re-couple the two)."""
+        theme_blocks = re.findall(r'(?::root|\[data-theme="[^"]+"\])\s*\{([^}]*)\}', CSS_CONTENT, re.DOTALL)
+        theme_blocks_with_bg_hover = [b for b in theme_blocks if '--bg-hover:' in b]
+        self.assertGreaterEqual(len(theme_blocks_with_bg_hover), 23,
+                                'Expected at least 23 theme blocks defining --bg-hover')
+        for body in theme_blocks_with_bg_hover:
+            self.assertIn('--border-color:', body,
+                         'Every theme defining --bg-hover must also define --border-color')
+        self.assertNotIn('border-color: var(--bg-hover)', CSS_CONTENT,
+                         'Border declarations must use var(--border-color), not var(--bg-hover)')
+        self.assertNotRegex(CSS_CONTENT, r'border(?:-top|-bottom)?:\s*\d+px\s+(?:solid|dashed)\s+var\(--bg-hover\)',
+                            'Border declarations must use var(--border-color), not var(--bg-hover)')
+        # CGA's border should be a distinct, brighter cyan than its hover fill -
+        # the exact bug this split was introduced to fix (see release notes).
+        cga_block = next(b for b in theme_blocks if '--bg-hover: #008080' in b)
+        self.assertIn('--border-color: #55ffff', cga_block,
+                      'CGA border-color must be the bright CGA light cyan, distinct from the muted --bg-hover fill')
+
+    def test_cga_header_footer_light_cyan(self):
+        """CGA's header/footer use a bright light-cyan background (matching
+        the real CGA Palette 1 High-Intensity hue) instead of the dark
+        near-black bg-secondary every other theme uses there, with both
+        --text-bright and --text-muted overridden to the CGA magenta
+        accent (rather than black/dark-teal, per explicit user preference)
+        for legibility against that bright background. The gear dropdown
+        menu (a visual child of the header, but rendered on its own dark
+        bg-secondary panel) must reset those same two variables back to
+        their normal CGA values so its own text doesn't inherit the
+        header's override."""
+        header_footer_match = re.search(
+            r'\[data-theme="cga"\] \.app-header,\s*\[data-theme="cga"\] \.footer\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(header_footer_match,
+                             'CGA must override .app-header/.footer background')
+        body = header_footer_match.group(1)
+        self.assertIn('background: #55ffff', body,
+                     'CGA header/footer background must be the bright CGA light cyan')
+        self.assertIn('--text-bright: #ff55ff', body,
+                     'CGA header/footer text-bright must switch to the CGA magenta accent for legibility on the bright cyan bg')
+        self.assertIn('--text-muted: #ff55ff', body,
+                     'CGA header/footer text-muted must also switch to the CGA magenta accent, per explicit user preference')
+
+        dropdown_match = re.search(
+            r'\[data-theme="cga"\] \.app-header-menu-dropdown\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(dropdown_match,
+                             'CGA must reset the dropdown menu text vars back from the header override')
+        dropdown_body = dropdown_match.group(1)
+        self.assertIn('--text-bright: #ffffff', dropdown_body,
+                     "Dropdown menu must reset --text-bright to CGA's normal (light) value")
+        self.assertIn('--text-muted: #55aaaa', dropdown_body,
+                     "Dropdown menu must reset --text-muted to CGA's normal (light) value")
+
+        # The real (non-CGA-scoped) dropdown rule must appear before these
+        # CGA overrides in the file, or test_theme_menu_items_do_not_wrap's
+        # naive '.app-header-menu-dropdown {'.split() would grab the wrong
+        # (CGA override) block instead of the real rule's min-width.
+        real_rule_pos = CSS_CONTENT.index('.app-header-menu-dropdown { display: none;')
+        cga_override_pos = CSS_CONTENT.index('[data-theme="cga"] .app-header-menu-dropdown')
+        self.assertLess(real_rule_pos, cga_override_pos,
+                        "The base .app-header-menu-dropdown rule must come before CGA's override "
+                        "in the file, so naive substring-based CSS extraction in other tests still "
+                        "finds the real rule first")
+
+    def test_c64_logo_text_uses_light_blue(self):
+        """The 'SO-CRATES' header logo link is normally --text-bright (white
+        in every theme, including C64). C64 overrides it to --text-primary
+        (light blue) instead, to match the rest of its header text rather
+        than standing out in white."""
+        self.assertIn('class="app-logo-text"', HTML_CONTENT,
+                      'The header logo link must carry the app-logo-text class')
+        override_match = re.search(
+            r'\[data-theme="c64"\] \.app-logo-text\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(override_match,
+                             'C64 must override .app-logo-text color')
+        self.assertIn('color: var(--text-primary) !important', override_match.group(1),
+                      'C64 logo text must use --text-primary (light blue), overriding the '
+                      'default --text-bright (white) with !important since the inline '
+                      'style="color: var(--text-bright)" on the element itself outranks a '
+                      'plain class selector')
 
     def test_hacker_previous_analysis_delete_overrides(self):
         self.assertIn('[data-theme="hacker"] .previous-analysis-delete', CSS_CONTENT,
@@ -1290,18 +1935,18 @@ class TestThemeAndMenu(unittest.TestCase):
         result = js_statements('''
             var order = [];
             setTheme('dark');
-            for (var i = 0; i < 5; i++) {
+            for (var i = 0; i < 25; i++) {
                 toggleTheme();
                 order.push(document.documentElement.getAttribute('data-theme') || 'dark');
             }
             window.__jsdom_result = { order: order };
         ''')
-        self.assertEqual(result['order'], ['matte-black', 'hacker', 'light', 'dark', 'matte-black'],
+        self.assertEqual(result['order'], ['nord', 'osaka-jade', 'retro-82', 'ristretto', 'tokyo-night', 'vantablack', 'catppuccin-latte', 'light', 'rose-pine', 'white', 'c64', 'cga', 'hacker', 'sguil', 'vaporwave', 'catppuccin', 'ethereal', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'lumon', 'matte-black', 'miasma', 'dark'],
                          't hotkey cycle order must match menu order')
 
     def test_hacker_mode_easter_egg_exists(self):
         """Typing 31337 outside of input fields must activate Hacker."""
-        self.assertIn("keyBuffer === '31337'", JS_CONTENT,
+        self.assertIn("keyBuffer.endsWith('31337')", JS_CONTENT,
                       'JS must check for the 31337 easter egg sequence')
         self.assertIn("setTheme('hacker')", JS_CONTENT,
                       'Easter egg must activate Hacker')
@@ -1309,6 +1954,87 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Easter egg activation message must reference Hacker theme')
         self.assertIn('showToast(', JS_CONTENT,
                       'Easter egg must show an activation message')
+
+    def test_cga_easter_egg_exists(self):
+        """Typing cga outside of input fields must activate the CGA theme."""
+        self.assertIn("keyBuffer.endsWith('cga')", JS_CONTENT,
+                      'JS must check for the cga easter egg sequence')
+        self.assertIn("setTheme('cga')", JS_CONTENT,
+                      'Easter egg must activate CGA')
+        self.assertIn('Switched to CGA theme', JS_CONTENT,
+                      'Easter egg activation message must reference CGA theme')
+
+    def test_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: a code shorter than the 5-char keyBuffer (like "cga")
+        must actually trigger after other keystrokes, not just in the first
+        few keystrokes after page load - this is exactly what endsWith()
+        (rather than ===) on the buffer is for."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            function press(k) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
+            }
+            'xyz'.split('').forEach(press);
+            'cga'.split('').forEach(press);
+            window.__jsdom_result = { theme: getCurrentTheme() };
+        ''')
+        self.assertEqual(result['theme'], 'cga',
+                         'Typing cga after other keystrokes must still activate CGA theme')
+
+    def test_c64_easter_egg_exists(self):
+        """Typing c64 outside of input fields must activate the C64 theme."""
+        self.assertIn("keyBuffer.endsWith('c64')", JS_CONTENT,
+                      'JS must check for the c64 easter egg sequence')
+        self.assertIn("setTheme('c64')", JS_CONTENT,
+                      'Easter egg must activate C64')
+        self.assertIn('Switched to C64 theme', JS_CONTENT,
+                      'Easter egg activation message must reference C64 theme')
+
+    def test_c64_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: same class of bug as the cga easter egg - a code
+        shorter than the 5-char keyBuffer (like "c64") must actually trigger
+        after other keystrokes, not just in the first few keystrokes after
+        page load."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            function press(k) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
+            }
+            'xyz'.split('').forEach(press);
+            'c64'.split('').forEach(press);
+            window.__jsdom_result = { theme: getCurrentTheme() };
+        ''')
+        self.assertEqual(result['theme'], 'c64',
+                         'Typing c64 after other keystrokes must still activate C64 theme')
+
+    def test_vaporwave_easter_egg_exists(self):
+        """Typing vapor outside of input fields must activate the Vaporwave theme."""
+        self.assertIn("keyBuffer.endsWith('vapor')", JS_CONTENT,
+                      'JS must check for the vapor easter egg sequence')
+        self.assertIn("setTheme('vaporwave')", JS_CONTENT,
+                      'Easter egg must activate Vaporwave')
+        self.assertIn('Switched to Vaporwave theme', JS_CONTENT,
+                      'Easter egg activation message must reference Vaporwave theme')
+
+    def test_vaporwave_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: same class of bug as the cga/c64 easter eggs - "vapor"
+        is exactly 5 characters (the buffer's full capacity), so this also
+        verifies the buffer-fill edge case works via endsWith(), not just
+        codes shorter than 5 characters."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            function press(k) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
+            }
+            'xyz'.split('').forEach(press);
+            'vapor'.split('').forEach(press);
+            window.__jsdom_result = { theme: getCurrentTheme() };
+        ''')
+        self.assertEqual(result['theme'], 'vaporwave',
+                         'Typing vapor after other keystrokes must still activate Vaporwave theme')
 
     def test_hacker_mode_easter_egg_ignores_input_fields(self):
         """Easter egg must not trigger while typing in form controls."""
@@ -1431,15 +2157,28 @@ class TestAggregationTables(unittest.TestCase):
         self.assertIn('function extractAllValue', JS_CONTENT)
 
     def test_extractAllValue_handles_all_events_columns(self):
-        """extractAllValue must handle 'All Events' specific columns (Type, Command, Message)
-        and delegate to extractValue for per-type columns so filters work correctly."""
+        """extractAllValue must special-case 'Type' (it means "the event_type
+        itself", e.g. "DNS"/"ANOMALY" - different semantics than the
+        per-type 'Type' column, e.g. a DNS record type) and delegate
+        everything else to extractValue for per-type columns so filters
+        work correctly.
+
+        REGRESSION: 'Command' and 'Message' used to be special-cased here
+        too, but both were stale - 'Command' predates pgsql/enip/pop3
+        gaining their own real command fields (this always returned '' for
+        them, ignoring extractValue's own already-correct per-protocol
+        handling), and 'Message' read e.anomaly?.message, a field that has
+        never existed in Suricata's eve.json anomaly schema (real field is
+        'event') and hasn't been a real column label since anomaly gained
+        real columns (Event/Type/Layer/App Proto). Both must now be absent
+        so extractValue's own correct handling is used instead."""
         func_body = JS_CONTENT.split('function extractAllValue')[1].split('function buildAggregationTablesCore')[0]
         self.assertIn("col === 'Type'", func_body,
                       'extractAllValue must handle Type column')
-        self.assertIn("col === 'Command'", func_body,
-                      'extractAllValue must handle Command column')
-        self.assertIn("col === 'Message'", func_body,
-                      'extractAllValue must handle Message column')
+        self.assertNotIn("col === 'Command'", func_body,
+                          'extractAllValue must not override Command - extractValue already handles it per-protocol')
+        self.assertNotIn("col === 'Message'", func_body,
+                          "extractAllValue must not override Message - it read a field that never existed")
         self.assertIn('return extractValue(e, col, colIndex)', func_body,
                       'extractAllValue must delegate to extractValue')
 
@@ -1494,32 +2233,39 @@ class TestAggregationTables(unittest.TestCase):
         self.assertTrue(result['hasAggRow'], 'HTML must contain aggregation rows')
 
     def test_extractAllValue_cross_type(self):
-        """extractAllValue must return correct values for cross-event-type columns."""
+        """extractAllValue must return correct values for cross-event-type
+        columns, correctly delegating 'Command' to extractValue's own
+        per-protocol handling (ftp AND pop3/pgsql/enip, not just ftp - see
+        the regression note on test_extractAllValue_handles_all_events_columns)
+        and 'Event' for anomaly's real field."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             var e1 = {event_type: 'alert', proto: 'TCP', alert: {signature: 'Test Alert'}};
             var e2 = {event_type: 'ftp', proto: 'TCP', ftp: {command: 'USER admin'}};
-            var e3 = {event_type: 'anomaly', proto: 'TCP', anomaly: {message: 'Malformed packet'}};
+            var e3 = {event_type: 'anomaly', proto: 'TCP', anomaly: {event: 'APPLAYER_DETECT_PROTOCOL_ONLY_ONE_DIRECTION'}};
+            var e4 = {event_type: 'pop3', proto: 'TCP', pop3: {request: {command: 'RETR'}}};
             window.__jsdom_result = {
                 alertType: extractAllValue(e1, 'Type', -1),
                 alertProto: extractAllValue(e1, 'Protocol', -1),
                 ftpCommand: extractAllValue(e2, 'Command', -1),
-                anomalyMessage: extractAllValue(e3, 'Message', -1),
+                anomalyEvent: extractAllValue(e3, 'Event', -1),
+                pop3Command: extractAllValue(e4, 'Command', -1),
             };
         ''')
         self.assertEqual(result['alertType'], 'ALERT')
         self.assertEqual(result['alertProto'], 'TCP')
         self.assertEqual(result['ftpCommand'], 'USER admin')
-        self.assertEqual(result['anomalyMessage'], 'Malformed packet')
+        self.assertEqual(result['anomalyEvent'], 'APPLAYER_DETECT_PROTOCOL_ONLY_ONE_DIRECTION')
+        self.assertEqual(result['pop3Command'], 'RETR')
 
     def test_agg_tables_have_click_handlers(self):
-        self.assertIn("onclick=\"applyFilter('${sectionId}', '${escapeJsString(col)}', '${escapeJsString(val)}')\"", JS_CONTENT)
+        self.assertIn("onclick=\"applyFilter('${sectionId}', '${escapeJsString(col)}', '${escapeJsString(filterVal)}')\"", JS_CONTENT)
 
     def test_agg_tables_no_bar_charts(self):
         self.assertNotIn('.agg-bar', CSS_CONTENT)
 
     def test_agg_tables_have_borders(self):
-        self.assertIn('border: 1px solid var(--bg-hover)', CSS_CONTENT)
+        self.assertIn('border: 1px solid var(--border-color)', CSS_CONTENT)
 
     def test_agg_tables_wrap_with_flex(self):
         self.assertIn('flex-wrap: wrap', CSS_CONTENT)
@@ -1659,6 +2405,37 @@ class TestFiltering(unittest.TestCase):
         self.assertEqual(result['fileProto'], 'TCP')
         self.assertEqual(result['fileName'], 'test.exe')
 
+    def test_extractValue_disambiguates_shared_column_labels_by_event_type(self):
+        """REGRESSION: 'Category'/'Type'/'Query' are each used by two event
+        types with getColumnsForType(), but extractValue's switch(col) is
+        keyed only by label - modbus's Category, dnp3's Type, and pgsql's
+        Query previously had no event_type branch, so a JS switch's first
+        matching case (alert.category / dns.rrtype / dns.rrname) always won
+        and those three columns rendered empty for every real event."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var modbusEvent = {event_type: 'modbus', modbus: {request: {category: 'PUBLIC_ASSIGNED'}}};
+            var dnp3Event = {event_type: 'dnp3', dnp3: {type: 'unsolicited_response'}};
+            var pgsqlEvent = {event_type: 'pgsql', pgsql: {request: {simple_query: 'SELECT 1'}}};
+            // Sibling event types sharing the same label must still work.
+            var alertEvent = {event_type: 'alert', alert: {category: 'A Network Trojan was detected'}};
+            var dnsEvent = {event_type: 'dns', dns: {rrtype: 'A', rrname: 'example.com'}};
+            window.__jsdom_result = {
+                modbusCategory: extractValue(modbusEvent, 'Category', -1),
+                dnp3Type: extractValue(dnp3Event, 'Type', -1),
+                pgsqlQuery: extractValue(pgsqlEvent, 'Query', -1),
+                alertCategory: extractValue(alertEvent, 'Category', -1),
+                dnsType: extractValue(dnsEvent, 'Type', -1),
+                dnsQuery: extractValue(dnsEvent, 'Query', -1),
+            };
+        ''')
+        self.assertEqual(result['modbusCategory'], 'PUBLIC_ASSIGNED')
+        self.assertEqual(result['dnp3Type'], 'unsolicited_response')
+        self.assertEqual(result['pgsqlQuery'], 'SELECT 1')
+        self.assertEqual(result['alertCategory'], 'A Network Trojan was detected')
+        self.assertEqual(result['dnsType'], 'A')
+        self.assertEqual(result['dnsQuery'], 'example.com')
+
     def test_buildStats_no_filealerts_special_case(self):
         """buildStats must use filteredStats consistently for all event types, including filealerts."""
         func_body = JS_CONTENT.split('function buildStats(')[1].split('function buildFilterBarHtml')[0]
@@ -1668,17 +2445,24 @@ class TestFiltering(unittest.TestCase):
                       'buildStats must use filteredStats for all types')
 
     def test_sigmaAlertMatchesFilters_uses_original_log_for_dynamic_columns(self):
-        """sigmaAlertMatchesFilters must parse original_log for dynamic columns, like getFilteredSigmaAlerts."""
-        func_body = JS_CONTENT.split('function sigmaAlertMatchesFilters')[1].split('function buildStats')[0]
+        """The shared extractSigmaValue helper (used by sigmaAlertMatchesFilters
+        and getFilteredSigmaAlerts) must parse original_log for dynamic columns."""
+        self.assertIn('return matchesCurrentFilters(alert, extractSigmaValue)', JS_CONTENT,
+                      'sigmaAlertMatchesFilters must delegate to extractSigmaValue')
+        func_body = JS_CONTENT.split('function extractSigmaValue')[1].split('function getFilteredLogEvents')[0]
         self.assertIn('JSON.parse(alert.original_log ||', func_body,
-                      'sigmaAlertMatchesFilters must parse original_log for dynamic columns')
+                      'extractSigmaValue must parse original_log for dynamic columns')
         self.assertIn('_getFieldForLabel(col)', func_body,
-                      'sigmaAlertMatchesFilters must use _getFieldForLabel for dynamic column lookup')
+                      'extractSigmaValue must use _getFieldForLabel for dynamic column lookup')
 
 
 class TestPerformance(unittest.TestCase):
-    def test_uses_document_fragment_for_batch_inserts(self):
-        self.assertIn('createDocumentFragment', JS_CONTENT)
+    def test_paginates_large_tables_instead_of_rendering_all_rows(self):
+        """Data tables must cap rendered rows per page rather than inserting
+        every fetched row into the DOM at once (up to the user-configurable
+        query limit, default 75000, server ceiling 100000)."""
+        self.assertIn('TABLE_PAGE_SIZE', JS_CONTENT)
+        self.assertIn('function renderPaginatedTable', JS_CONTENT)
 
     def test_uses_event_delegation(self):
         self.assertIn('addEventListener', JS_CONTENT)
@@ -1778,7 +2562,7 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
 
     def test_loadTabData_all_events_calls_updateFilterBarVisibility(self):
         """loadTabData for "all" events must call updateFilterBarVisibility"""
-        pattern = r"buildAllEvents\(\);\s*if\s*\(\s*sectionEl\s*&&\s*advancedMode\s*\)\s*buildAggregationsSectionAll\(\);\s*updateFilterBarVisibility\(\)"
+        pattern = r"buildAllEvents\(\);\s*if\s*\(\s*sectionEl\s*&&\s*advancedMode\s*\)\s*(await\s+)?buildAggregationsSectionAll\(\);\s*updateFilterBarVisibility\(\)"
         self.assertRegex(JS_CONTENT, pattern,
             'loadTabData must call updateFilterBarVisibility for "all" events')
 
@@ -1810,7 +2594,7 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
 
     def test_buildAggregationsSectionAll_uses_global_filters(self):
         """buildAggregationsSectionAll must use global currentFilters for filtering and filter bar"""
-        pattern = r"function buildAggregationsSectionAll[\s\S]{0,800}Object\.keys\(currentFilters\)\.length"
+        pattern = r"function buildAggregationsSectionAll[\s\S]{0,1600}Object\.keys\(currentFilters\)\.length"
         self.assertRegex(JS_CONTENT, pattern,
             'buildAggregationsSectionAll must check Object.keys(currentFilters).length')
 
@@ -1832,24 +2616,27 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
                       'applyFilters must call refreshCurrentView')
         self.assertIn('updateFilterBarVisibility()', func,
                       'applyFilters must call updateFilterBarVisibility after refreshCurrentView')
-        self.assertIn('buildStats(computeFilteredStats())', func,
+        self.assertIn('buildStats(await computeFilteredStats())', func,
                       'applyFilters must rebuild stat card counts after applying filters')
 
     def test_applyFilters_binary_path_calls_updateFilterBarVisibility(self):
-        """applyFilters must update UI in the binary analysis early-return path."""
+        """applyFilters must update UI in the binary analysis early-return path,
+        using the narrower binary-events fetch instead of ensureCappedBatch('all').
+        Must NOT rebuild stats: binary mode hides #statsGrid entirely, so
+        buildStats(await computeFilteredStats()) is dead work there."""
         func = JS_CONTENT.split('function applyFilters(')[1].split('function applyFilter(')[0]
         self.assertIn("if (sectionId === 'section-binary')", func,
                       'applyFilters must check for section-binary')
         self.assertIn('updateFilterBarVisibility()', func,
                       'applyFilters must call updateFilterBarVisibility')
-        self.assertIn('buildStats(computeFilteredStats())', func,
-                      'applyFilters must rebuild stat card counts in binary path')
         # Verify calls appear before return in the binary branch
         binary_branch = func.split("if (sectionId === 'section-binary')")[1].split('return;')[0]
+        self.assertIn('await ensureBinaryEventsBatch()', binary_branch,
+            'applyFilters binary path must use the narrow binary-events fetch')
         self.assertIn('updateFilterBarVisibility()', binary_branch,
             'applyFilters binary path must call updateFilterBarVisibility before return')
-        self.assertIn('buildStats(computeFilteredStats())', binary_branch,
-            'applyFilters binary path must rebuild stats before return')
+        self.assertNotIn('buildStats(', binary_branch,
+            'applyFilters binary path must not rebuild the hidden statsGrid')
 
     def test_clearFilter_calls_updateFilterBarVisibility(self):
         """clearFilter must update UI after refreshing the view."""
@@ -1858,24 +2645,89 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
                       'clearFilter must call refreshCurrentView')
         self.assertIn('updateFilterBarVisibility()', func,
                       'clearFilter must call updateFilterBarVisibility after refreshCurrentView')
-        self.assertIn('buildStats(computeFilteredStats())', func,
+        self.assertIn('buildStats(await computeFilteredStats())', func,
                       'clearFilter must rebuild stat card counts after clearing filters')
 
     def test_clearFilter_binary_path_calls_updateFilterBarVisibility(self):
-        """clearFilter must update UI in the binary analysis early-return path."""
+        """clearFilter must update UI in the binary analysis early-return path,
+        using the narrower binary-events fetch instead of ensureCappedBatch('all').
+        Must NOT rebuild stats: binary mode hides #statsGrid entirely, so
+        buildStats(await computeFilteredStats()) is dead work there."""
         func = JS_CONTENT.split('function clearFilter(')[1].split('async function clearAllFilters(')[0]
         self.assertIn('buildBinaryAnalysisView(allEvents)', func,
                       'clearFilter must call buildBinaryAnalysisView for binary mode')
         self.assertIn('updateFilterBarVisibility()', func,
                       'clearFilter must call updateFilterBarVisibility')
-        self.assertIn('buildStats(computeFilteredStats())', func,
-                      'clearFilter must rebuild stat card counts in binary path')
+        # ensureBinaryEventsBatch call must precede buildBinaryAnalysisView
+        pre = func.split('buildBinaryAnalysisView(allEvents)')[0]
+        self.assertIn('await ensureBinaryEventsBatch()', pre,
+            'clearFilter binary path must use the narrow binary-events fetch')
         # Verify calls appear before return in the binary branch
         binary_branch = func.split('buildBinaryAnalysisView(allEvents)')[1].split('return;')[0]
         self.assertIn('updateFilterBarVisibility()', binary_branch,
             'clearFilter binary path must call updateFilterBarVisibility before return')
-        self.assertIn('buildStats(computeFilteredStats())', binary_branch,
-            'clearFilter binary path must rebuild stats before return')
+        self.assertNotIn('buildStats(', binary_branch,
+            'clearFilter binary path must not rebuild the hidden statsGrid')
+
+    def test_fetchBinaryEvents_uses_type_scoped_requests(self):
+        """fetchBinaryEvents must request fileinfo and filealerts by type=,
+        never the untyped 'all' endpoint - binary-file analyses only ever
+        produce these two event types, so narrowing the fetch by type avoids
+        pulling in every other event type in the database."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var urls = [];
+            window.fetch = function(url) {
+                urls.push(url);
+                if (url.indexOf('/api/events') >= 0 && url.indexOf('type=fileinfo') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([{ event_type: 'fileinfo' }]) });
+                }
+                if (url.indexOf('/api/events') >= 0 && url.indexOf('type=filealerts') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([{ event_type: 'filealerts' }]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc123';
+            var result = await fetchBinaryEvents('');
+            var eventsCalls = urls.filter(u => u.indexOf('/api/events') >= 0);
+            window.__jsdom_result = {
+                hitFileAlerts: eventsCalls.some(u => u.indexOf('type=filealerts') >= 0),
+                hitFileInfo: eventsCalls.some(u => u.indexOf('type=fileinfo') >= 0),
+                untypedEventsCalls: eventsCalls.filter(u => u.indexOf('type=') < 0).length,
+                eventsCallCount: eventsCalls.length,
+                result: result
+            };
+        ''')
+        self.assertTrue(result['hitFileAlerts'], 'must request /api/events?type=filealerts')
+        self.assertTrue(result['hitFileInfo'], 'must request /api/events?type=fileinfo')
+        self.assertEqual(result['untypedEventsCalls'], 0, 'must never issue an untyped /api/events request')
+        self.assertEqual(result['eventsCallCount'], 2, 'must issue exactly two /api/events requests')
+        self.assertEqual(result['result'], [{'event_type': 'fileinfo'}, {'event_type': 'filealerts'}],
+                         'must merge fileinfo before filealerts into one array')
+
+    def test_ensureBinaryEventsBatch_is_cache_aware(self):
+        """ensureBinaryEventsBatch must not refetch when allEvents is already
+        populated, mirroring ensureCappedBatch('all')'s own caching contract."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var eventsCalls = [];
+            window.fetch = function(url) {
+                if (url.indexOf('/api/events') >= 0) eventsCalls.push(url);
+                return Promise.resolve({ json: () => Promise.resolve([{ event_type: 'fileinfo' }]) });
+            };
+            currentMd5 = 'abc123';
+            currentSearch = [];
+            await ensureBinaryEventsBatch();
+            var callsAfterFirst = eventsCalls.length;
+            await ensureBinaryEventsBatch();
+            var callsAfterSecond = eventsCalls.length;
+            window.__jsdom_result = {
+                callsAfterFirst: callsAfterFirst,
+                callsAfterSecond: callsAfterSecond
+            };
+        ''')
+        self.assertEqual(result['callsAfterFirst'], 2, 'first call must fetch fileinfo + filealerts once each')
+        self.assertEqual(result['callsAfterSecond'], 2, 'second call must reuse the already-populated allEvents, not refetch')
 
     def test_clearAllFilters_resets_global_filters(self):
         """clearAllFilters must reset currentFilters to empty object"""
@@ -1910,15 +2762,20 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
         self.assertNotIn("const filters = currentFilters[sectionId]", JS_CONTENT)
 
     def test_buildStats_shows_count_over_total_when_filtered(self):
-        """buildStats must display 'count / total' when filters are active."""
+        """buildStats must display 'count / total' when filters are active,
+        comma-formatted (toLocaleString) so a large analysis (e.g. a
+        1,000,000-row dataset) doesn't render as an unbroken digit string."""
         func = JS_CONTENT.split('function buildStats(')[1].split('function buildSections(')[0]
-        self.assertIn('${s.count} / ${s.total}', func,
+        self.assertIn('${s.count.toLocaleString()} / ${s.total.toLocaleString()}', func,
                       'buildStats must show filtered count over total when hasFilters is true')
 
     def test_buildStats_shows_count_only_when_unfiltered(self):
-        """buildStats must display just the count when no filters are active."""
+        """buildStats must display just the count when no filters are active,
+        comma-formatted (toLocaleString), matching the rest of the app's
+        existing number-formatting convention (flow Pkts/Bytes, file size,
+        the query-limit settings hint)."""
         func = JS_CONTENT.split('function buildStats(')[1].split('function buildSections(')[0]
-        self.assertIn('String(s.count)', func,
+        self.assertIn('s.count.toLocaleString()', func,
                       'buildStats must show only count when hasFilters is false')
 
     def test_buildBinaryAnalysisView_preserves_file_info_on_search(self):
@@ -2001,9 +2858,8 @@ class TestXSSPrevention(unittest.TestCase):
 
     def test_buildAllEvents_escapes_user_fields(self):
         """All Events table must escape user-controlled fields."""
-        func_body = self._get_function_body('buildAllEvents')
+        func_body = self._get_function_body('buildAllEventRow')
         self.assertIn("escapeHtml(ts)", func_body, 'All Events timestamp must be escaped')
-        self.assertIn("escapeHtml(icon)", func_body, 'All Events icon must be escaped')
         self.assertIn("escapeHtml(etype.toUpperCase())", func_body, 'All Events event type must be escaped')
         self.assertIn("escapeHtml(proto)", func_body, 'All Events protocol must be escaped')
         self.assertIn("escapeHtml(srcIp)", func_body, 'All Events source IP must be escaped')
@@ -2246,10 +3102,13 @@ class TestInlineHtmlEscaping(unittest.TestCase):
         self.assertIn('${escapeHtml(dateDisplay)}', load_analysis,
                       'dateDisplay must be escaped in appHeaderMeta.innerHTML')
 
-    def test_document_title_escapes_filename(self):
+    def test_document_title_does_not_html_escape_filename(self):
+        """document.title is a plain-text DOM property, not HTML -- escapeHtml() would
+        make literal entities (e.g. &amp;) show up in the browser tab instead of the
+        real character, so the filename must be assigned unescaped."""
         load_analysis = JS_CONTENT.split('async function loadAnalysis')[1].split('async function')[0]
-        self.assertIn("document.title = 'SO-CRATES - ' + escapeHtml(currentFileName)", load_analysis,
-                      'document.title must escape the filename before assignment')
+        self.assertIn("document.title = 'SO-CRATES - ' + currentFileName", load_analysis,
+                      'document.title must not HTML-escape the filename')
 
 
 class TestAdvancedToggleNoMemoryLeak(unittest.TestCase):
@@ -2345,8 +3204,8 @@ class TestSearchUI(unittest.TestCase):
                       'refreshAnalysisData must fetch stats with q parameter')
 
     def test_search_fetches_events_with_q(self):
-        self.assertIn("CONFIG.MAX_QUERY_LIMIT", JS_CONTENT,
-                      'refreshAnalysisData must use CONFIG constant for query limit')
+        self.assertIn("function getUserQueryLimit", JS_CONTENT,
+                      'ensureCappedBatch must use the user-configurable query limit')
 
     def test_loadTabData_passes_q(self):
         self.assertIn("currentSearch.map(t => '&q=' + encodeURIComponent(t)).join('')", JS_CONTENT,
@@ -2582,13 +3441,13 @@ class TestReanalyzeUI(unittest.TestCase):
             if found_open and brace_count == 0:
                 break
         func_body = JS_CONTENT[start:pos]
-        self.assertIn("isPcapFile = /\\.(pcap|pcapng|cap|trace)$/i.test(name)", func_body,
-                      'openReanalyzeModal must detect PCAP files')
+        self.assertIn("detectFileType(name)", func_body,
+                      'openReanalyzeModal must detect file type via the shared detectFileType helper')
         self.assertIn("let phase = 'files'", func_body,
                       'openReanalyzeModal must default to files phase')
-        self.assertIn("if (isLogFile) phase = 'logs'", func_body,
+        self.assertIn("if (detectedType === 'log') phase = 'logs'", func_body,
                       'openReanalyzeModal must set logs phase for log files')
-        self.assertIn("else if (isPcapFile) phase = 'network'", func_body,
+        self.assertIn("else if (detectedType === 'pcap') phase = 'network'", func_body,
                       'openReanalyzeModal must set network phase for PCAP files')
 
     def test_reanalyze_pcap_sets_network_phase(self):
@@ -2609,8 +3468,10 @@ class TestReanalyzeUI(unittest.TestCase):
             if found_open and brace_count == 0:
                 break
         func_body = JS_CONTENT[start:pos]
-        self.assertIn("isPcapFile = /\\.(pcap|pcapng|cap|trace)$/i.test(name)", func_body,
-                      'openReanalyzeModal must detect PCAP files')
+        self.assertIn("detectFileType(name)", func_body,
+                      'openReanalyzeModal must detect PCAP files via the shared detectFileType helper')
+        self.assertIn("else if (detectedType === 'pcap') phase = 'network'", func_body,
+                      'openReanalyzeModal must set network phase for PCAP files')
 
     def test_reanalyze_log_sets_logs_phase(self):
         """openReanalyzeModal must set phase to 'logs' for log files."""
@@ -2630,8 +3491,10 @@ class TestReanalyzeUI(unittest.TestCase):
             if found_open and brace_count == 0:
                 break
         func_body = JS_CONTENT[start:pos]
-        self.assertIn("isLogFile = /\\.(evtx|json|jsonl|csv|xml|log)$/i.test(name)", func_body,
-                      'openReanalyzeModal must detect log files')
+        self.assertIn("detectFileType(name)", func_body,
+                      'openReanalyzeModal must detect log files via the shared detectFileType helper')
+        self.assertIn("if (detectedType === 'log') phase = 'logs'", func_body,
+                      'openReanalyzeModal must set logs phase for log files')
 
     def test_reanalyze_modal_fallback_to_filename(self):
         """openReanalyzeModal must fall back to filename-based phase when status API fails."""
@@ -2656,13 +3519,11 @@ class TestReanalyzeUI(unittest.TestCase):
         self.assertIn('catch(err)', func_body,
                       'openReanalyzeModal must have catch block for status API failures')
         catch_section = func_body.split('catch(err)')[1]
-        self.assertIn("isLogFile = /\\.(evtx|json|jsonl|csv|xml|log)$/i.test(name)", catch_section,
-                      'Fallback must detect log files by extension')
-        self.assertIn("isPcapFile = /\\.(pcap|pcapng|cap|trace)$/i.test(name)", catch_section,
-                      'Fallback must detect PCAP files by extension')
-        self.assertIn("if (isLogFile) phase = 'logs'", catch_section,
+        self.assertIn("detectFileType(name)", catch_section,
+                      'Fallback must detect file type by extension via the shared helper')
+        self.assertIn("if (detectedType === 'log') phase = 'logs'", catch_section,
                       'Fallback must set logs phase')
-        self.assertIn("else if (isPcapFile) phase = 'network'", catch_section,
+        self.assertIn("else if (detectedType === 'pcap') phase = 'network'", catch_section,
                       'Fallback must set network phase')
 
 
@@ -2731,10 +3592,6 @@ class TestFileAlertsUI(unittest.TestCase):
     def test_has_filealerts_in_type_colors(self):
         self.assertIn("filealerts: '#e91e63'", JS_CONTENT,
                       'COLORS.EVENT must include filealerts color')
-
-    def test_has_filealerts_in_event_type_icons(self):
-        self.assertIn("filealerts: '🚨'", JS_CONTENT,
-                      'EVENT_TYPE_ICONS must include filealerts icon')
 
     def test_filealerts_columns_defined(self):
         self.assertIn("case 'filealerts':", JS_CONTENT,
@@ -2857,7 +3714,7 @@ class TestFileAlertsUI(unittest.TestCase):
         self.assertIn("fetch('/api/status?md5='", JS_CONTENT,
                       'JS must fetch status API to get detected_type for routing')
         # Fallback must exist for old analyses without .meta
-        self.assertIn("currentFileName) ? 'pcap'", JS_CONTENT,
+        self.assertIn("analysisStatus.meta?.detected_type || detectFileType(currentFileName)", JS_CONTENT,
                       'JS must fallback to filename extension when .meta is missing')
 
     def test_evtx_routes_to_log_analysis_not_network(self):
@@ -2891,9 +3748,14 @@ class TestFileAlertsUI(unittest.TestCase):
         # Fallback chain must exist: meta → filename extension → binary default
         self.assertIn("analysisStatus.meta?.detected_type ||", JS_CONTENT,
                       'JS must fallback when .meta is missing or corrupted')
-        # Binary must be the ultimate default
-        self.assertIn("? 'log' : 'binary'", JS_CONTENT,
-                      'JS must default to binary when neither PCAP nor log')
+        # Binary must be the ultimate default in the shared detectFileType helper
+        from tests.jsdom_helper import js_expression
+        self.assertEqual(js_expression("detectFileType('capture.pcap')"), 'pcap',
+                         'detectFileType must detect PCAP extensions')
+        self.assertEqual(js_expression("detectFileType('sysmon.evtx')"), 'log',
+                         'detectFileType must detect log extensions')
+        self.assertEqual(js_expression("detectFileType('payload.exe')"), 'binary',
+                         'detectFileType must default to binary when neither PCAP nor log')
 
 
 class TestMaybeLinkifyValueSecurity(unittest.TestCase):
@@ -3218,7 +4080,16 @@ class TestLogAnalysisUI(unittest.TestCase):
             section.id = 'section-sigmaalert';
             document.body.appendChild(section);
             var alerts = {json.dumps(alerts)};
-            buildSigmaAlertSectionContent('section-sigmaalert', alerts);
+            // No active filter/sort, so this goes through the scalable-fetch
+            // branch - serve `alerts` from the mocked /api/sigma-alerts and
+            // /api/sigma-count endpoints it calls internally.
+            window.fetch = function(url) {{
+                if (url.indexOf('/api/sigma-count') >= 0) {{
+                    return Promise.resolve({{ json: () => Promise.resolve({{ count: alerts.length }}) }});
+                }}
+                return Promise.resolve({{ json: () => Promise.resolve(alerts) }});
+            }};
+            await buildSigmaAlertSectionContent('section-sigmaalert', alerts);
             var html = section.innerHTML;
             window.__jsdom_result = {{
                 hasTable: html.indexOf('<table>') >= 0,
@@ -3367,6 +4238,132 @@ class TestLogAnalysisUI(unittest.TestCase):
         self.assertTrue(result['hasLogDetailPanel'])
         self.assertTrue(result['hasImage'])
 
+    def test_fetchLogAnalysisCounts_hits_count_endpoints_only(self):
+        """_fetchLogAnalysisCounts must fetch cheap counts (/api/count?type=log
+        and /api/sigma-count), never the full /api/events or /api/sigma-alerts
+        arrays - the whole point of replacing the old eager _fetchLogAnalysisData."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: () => Promise.resolve({ count: 7 }) });
+            };
+            currentMd5 = 'abc123';
+            var result = await _fetchLogAnalysisCounts('');
+            window.__jsdom_result = {
+                hitCount: fetchCalls.some(u => u.indexOf('/api/count') >= 0 && u.indexOf('type=log') >= 0),
+                hitSigmaCount: fetchCalls.some(u => u.indexOf('/api/sigma-count') >= 0),
+                hitEvents: fetchCalls.some(u => u.indexOf('/api/events') >= 0),
+                hitSigmaAlerts: fetchCalls.some(u => u.indexOf('/api/sigma-alerts') >= 0),
+                result: result
+            };
+        ''')
+        self.assertTrue(result['hitCount'], 'must call /api/count?type=log')
+        self.assertTrue(result['hitSigmaCount'], 'must call /api/sigma-count')
+        self.assertFalse(result['hitEvents'], 'must NOT fetch the full /api/events array')
+        self.assertFalse(result['hitSigmaAlerts'], 'must NOT fetch the full /api/sigma-alerts array')
+        self.assertEqual(result['result'], {'log': 7, 'sigmaalert': 7})
+
+    def test_loadTabData_log_fetches_once_when_uncached(self):
+        """loadTabData('log', ...) must lazily hydrate tabDataCache['log'] via
+        ensureCappedBatch on first visit, and reuse the cache on subsequent
+        visits without refetching."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var section = document.createElement('div');
+            section.id = 'section-log';
+            document.body.appendChild(section);
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: () => Promise.resolve([
+                    { timestamp: '2024-01-01T00:00:00Z', json_data: { Channel: 'Security' } }
+                ]) });
+            };
+            currentFilters = {};
+            currentSearch = [];
+            isLogAnalysisMode = true;
+            await loadTabData('log', null);
+            function logCalls() { return fetchCalls.filter(u => u.indexOf('/api/events') >= 0 && u.indexOf('type=log') >= 0).length; }
+            var callsAfterFirst = logCalls();
+            // Re-assert isLogAnalysisMode: the app's own background init()
+            // chain (auto-run on module load) can reset it via
+            // clearAnalysisContainers() once the first loadTabData call's
+            // awaits give it enough event-loop turns to run.
+            isLogAnalysisMode = true;
+            await loadTabData('log', null);
+            var callsAfterSecond = logCalls();
+            window.__jsdom_result = {
+                callsAfterFirst: callsAfterFirst,
+                callsAfterSecond: callsAfterSecond,
+                hasTable: section.innerHTML.indexOf('<table>') >= 0
+            };
+        ''')
+        self.assertEqual(result['callsAfterFirst'], 1, 'first visit must fetch the capped log batch exactly once')
+        self.assertEqual(result['callsAfterSecond'], 1, 'second visit must reuse tabDataCache, not refetch')
+        self.assertTrue(result['hasTable'])
+
+    def test_render_log_analysis_view_defers_non_default_tab_fetch(self):
+        """Simulates a full log-mode render: only the default tab (sigmaalert,
+        since its count is > 0) should be selected; the other tab's (log) full
+        batch must remain unfetched until the user actually switches to it via
+        loadTabData - proving _renderLogAnalysisView no longer eagerly fetches
+        both datasets up front."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var sectionLog = document.createElement('div');
+            sectionLog.id = 'section-log';
+            document.body.appendChild(sectionLog);
+            var sectionSigma = document.createElement('div');
+            sectionSigma.id = 'section-sigmaalert';
+            document.body.appendChild(sectionSigma);
+
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0 && url.indexOf('type=log') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { timestamp: '2024-01-01T00:00:00Z', json_data: { Channel: 'Security' } },
+                        { timestamp: '2024-01-01T00:00:00Z', json_data: { Channel: 'System' } },
+                        { timestamp: '2024-01-01T00:00:00Z', json_data: { Channel: 'Security' } }
+                    ]) });
+                }
+                if (url.indexOf('/api/sigma-alerts') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { severity: 'high', rule_title: 'R1', mitre_techniques: '[]', logsource: 'windows', original_log: '{}' }
+                    ]) });
+                }
+                if (url.indexOf('/api/sigma-count') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ count: 1 }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({}) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            advancedMode = false;
+            isLogAnalysisMode = true;
+            function logCalls() { return fetchCalls.filter(u => u.indexOf('/api/events') >= 0 && u.indexOf('type=log') >= 0).length; }
+
+            await _renderLogAnalysisView({ log: 3, sigmaalert: 1 });
+            var logFetchesAfterInitialRender = logCalls();
+
+            // Re-assert for the same background-init()-race reason as above.
+            isLogAnalysisMode = true;
+            await loadTabData('log', null);
+            var logFetchesAfterVisit = logCalls();
+
+            window.__jsdom_result = {
+                logFetchesAfterInitialRender: logFetchesAfterInitialRender,
+                logFetchesAfterVisit: logFetchesAfterVisit
+            };
+        ''')
+        self.assertEqual(result['logFetchesAfterInitialRender'], 0,
+                         'the non-default (log) tab must not be fetched just from the initial render')
+        self.assertEqual(result['logFetchesAfterVisit'], 1,
+                         'switching to the log tab must trigger exactly one fetch of its capped batch')
+
 
 class TestXSSPreventionLogAnalysis(unittest.TestCase):
     def _get_function_body(self, func_name):
@@ -3412,10 +4409,13 @@ class TestXSSPreventionLogAnalysis(unittest.TestCase):
                       'severity must be passed through htmlRowText')
         self.assertIn("htmlRowText('Log Source', alert.logsource)", func_body,
                       'logsource must be passed through htmlRowText')
-        self.assertIn('escapeHtml(tid)', func_body,
+        self.assertIn('mitreTechniquesHtml(alert.mitre_techniques)', func_body,
+                      'MITRE techniques must be rendered via the shared helper')
+        mitre_body = self._get_function_body('mitreTechniquesHtml')
+        self.assertIn('escapeHtml(tid)', mitre_body,
                       'MITRE technique ID must be escaped')
-        self.assertIn('escapeHtml(t)', func_body,
-                      'Sigma tags must be escaped')
+        self.assertIn("htmlRowText('Tags', tagsText)", func_body,
+                      'Sigma tags must be passed through htmlRowText for escaping')
 
     def test_buildLogEventRow_escapes_all_fields(self):
         """buildLogEventRow must escape timestamp, column values, and detail."""
@@ -3550,8 +4550,12 @@ class TestXSSPreventionLogAnalysis(unittest.TestCase):
         self.assertTrue(result['hasEncodedInHref'],
                         'MITRE technique ID must be encoded in href URL')
 
-    def test_buildLogEventRow_escapes_all_fields(self):
-        """buildLogEventRow must escape timestamp, column values, and detail."""
+    def test_buildLogEventRow_escapes_malicious_payloads(self):
+        """REGRESSION: this collided with the static source-check test of the
+        same name above (test_buildLogEventRow_escapes_all_fields) - Python
+        silently lets the later definition shadow the earlier one in a
+        class body, so the static check was never actually running. Renamed
+        so both tests execute."""
         from tests.jsdom_helper import js_statements
         event = {
             'timestamp': '<script>alert(1)</script>',
@@ -3569,8 +4573,12 @@ class TestXSSPreventionLogAnalysis(unittest.TestCase):
         self.assertFalse(result['hasUnescapedScript'])
         self.assertFalse(result['hasUnescapedImg'])
 
-    def test_buildSigmaAlertRow_escapes_all_fields(self):
-        """buildSigmaAlertRow must escape timestamp, severity, rule title, and logsource."""
+    def test_buildSigmaAlertRow_escapes_malicious_payloads(self):
+        """REGRESSION: this collided with the static source-check test of the
+        same name above (test_buildSigmaAlertRow_escapes_all_fields) - Python
+        silently lets the later definition shadow the earlier one in a
+        class body, so the static check was never actually running. Renamed
+        so both tests execute."""
         from tests.jsdom_helper import js_statements
         alert = {
             'timestamp': '<script>alert(1)</script>',
@@ -3623,7 +4631,13 @@ class TestXSSPreventionLogAnalysis(unittest.TestCase):
             section.id = 'section-sigmaalert';
             document.body.appendChild(section);
             var alerts = {json.dumps(alerts)};
-            buildSigmaAlertSectionContent('section-sigmaalert', alerts);
+            window.fetch = function(url) {{
+                if (url.indexOf('/api/sigma-count') >= 0) {{
+                    return Promise.resolve({{ json: () => Promise.resolve({{ count: alerts.length }}) }});
+                }}
+                return Promise.resolve({{ json: () => Promise.resolve(alerts) }});
+            }};
+            await buildSigmaAlertSectionContent('section-sigmaalert', alerts);
             var html = section.innerHTML;
             window.__jsdom_result = {{
                 hasUnescapedScript: html.indexOf('<script>') >= 0
@@ -3867,6 +4881,2238 @@ class TestHelpModalUI(unittest.TestCase):
         self.assertFalse(result['hasWide'], 'helpModal must NOT have "wide" class in analysis mode')
         self.assertTrue(result['hasActive'], 'helpModal must have "active" class after showHelpModal')
         self.assertEqual(result['title'], 'Analysis Help', 'Title must be Analysis Help in analysis mode')
+
+
+class TestComputeFilteredStatsLaziness(unittest.TestCase):
+    """computeFilteredStats must avoid fetching the full allEvents batch
+    except when a column filter is actually active - the whole point of
+    making allEvents population lazy instead of eager on every load/search."""
+
+    def test_no_filter_makes_no_fetch(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchCalls = [];
+            window.fetch = function(url) { fetchCalls.push(url); return Promise.resolve({ json: () => Promise.resolve({}) }); };
+            currentFilters = {};
+            isLogAnalysisMode = false;
+            var result = await computeFilteredStats();
+            window.__jsdom_result = {
+                relevantCalls: fetchCalls.filter(u => u.indexOf('/api/events') >= 0 || u.indexOf('/api/count') >= 0).length,
+                result: result
+            };
+        ''')
+        self.assertEqual(result['relevantCalls'], 0,
+                         'computeFilteredStats must not fetch allEvents when no column filter is active')
+
+    def test_active_filter_with_uncached_allEvents_fetches_once(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { event_type: 'alert', proto: 'TCP' },
+                        { event_type: 'alert', proto: 'UDP' },
+                        { event_type: 'dns', proto: 'UDP' }
+                    ]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({}) });
+            };
+            currentFilters = { 'Protocol': 'UDP' };
+            isLogAnalysisMode = false;
+            var result = await computeFilteredStats();
+            window.__jsdom_result = {
+                relevantCalls: fetchCalls.filter(u => u.indexOf('/api/events') >= 0).length,
+                eventsUrlHasType: fetchCalls.some(u => u.indexOf('/api/events') >= 0 && u.indexOf('type=') >= 0),
+                result: result
+            };
+        ''')
+        self.assertEqual(result['relevantCalls'], 1,
+                         'computeFilteredStats must fetch allEvents exactly once when a filter is active and nothing is cached')
+        self.assertFalse(result['eventsUrlHasType'],
+                         'the merged all-types query must not include a type= param')
+        self.assertEqual(result['result'], {'alert': 1, 'dns': 1},
+                         'counts must reflect only events matching the active column filter')
+
+    def test_active_filter_with_cached_allEvents_makes_no_additional_fetch(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { event_type: 'alert', proto: 'TCP' },
+                        { event_type: 'dns', proto: 'UDP' }
+                    ]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({}) });
+            };
+            currentFilters = {};
+            isLogAnalysisMode = false;
+            await ensureCappedBatch('all');
+            var callsAfterEnsure = fetchCalls.filter(u => u.indexOf('/api/events') >= 0).length;
+            currentFilters = { 'Protocol': 'TCP' };
+            var result = await computeFilteredStats();
+            window.__jsdom_result = {
+                callsAfterEnsure: callsAfterEnsure,
+                callsAfterStats: fetchCalls.filter(u => u.indexOf('/api/events') >= 0).length,
+                result: result
+            };
+        ''')
+        self.assertEqual(result['callsAfterEnsure'], 1)
+        self.assertEqual(result['callsAfterStats'], 1,
+                         'computeFilteredStats must reuse an already-cached allEvents, not refetch')
+        self.assertEqual(result['result'], {'alert': 1})
+
+    def test_log_mode_no_filter_makes_no_fetch(self):
+        """Mirrors the non-log-mode fast path: with no active column filter,
+        eventStats (already populated by the cheap /api/count + /api/sigma-count
+        counts fetched on load) is returned directly - no need to touch the
+        full arrays or fetch anything. (eventStats is let-scoped inside
+        socrates.js, so it can't be injected with a custom value from a
+        separate eval call - this only checks the zero-fetch behavior, same
+        as the equivalent non-log-mode test above.)"""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchCalls = [];
+            window.fetch = function(url) { fetchCalls.push(url); return Promise.resolve({ json: () => Promise.resolve({}) }); };
+            currentFilters = {};
+            isLogAnalysisMode = true;
+            var result = await computeFilteredStats();
+            window.__jsdom_result = {
+                relevantCalls: fetchCalls.filter(u => u.indexOf('/api/events') >= 0 || u.indexOf('/api/sigma-alerts') >= 0).length
+            };
+        ''')
+        self.assertEqual(result['relevantCalls'], 0,
+                         'log-mode computeFilteredStats must not fetch full batches when no column filter is active')
+
+    def test_log_mode_active_filter_with_uncached_data_fetches_once_each(self):
+        """With a filter active and nothing cached yet, computeFilteredStats
+        must hydrate both tabDataCache['log'] and ['sigmaalert'] via
+        ensureCappedBatch (exactly once each) before counting matches."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0 && url.indexOf('type=log') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { timestamp: '2024-01-01T00:00:00Z', json_data: { Channel: 'Security' } },
+                        { timestamp: '2024-01-01T00:00:00Z', json_data: { Channel: 'System' } }
+                    ]) });
+                }
+                if (url.indexOf('/api/sigma-alerts') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { severity: 'high', rule_title: 'R1', mitre_techniques: '[]', logsource: 'windows', original_log: '{}' }
+                    ]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({}) });
+            };
+            currentFilters = { 'Channel': 'Security' };
+            isLogAnalysisMode = true;
+            var result = await computeFilteredStats();
+            window.__jsdom_result = {
+                logCalls: fetchCalls.filter(u => u.indexOf('/api/events') >= 0 && u.indexOf('type=log') >= 0).length,
+                sigmaCalls: fetchCalls.filter(u => u.indexOf('/api/sigma-alerts') >= 0).length,
+                result: result
+            };
+        ''')
+        self.assertEqual(result['logCalls'], 1,
+                         'must fetch the full log batch exactly once via ensureCappedBatch when a filter is active')
+        self.assertEqual(result['sigmaCalls'], 1,
+                         'must fetch the full sigma-alert batch exactly once via ensureCappedBatch when a filter is active')
+        self.assertEqual(result['result'], {'log': 1},
+                         'counts must reflect only items matching the active column filter')
+
+    def test_log_mode_active_filter_with_cached_data_makes_no_additional_fetch(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0 && url.indexOf('type=log') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { timestamp: '2024-01-01T00:00:00Z', json_data: { Channel: 'Security' } }
+                    ]) });
+                }
+                if (url.indexOf('/api/sigma-alerts') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({}) });
+            };
+            currentFilters = {};
+            isLogAnalysisMode = true;
+            await ensureCappedBatch('log');
+            await ensureCappedBatch('sigmaalert');
+            function relevantCalls() {
+                return fetchCalls.filter(u => (u.indexOf('/api/events') >= 0 && u.indexOf('type=log') >= 0) || u.indexOf('/api/sigma-alerts') >= 0).length;
+            }
+            var callsAfterEnsure = relevantCalls();
+            currentFilters = { 'Channel': 'Security' };
+            // Re-assert isLogAnalysisMode immediately before the call under
+            // test: the app's own init() (auto-run on module load, since no
+            // ?file= param is present in this environment) resolves to
+            // showWelcome() -> clearAnalysisContainers() in the background,
+            // which resets isLogAnalysisMode to false - the two awaited
+            // ensureCappedBatch calls above give it enough event-loop turns
+            // to do so before this point. That same background chain also
+            // makes its own unrelated fetch calls (e.g. /api/analyses), so
+            // relevantCalls() filters to only the URLs this test cares about.
+            isLogAnalysisMode = true;
+            var result = await computeFilteredStats();
+            window.__jsdom_result = {
+                callsAfterEnsure: callsAfterEnsure,
+                callsAfterStats: relevantCalls(),
+                result: result
+            };
+        ''')
+        self.assertEqual(result['callsAfterEnsure'], 2)
+        self.assertEqual(result['callsAfterStats'], 2,
+                         'computeFilteredStats must reuse already-cached tabDataCache entries, not refetch')
+        self.assertEqual(result['result'], {'log': 1})
+
+
+class TestSankeyServerAggregation(unittest.TestCase):
+    """updateSankeyDiagram must use the lightweight server-aggregated
+    /api/sankey-data endpoint when no column filter is active (so the
+    diagram can stay visible by default without needing a full capped
+    batch), and fall back to the existing client-side buildSankeyData
+    path unchanged when a filter is active."""
+
+    def _make_section(self, event_type='dns'):
+        return f'''
+            var section = document.createElement('div');
+            section.className = 'section';
+            section.id = 'section-{event_type}';
+            document.body.appendChild(section);
+        '''
+
+    def test_no_filter_uses_server_endpoint_not_full_batch(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('dns') + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/sankey-data') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ nodes: [], links: [] }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            diagramMode = true;
+            await updateSankeyDiagram();
+            window.__jsdom_result = {
+                sankeyCalls: fetchCalls.filter(u => u.indexOf('/api/sankey-data') >= 0).length,
+                sankeyUrlHasType: fetchCalls.some(u => u.indexOf('/api/sankey-data') >= 0 && u.indexOf('type=dns') >= 0),
+                fullBatchCalls: fetchCalls.filter(u => u.indexOf('/api/events') >= 0 && u.indexOf('limit=') >= 0).length
+            };
+        ''')
+        self.assertEqual(result['sankeyCalls'], 1,
+                         'updateSankeyDiagram must fetch /api/sankey-data exactly once when no filter is active')
+        self.assertTrue(result['sankeyUrlHasType'],
+                        'the sankey-data request must be scoped to the visible tab\'s event type')
+        self.assertEqual(result['fullBatchCalls'], 0,
+                         'updateSankeyDiagram must not trigger the full capped-batch fetch when it can use the server endpoint')
+
+    def test_active_filter_falls_back_to_client_side_build(self):
+        from tests.jsdom_helper import js_statements
+        dns_events = [
+            {'event_type': 'dns', 'proto': 'UDP', 'src_ip': '1.1.1.1', 'dest_ip': '2.2.2.2', 'dest_port': 53},
+            {'event_type': 'dns', 'proto': 'TCP', 'src_ip': '1.1.1.1', 'dest_ip': '3.3.3.3', 'dest_port': 53}
+        ]
+        result = js_statements(self._make_section('dns') + f'''
+            var fetchCalls = [];
+            window.fetch = function(url) {{
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) {{
+                    return Promise.resolve({{ json: () => Promise.resolve({json.dumps(dns_events)}) }});
+                }}
+                return Promise.resolve({{ json: () => Promise.resolve([]) }});
+            }};
+            currentMd5 = 'abc123';
+            currentFilters = {{ 'Protocol': 'UDP' }};
+            currentSearch = [];
+            diagramMode = true;
+            // Populate tabDataCache via the real ensureCappedBatch path (tabDataCache
+            // itself is let-scoped inside socrates.js and not writable directly from
+            // a separate eval call).
+            await ensureCappedBatch('dns');
+            fetchCalls.length = 0;
+            await updateSankeyDiagram();
+            window.__jsdom_result = {{
+                sankeyCalls: fetchCalls.filter(u => u.indexOf('/api/sankey-data') >= 0).length,
+                panelHtml: document.getElementById('sankeyPanel').innerHTML
+            }};
+        ''', with_d3=True)
+        self.assertEqual(result['sankeyCalls'], 0,
+                         'updateSankeyDiagram must not call /api/sankey-data when a column filter is active')
+        self.assertIn('sankey-content', result['panelHtml'],
+                      'the diagram must still render via the client-side fallback when filtered')
+
+    def test_needsFullBatch_diagram_condition_depends_on_filter_state(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            advancedMode = false;
+            diagramMode = true;
+            currentFilters = {};
+            var noFilterDns = needsFullBatch('dns');
+            currentFilters = { 'Protocol': 'TCP' };
+            var withFilterDns = needsFullBatch('dns');
+            currentFilters = {};
+            var noFilterLog = needsFullBatch('log');
+            var noFilterSigma = needsFullBatch('sigmaalert');
+            window.__jsdom_result = {
+                noFilterDns: noFilterDns,
+                withFilterDns: withFilterDns,
+                noFilterLog: noFilterLog,
+                noFilterSigma: noFilterSigma
+            };
+        ''')
+        self.assertFalse(result['noFilterDns'],
+                         'diagram must not force a full batch when no filter is active (server endpoint covers it)')
+        self.assertTrue(result['withFilterDns'],
+                        'diagram must force a full batch when a filter is active (server endpoint cannot be used)')
+        self.assertFalse(result['noFilterLog'],
+                         'log tab has no diagram, so it must never force a full batch for diagram purposes')
+        self.assertFalse(result['noFilterSigma'],
+                         'sigma-alert tab has no diagram, so it must never force a full batch for diagram purposes')
+
+    def test_renders_real_svg_from_server_payload(self):
+        """Shape-compatibility test: a real /api/sankey-data payload must
+        flow through renderSankeySVG (backed by the real d3/d3-sankey
+        libraries, not a mock) and produce an actual <svg> element."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('flow') + '''
+            window.fetch = function(url) {
+                if (url.indexOf('/api/sankey-data') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        nodes: [
+                            { id: '0:1.1.1.1', name: '1.1.1.1', column: 0 },
+                            { id: '1:2.2.2.2', name: '2.2.2.2', column: 1 },
+                            { id: '2:80', name: '80', column: 2 }
+                        ],
+                        links: [
+                            { source: '0:1.1.1.1', target: '1:2.2.2.2', value: 4 },
+                            { source: '1:2.2.2.2', target: '2:80', value: 4 }
+                        ]
+                    }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            diagramMode = true;
+            await updateSankeyDiagram();
+            var panel = document.getElementById('sankeyPanel');
+            window.__jsdom_result = {
+                svgCount: panel.querySelectorAll('svg').length,
+                rectCount: panel.querySelectorAll('rect').length
+            };
+        ''', with_d3=True)
+        self.assertEqual(result['svgCount'], 1,
+                         'a real server-shaped payload must render exactly one <svg> via the unchanged renderSankeySVG')
+        self.assertEqual(result['rectCount'], 3,
+                         'each of the 3 supplied nodes must produce a rendered node rect')
+
+    def test_empty_server_payload_shows_collapsed_toggle(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('dns') + '''
+            window.fetch = function(url) {
+                if (url.indexOf('/api/sankey-data') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ nodes: [], links: [] }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            diagramMode = true;
+            await updateSankeyDiagram();
+            window.__jsdom_result = {
+                panelHtml: document.getElementById('sankeyPanel').innerHTML
+            };
+        ''')
+        self.assertIn('▾ Sankey Diagram', result['panelHtml'],
+                      'an empty server payload must render the same empty-state toggle bar as the empty-events case')
+        self.assertNotIn('sankey-content', result['panelHtml'],
+                         'an empty server payload must not render a sankey-content container')
+
+    def test_applyFilters_and_clearFilter_refresh_sankey_diagram(self):
+        """REGRESSION: applyFilters/clearFilter must call updateSankeyDiagram
+        so the diagram actually refreshes on filter apply/clear (previously
+        missing - the diagram would never transition between the server and
+        client-side modes when a filter was toggled)."""
+        applyFunc = JS_CONTENT.split('async function applyFilters(')[1].split('async function clearFilter(')[0]
+        clearFunc = JS_CONTENT.split('async function clearFilter(')[1].split('function applyFilter(')[0]
+        self.assertIn('updateSankeyDiagram()', applyFunc,
+                      'applyFilters must call updateSankeyDiagram to refresh the diagram')
+        self.assertIn('updateSankeyDiagram()', clearFunc,
+                      'clearFilter must call updateSankeyDiagram to refresh the diagram')
+
+    def test_loadAnalysis_awaits_default_tab_before_sankey(self):
+        """REGRESSION: loadAnalysis's PCAP branch must await loadTabData(eventTypes[0])
+        before any subsequent updateSankeyDiagram() call. Firing loadTabData without
+        awaiting it let updateSankeyDiagram's bumpFetchGeneration() race with
+        loadTabData's own in-flight fetchEventsPage call, so buildSection's
+        isStaleFetch guard silently dropped the initial row-table render, leaving
+        the default tab stuck on 'Loading...' forever."""
+        func = JS_CONTENT.split('async function loadAnalysis(')[1].split('async function ')[0]
+        self.assertIn('await loadTabData(eventTypes[0])', func,
+                      'loadAnalysis must await loadTabData for the default tab')
+
+    def test_default_tab_renders_table_not_stuck_loading(self):
+        """Behavioral reproduction of the race: firing loadTabData without await,
+        immediately followed by updateSankeyDiagram(), must leave the section
+        stuck on 'Loading...' - awaiting loadTabData first (the fix) must not."""
+        from tests.jsdom_helper import js_statements
+        setup = self._make_section('dns') + '''
+            document.getElementById('section-dns').innerHTML = '<div class="loading">Loading...</div>';
+            var sankeyPanel = document.createElement('div');
+            sankeyPanel.id = 'sankeyPanel';
+            document.body.appendChild(sankeyPanel);
+            window.fetch = function(url) {
+                if (url.indexOf('/api/sankey-data') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ nodes: [], links: [] }) });
+                }
+                if (url.indexOf('/api/events') >= 0 || url.indexOf('/api/count') >= 0) {
+                    return new Promise(resolve => setTimeout(() => resolve({
+                        json: () => Promise.resolve(url.indexOf('/api/count') >= 0 ? { count: 1 } : [{ event_type: 'dns', src_ip: '1.1.1.1' }])
+                    }), 20));
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc';
+            currentFilters = {};
+            currentSearch = [];
+            diagramMode = true;
+            advancedMode = false;
+        '''
+        fixed = js_statements(setup + '''
+            await loadTabData('dns');
+            await updateSankeyDiagram();
+            window.__jsdom_result = {
+                stillLoading: document.getElementById('section-dns').innerHTML.indexOf('Loading...') >= 0
+            };
+        ''')
+        self.assertFalse(fixed['stillLoading'],
+                         'awaiting loadTabData before updateSankeyDiagram must let the table render')
+
+        raced = js_statements(setup + '''
+            loadTabData('dns');
+            await updateSankeyDiagram();
+            await new Promise(r => setTimeout(r, 50));
+            window.__jsdom_result = {
+                stillLoading: document.getElementById('section-dns').innerHTML.indexOf('Loading...') >= 0
+            };
+        ''')
+        self.assertTrue(raced['stillLoading'],
+                        'sanity check: firing loadTabData without awaiting it must reproduce the stale-fetch race')
+
+
+class TestAggregationServerFetch(unittest.TestCase):
+    """buildAggregationsSection must use the lightweight server-aggregated
+    /api/aggregation-data endpoint when no column filter is active (so the
+    'advanced' view can open without needing the full capped batch), and
+    fall back to the existing client-side buildAggregationTables path
+    unchanged when a filter is active or the tab is log/sigmaalert/binary/
+    'all' (all bespoke, out of scope)."""
+
+    def _make_section(self, event_type='alert'):
+        return f'''
+            var section = document.createElement('div');
+            section.className = 'section';
+            section.id = 'section-{event_type}';
+            document.body.appendChild(section);
+            var aggContainer = document.createElement('div');
+            aggContainer.id = 'aggregations';
+            document.body.appendChild(aggContainer);
+        '''
+
+    def test_canUseServerAggregation_matrix(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentFilters = {};
+            var eligibleNoFilter = canUseServerAggregation('alert');
+            currentFilters = { 'Protocol': 'TCP' };
+            var eligibleWithFilter = canUseServerAggregation('alert');
+            currentFilters = {};
+            var allType = canUseServerAggregation('all');
+            var logType = canUseServerAggregation('log');
+            var sigmaType = canUseServerAggregation('sigmaalert');
+            var binaryType = canUseServerAggregation('binary');
+            var mqttType = canUseServerAggregation('mqtt');
+            var noType = canUseServerAggregation(null);
+            window.__jsdom_result = {
+                eligibleNoFilter: eligibleNoFilter,
+                eligibleWithFilter: eligibleWithFilter,
+                allType: allType,
+                logType: logType,
+                sigmaType: sigmaType,
+                binaryType: binaryType,
+                mqttType: mqttType,
+                noType: noType
+            };
+        ''')
+        self.assertTrue(result['eligibleNoFilter'], 'a normal per-type tab with no filter must be eligible')
+        self.assertFalse(result['eligibleWithFilter'], 'an active column filter must disable the server path')
+        self.assertTrue(result['allType'], "'all' now has a SQL equivalent for Type/Detail (db.py's _all_events_detail_expr)")
+        self.assertFalse(result['logType'], 'log has bespoke dynamic columns, must stay client-side')
+        self.assertFalse(result['sigmaType'], 'sigmaalert has bespoke dynamic columns, must stay client-side')
+        self.assertFalse(result['binaryType'], 'binary mode has no per-type aggregation server route')
+        self.assertFalse(result['mqttType'], 'mqtt fields are dynamically keyed by message subtype - no static JSON path server-side, must stay client-side like log/sigmaalert')
+        self.assertFalse(result['noType'])
+
+    def test_needsFullBatch_advanced_mode_condition_depends_on_eligibility(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            diagramMode = false;
+            advancedMode = true;
+            currentFilters = {};
+            var eligibleNoFilter = needsFullBatch('alert');
+            currentFilters = { 'Category': 'Trojan' };
+            var eligibleWithFilter = needsFullBatch('alert');
+            currentFilters = {};
+            var logType = needsFullBatch('log');
+            var sigmaType = needsFullBatch('sigmaalert');
+            advancedMode = false;
+            var advancedOff = needsFullBatch('alert');
+            window.__jsdom_result = {
+                eligibleNoFilter: eligibleNoFilter,
+                eligibleWithFilter: eligibleWithFilter,
+                logType: logType,
+                sigmaType: sigmaType,
+                advancedOff: advancedOff
+            };
+        ''')
+        self.assertFalse(result['eligibleNoFilter'],
+                         'advancedMode alone must not force a full batch for an eligible type with no filter')
+        self.assertTrue(result['eligibleWithFilter'],
+                        'advancedMode + an active filter must still force a full batch')
+        self.assertTrue(result['logType'], 'log must always force a full batch in advanced mode')
+        self.assertTrue(result['sigmaType'], 'sigmaalert must always force a full batch in advanced mode')
+        self.assertFalse(result['advancedOff'], 'advancedMode off must never force a full batch by itself')
+
+    def test_no_filter_uses_server_endpoint_not_full_batch(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('alert') + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/aggregation-data') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        'Category': [{value: 'Trojan', count: 2}]
+                    }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            advancedMode = true;
+            await buildAggregationsSection('alert', []);
+            window.__jsdom_result = {
+                aggCalls: fetchCalls.filter(u => u.indexOf('/api/aggregation-data') >= 0).length,
+                aggUrlHasType: fetchCalls.some(u => u.indexOf('/api/aggregation-data') >= 0 && u.indexOf('type=alert') >= 0),
+                fullBatchCalls: fetchCalls.filter(u => u.indexOf('/api/events') >= 0 && u.indexOf('limit=') >= 0).length,
+                aggHtml: document.getElementById('aggregations').innerHTML
+            };
+        ''')
+        self.assertEqual(result['aggCalls'], 1,
+                         'buildAggregationsSection must fetch /api/aggregation-data exactly once when no filter is active')
+        self.assertTrue(result['aggUrlHasType'])
+        self.assertEqual(result['fullBatchCalls'], 0,
+                         'buildAggregationsSection must not trigger the full capped-batch fetch when it can use the server endpoint')
+        self.assertIn('Trojan', result['aggHtml'])
+
+    def test_active_filter_falls_back_to_client_side_build(self):
+        from tests.jsdom_helper import js_statements
+        alert_events = [
+            {'event_type': 'alert', 'proto': 'TCP', 'src_ip': '1.1.1.1', 'dest_ip': '2.2.2.2', 'dest_port': 80,
+             'alert': {'signature': 'Sig', 'category': 'Real Category', 'severity': 1}},
+        ]
+        result = js_statements(self._make_section('alert') + f'''
+            var fetchCalls = [];
+            window.fetch = function(url) {{
+                fetchCalls.push(url);
+                return Promise.resolve({{ json: () => Promise.resolve({json.dumps(alert_events)}) }});
+            }};
+            currentMd5 = 'abc123';
+            currentFilters = {{ 'Protocol': 'TCP' }};
+            currentSearch = [];
+            advancedMode = true;
+            await buildAggregationsSection('alert', {json.dumps(alert_events)});
+            window.__jsdom_result = {{
+                aggCalls: fetchCalls.filter(u => u.indexOf('/api/aggregation-data') >= 0).length,
+                aggHtml: document.getElementById('aggregations').innerHTML
+            }};
+        ''')
+        self.assertEqual(result['aggCalls'], 0,
+                         'buildAggregationsSection must not call /api/aggregation-data when a column filter is active')
+        self.assertIn('Real Category', result['aggHtml'],
+                      'the aggregation table must still render via the client-side fallback when filtered')
+
+    def test_advanced_mode_off_shows_collapsed_html(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('alert') + '''
+            window.fetch = function() { return Promise.resolve({ json: () => Promise.resolve({}) }); };
+            advancedMode = false;
+            await buildAggregationsSection('alert', []);
+            window.__jsdom_result = {
+                aggHtml: document.getElementById('aggregations').innerHTML
+            };
+        ''')
+        self.assertIn('Aggregation Tables', result['aggHtml'])
+
+    def test_toggleAggregations_no_filter_skips_ensureCappedBatch(self):
+        """REGRESSION: toggleAggregations previously called ensureCappedBatch
+        unconditionally before dispatching to buildAggregationsSection -
+        opening the advanced view for an eligible type with no filter must
+        not eagerly fetch the full batch."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('alert') + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/aggregation-data') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ 'Category': [{value: 'X', count: 1}] }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            diagramMode = false;
+            advancedMode = false;
+            await toggleAggregations();
+            window.__jsdom_result = {
+                fullBatchCalls: fetchCalls.filter(u => u.indexOf('/api/events') >= 0 && u.indexOf('limit=') >= 0).length,
+                aggCalls: fetchCalls.filter(u => u.indexOf('/api/aggregation-data') >= 0).length
+            };
+        ''')
+        self.assertEqual(result['fullBatchCalls'], 0,
+                         'toggleAggregations must not eagerly ensureCappedBatch for an eligible type with no filter')
+        self.assertEqual(result['aggCalls'], 1)
+
+
+class TestTruncationIndicator(unittest.TestCase):
+    """The query limit (now user-configurable via getUserQueryLimit(), default
+    75000, server ceiling 100000) makes hitting the cap rarer, not impossible.
+    ensureCappedBatch must track (via truncatedTypes) when a fetched batch is
+    known to be a partial subset of the true total, and the filter bar must
+    surface a warning for the currently-visible tab when truncated - without
+    ever showing an orphaned "Clear All" button when truncation is the only
+    active condition."""
+
+    def _make_section(self, event_type='dns'):
+        return f'''
+            var section = document.createElement('div');
+            section.className = 'section';
+            section.id = 'section-{event_type}';
+            document.body.appendChild(section);
+        '''
+
+    def test_ensureCappedBatch_marks_type_truncated_when_count_exceeds_fetch(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url.indexOf('/api/events') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([{event_type: 'dns'}, {event_type: 'dns'}]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({ count: 5 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            await ensureCappedBatch('dns');
+            window.__jsdom_result = { truncated: truncatedTypes.has('dns') };
+        ''')
+        self.assertTrue(result['truncated'],
+                         'ensureCappedBatch must mark a type truncated when the true count exceeds the fetched rows')
+
+    def test_ensureCappedBatch_clears_truncated_when_count_matches_fetch(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url.indexOf('/api/events') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([{event_type: 'dns'}, {event_type: 'dns'}]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({ count: 2 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            truncatedTypes.add('dns');
+            await ensureCappedBatch('dns');
+            window.__jsdom_result = { truncated: truncatedTypes.has('dns') };
+        ''')
+        self.assertFalse(result['truncated'],
+                          'ensureCappedBatch must clear a previously-truncated type once the full count is fetched')
+
+    def test_ensureCappedBatch_all_marks_truncated(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url.indexOf('/api/events') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([{event_type: 'dns'}]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({ count: 9 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            await ensureCappedBatch('all');
+            window.__jsdom_result = { truncated: truncatedTypes.has('all') };
+        ''')
+        self.assertTrue(result['truncated'],
+                         "ensureCappedBatch must mark 'all' truncated when the merged count exceeds fetched rows")
+
+    def test_ensureCappedBatch_sigmaalert_marks_truncated(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url.indexOf('/api/sigma-alerts') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([{severity: 'high'}]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({ count: 4 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            await ensureCappedBatch('sigmaalert');
+            window.__jsdom_result = { truncated: truncatedTypes.has('sigmaalert') };
+        ''')
+        self.assertTrue(result['truncated'],
+                         'ensureCappedBatch must mark sigmaalert truncated when the true count exceeds fetched rows')
+
+    def test_ensureCappedBatch_cache_hit_makes_no_extra_fetch(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([{event_type: 'dns'}]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({ count: 1 }) });
+            };
+            currentFilters = {};
+            currentSearch = [];
+            function relevantCalls() {
+                return fetchCalls.filter(u => u.indexOf('/api/events') >= 0 || u.indexOf('/api/count') >= 0).length;
+            }
+            await ensureCappedBatch('dns');
+            var callsAfterFirst = relevantCalls();
+            await ensureCappedBatch('dns');
+            window.__jsdom_result = { callsAfterFirst: callsAfterFirst, callsAfterSecond: relevantCalls() };
+        ''')
+        self.assertEqual(result['callsAfterFirst'], 2, 'first call must fetch both rows and count')
+        self.assertEqual(result['callsAfterSecond'], result['callsAfterFirst'],
+                          'a cached type must not trigger any additional fetch, including the count check')
+
+    def test_filter_bar_shows_warning_with_no_clear_all_when_truncated_only(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('dns') + '''
+            currentFilters = {};
+            currentSearch = [];
+            truncatedTypes.add('dns');
+            var html = buildFilterBarHtml();
+            window.__jsdom_result = {
+                hasClearAll: html.indexOf('Clear All') >= 0,
+                hasWarning: html.indexOf('may be incomplete') >= 0
+            };
+        ''')
+        self.assertFalse(result['hasClearAll'],
+                          'a truncation-only filter bar must not show a "Clear All" button with nothing to clear')
+        self.assertTrue(result['hasWarning'],
+                         'a truncated tab must show a truncation warning in the filter bar')
+
+    def test_filter_bar_unchanged_when_only_filters_active(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('dns') + '''
+            currentFilters = { 'Protocol': 'UDP' };
+            currentSearch = [];
+            truncatedTypes.clear();
+            var html = buildFilterBarHtml();
+            window.__jsdom_result = {
+                hasClearAll: html.indexOf('Clear All') >= 0,
+                hasWarning: html.indexOf('may be incomplete') >= 0
+            };
+        ''')
+        self.assertTrue(result['hasClearAll'],
+                        'the existing Clear All chip row must be unaffected when only a filter is active')
+        self.assertFalse(result['hasWarning'],
+                         'no truncation warning should appear when the tab is not truncated')
+
+    def test_filter_bar_shows_both_when_filtered_and_truncated(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('dns') + '''
+            currentFilters = { 'Protocol': 'UDP' };
+            currentSearch = [];
+            truncatedTypes.add('dns');
+            var html = buildFilterBarHtml();
+            window.__jsdom_result = {
+                hasClearAll: html.indexOf('Clear All') >= 0,
+                hasWarning: html.indexOf('may be incomplete') >= 0
+            };
+        ''')
+        self.assertTrue(result['hasClearAll'])
+        self.assertTrue(result['hasWarning'])
+
+    def test_updateFilterBarVisibility_shows_bar_when_truncated_only(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('dns') + '''
+            var container = document.createElement('div');
+            container.id = 'filterBarContainer';
+            document.body.appendChild(container);
+            currentFilters = {};
+            currentSearch = [];
+            truncatedTypes.add('dns');
+            updateFilterBarVisibility();
+            window.__jsdom_result = {
+                display: document.getElementById('filterBarContainer').style.display,
+                html: document.getElementById('filterBarContainer').innerHTML
+            };
+        ''')
+        self.assertEqual(result['display'], 'block',
+                         'the filter bar must be shown when the visible tab is truncated, even with no filter/search active')
+        self.assertNotIn('Clear All', result['html'])
+
+    def test_isCurrentTabTruncated_checks_visible_section_only(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('dns') + '''
+            truncatedTypes.add('flow');
+            var notTruncated = isCurrentTabTruncated();
+            truncatedTypes.add('dns');
+            var truncated = isCurrentTabTruncated();
+            window.__jsdom_result = { notTruncated: notTruncated, truncated: truncated };
+        ''')
+        self.assertFalse(result['notTruncated'],
+                         'a truncated type other than the currently-visible tab must not trigger the indicator')
+        self.assertTrue(result['truncated'])
+
+    def test_sortCurrentTable_calls_updateFilterBarVisibility(self):
+        func = JS_CONTENT.split('async function sortCurrentTable(')[1].split('const EMPTY_FILTER_STATE_HTML')[0]
+        self.assertIn('updateFilterBarVisibility()', func,
+                      'sortCurrentTable must refresh the filter bar so a sort-triggered truncation is surfaced '
+                      '(a bare sort touches neither currentFilters nor currentSearch)')
+
+    def test_toggleDiagram_calls_updateFilterBarVisibility(self):
+        func = JS_CONTENT.split('async function toggleDiagram(')[1].split('async function toggleAggregations(')[0]
+        self.assertIn('updateFilterBarVisibility()', func,
+                      'toggleDiagram must refresh the filter bar after ensureCappedBatch may have changed truncatedTypes')
+
+    def test_toggleAggregations_calls_updateFilterBarVisibility(self):
+        func = JS_CONTENT.split('async function toggleAggregations(')[1].split('const typeLabels')[0]
+        self.assertEqual(func.count('updateFilterBarVisibility()'), 2,
+                         'both the binary-mode early-return branch and the main path must refresh the filter bar')
+
+    def test_refreshAnalysisData_clears_truncatedTypes(self):
+        func = JS_CONTENT.split('async function refreshAnalysisData(')[1].split('async function loadAnalysis(')[0]
+        self.assertIn('truncatedTypes.clear()', func,
+                      'refreshAnalysisData must clear truncatedTypes alongside the allEvents/tabDataCache reset it does on search change')
+
+    def test_loadAnalysis_clears_truncatedTypes(self):
+        func = JS_CONTENT.split('async function loadAnalysis(')[1].split('function loadSampleUrl(')[0]
+        self.assertIn('truncatedTypes.clear()', func,
+                      'loadAnalysis must clear truncatedTypes alongside the allEvents/tabDataCache reset it does on a fresh file load')
+
+    def test_loadAnalysis_guards_against_stale_fetch(self):
+        """REGRESSION: re-uploading the same pcap (same md5) after deleting the
+        analysis could show '0 events' persisting until a hard reload - a
+        late-resolving /api/stats response from a superseded loadAnalysis call
+        had no staleness check, so it could clobber eventStats with {} after a
+        newer, correct call already finished. loadAnalysis must bump the
+        fetchGeneration counter (the same mechanism updateSankeyDiagram already
+        uses) and bail before assigning eventStats if superseded."""
+        func = JS_CONTENT.split('async function loadAnalysis(')[1].split('function loadSampleUrl(')[0]
+        self.assertIn('const gen = bumpFetchGeneration();', func,
+                      'loadAnalysis must capture a fetch generation at the top')
+        gen_pos = func.find('const gen = bumpFetchGeneration();')
+        stats_assign_pos = func.find('eventStats = statsData.counts;')
+        guard_before_stats = func.rfind('if (isStaleFetch(gen)) return;', 0, stats_assign_pos)
+        self.assertNotEqual(guard_before_stats, -1,
+                            'loadAnalysis must check isStaleFetch before assigning eventStats')
+        self.assertLess(gen_pos, guard_before_stats,
+                        'the generation must be captured before the staleness check')
+        self.assertLess(guard_before_stats, stats_assign_pos,
+                        'the staleness check must run before eventStats is assigned')
+
+    def test_refreshAnalysisData_guards_against_stale_fetch(self):
+        func = JS_CONTENT.split('async function refreshAnalysisData(')[1].split('async function loadAnalysis(')[0]
+        self.assertIn('const gen = bumpFetchGeneration();', func,
+                      'refreshAnalysisData must capture a fetch generation')
+        gen_pos = func.find('const gen = bumpFetchGeneration();')
+        stats_assign_pos = func.find('eventStats = statsCounts;')
+        guard_before_stats = func.rfind('if (isStaleFetch(gen)) return;', 0, stats_assign_pos)
+        self.assertNotEqual(guard_before_stats, -1,
+                            'refreshAnalysisData must check isStaleFetch before assigning eventStats')
+        self.assertLess(gen_pos, guard_before_stats,
+                        'the generation must be captured before the staleness check')
+        self.assertLess(guard_before_stats, stats_assign_pos,
+                        'the staleness check must run before eventStats is assigned')
+
+    def test_confirmDelete_resets_stale_client_state(self):
+        """REGRESSION companion: showWelcome() never reset currentMd5/eventStats
+        after a delete (confirmed by direct testing - currentMd5 still held the
+        deleted analysis's md5 right after confirmDelete()). Re-uploading the
+        same file reuses the same md5, so without this reset a later stale
+        in-flight fetch from before the delete could be checked against a
+        currentMd5 that (coincidentally) still matches - confirmDelete must
+        reset the state directly and bump the fetch generation so any such
+        fetch is unambiguously rejected as stale."""
+        func = JS_CONTENT.split('async function confirmDelete(')[1].split('async function confirmDeleteAll(')[0]
+        for expected in ("currentMd5 = '';", 'eventStats = {};', 'baseEventStats = {};',
+                         'tabDataCache = {};', 'bumpFetchGeneration();'):
+            self.assertIn(expected, func, f'confirmDelete must reset state: {expected}')
+
+    def test_confirmDeleteAll_resets_stale_client_state(self):
+        func = JS_CONTENT.split('async function confirmDeleteAll(')[1]
+        for expected in ("currentMd5 = '';", 'eventStats = {};', 'baseEventStats = {};',
+                         'tabDataCache = {};', 'bumpFetchGeneration();'):
+            self.assertIn(expected, func, f'confirmDeleteAll must reset state: {expected}')
+
+
+class TestUserConfigurableQueryLimit(unittest.TestCase):
+    """The row-cap used by ensureCappedBatch is now a user-configurable,
+    persisted setting (getUserQueryLimit(), backed by localStorage) rather
+    than a fixed CONFIG constant - validated on read (devtools-tampered
+    localStorage must not reach the fetch URL unclamped) and surfaced via a
+    Settings modal mirroring the existing Help modal's structure."""
+
+    def test_getUserQueryLimit_reads_valid_localStorage_value(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_maxQueryLimit', '55000');
+            window.__jsdom_result = { value: getUserQueryLimit() };
+        ''')
+        self.assertEqual(result['value'], 55000)
+
+    def test_getUserQueryLimit_falls_back_to_default_when_missing(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.removeItem('socrates_maxQueryLimit');
+            window.__jsdom_result = { value: getUserQueryLimit() };
+        ''')
+        self.assertEqual(result['value'], 75000)
+
+    def test_getUserQueryLimit_rejects_adversarial_values(self):
+        """Non-numeric, negative, and absurdly large values (including a
+        devtools-tampered localStorage entry) must all fall back to the
+        default rather than reaching a fetch URL unclamped."""
+        from tests.jsdom_helper import js_statements
+        adversarial = ['__proto__', 'Infinity', '9' * 30, '-5000', '0', 'NaN', '']
+        result = js_statements('''
+            var values = ''' + json.dumps(adversarial) + ''';
+            var results = values.map(function(v) {
+                localStorage.setItem('socrates_maxQueryLimit', v);
+                return getUserQueryLimit();
+            });
+            window.__jsdom_result = { results: results };
+        ''')
+        for v, r in zip(adversarial, result['results']):
+            self.assertEqual(r, 75000, f'adversarial value {v!r} must fall back to the default')
+
+    def test_getUserQueryLimit_rejects_out_of_range_values(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_maxQueryLimit', '500');
+            var tooLow = getUserQueryLimit();
+            localStorage.setItem('socrates_maxQueryLimit', '999999');
+            var tooHigh = getUserQueryLimit();
+            window.__jsdom_result = { tooLow: tooLow, tooHigh: tooHigh };
+        ''')
+        self.assertEqual(result['tooLow'], 75000, 'below the 1000 floor must fall back to the default')
+        self.assertEqual(result['tooHigh'], 75000, 'above the 500000 sanity ceiling must fall back to the default')
+
+    def test_ensureCappedBatch_uses_user_configured_limit(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_maxQueryLimit', '77000');
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([{event_type: 'dns'}]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({ count: 1 }) });
+            };
+            currentFilters = {};
+            currentSearch = [];
+            await ensureCappedBatch('dns');
+            window.__jsdom_result = {
+                usedConfiguredLimit: fetchCalls.some(u => u.indexOf('limit=77000') >= 0)
+            };
+        ''')
+        self.assertTrue(result['usedConfiguredLimit'],
+                        'ensureCappedBatch must fetch using the user-configured limit, not a fixed constant')
+
+    def test_truncation_message_uses_actual_fetched_count_not_a_constant(self):
+        """REGRESSION: the truncation warning previously hardcoded
+        CONFIG.MAX_QUERY_LIMIT.toLocaleString() - now that the limit is
+        user-configurable (and may itself still be clamped lower server-side),
+        the message must reflect the real fetched length instead."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var section = document.createElement('div');
+            section.className = 'section';
+            section.id = 'section-dns';
+            document.body.appendChild(section);
+
+            localStorage.setItem('socrates_maxQueryLimit', '77000');
+            window.fetch = function(url) {
+                if (url.indexOf('/api/events') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([{event_type: 'dns'}, {event_type: 'dns'}]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({ count: 9 }) });
+            };
+            currentFilters = {};
+            currentSearch = [];
+            await ensureCappedBatch('dns');
+            var html = buildFilterBarHtml();
+            window.__jsdom_result = {
+                mentionsActualCount: html.indexOf('first 2 matching') >= 0,
+                mentionsConfiguredLimit: html.indexOf('77,000') >= 0 || html.indexOf('77000') >= 0
+            };
+        ''')
+        self.assertTrue(result['mentionsActualCount'],
+                        'the warning must show the real fetched count (2), not the configured limit')
+        self.assertFalse(result['mentionsConfiguredLimit'],
+                         'the warning must not show the configured limit itself when the real fetched count is much smaller')
+
+    def test_showSettingsModal_prefills_input_and_activates(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_maxQueryLimit', '42000');
+            window.fetch = function() { return Promise.resolve({ json: () => Promise.resolve({ maxQueryLimit: 100000 }) }); };
+            showSettingsModal();
+            window.__jsdom_result = {
+                inputValue: document.getElementById('maxQueryLimitInput').value,
+                isActive: document.getElementById('settingsModal').classList.contains('active')
+            };
+        ''')
+        self.assertEqual(result['inputValue'], '42000')
+        self.assertTrue(result['isActive'])
+
+    def test_showSettingsModal_degrades_gracefully_when_limits_fetch_fails(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function() { return Promise.reject(new Error('offline')); };
+            showSettingsModal();
+            window.__jsdom_result = {
+                isActive: document.getElementById('settingsModal').classList.contains('active'),
+                hintHasDefault: document.getElementById('settingsHint').textContent.indexOf('Default') >= 0
+            };
+        ''')
+        self.assertTrue(result['isActive'], 'the modal must still open even if /api/limits fails')
+        self.assertTrue(result['hintHasDefault'], 'the hint must still show the default when the server ceiling is unavailable')
+
+    def test_closeSettingsModal_removes_active_class(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            document.getElementById('settingsModal').classList.add('active');
+            closeSettingsModal();
+            window.__jsdom_result = { isActive: document.getElementById('settingsModal').classList.contains('active') };
+        ''')
+        self.assertFalse(result['isActive'])
+
+    def test_handleSettingsBackdropClick_closes_only_on_backdrop(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var modal = document.getElementById('settingsModal');
+            modal.classList.add('active');
+            handleSettingsBackdropClick({ target: modal });
+            var closedOnBackdrop = !modal.classList.contains('active');
+
+            modal.classList.add('active');
+            var inner = document.querySelector('#settingsModal .modal-content');
+            handleSettingsBackdropClick({ target: inner });
+            var stayedOpenOnContent = modal.classList.contains('active');
+
+            window.__jsdom_result = { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: stayedOpenOnContent };
+        ''')
+        self.assertTrue(result['closedOnBackdrop'])
+        self.assertTrue(result['stayedOpenOnContent'])
+
+    def test_saveSettings_rejects_value_below_floor(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            document.getElementById('maxQueryLimitInput').value = '500';
+            localStorage.removeItem('socrates_maxQueryLimit');
+            await saveSettings();
+            window.__jsdom_result = {
+                persisted: localStorage.getItem('socrates_maxQueryLimit'),
+                errorShown: document.getElementById('settingsError').style.display === 'block',
+                stillActive: !document.getElementById('settingsModal').classList.contains('active') || true
+            };
+        ''')
+        self.assertIsNone(result['persisted'], 'an invalid value must not be persisted')
+        self.assertTrue(result['errorShown'], 'an inline error must be shown for a value below the floor')
+
+    def test_saveSettings_clamps_value_above_server_ceiling_with_message(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var input = document.getElementById('maxQueryLimitInput');
+            input.value = '999999';
+            input.max = '100000';
+            localStorage.removeItem('socrates_maxQueryLimit');
+            await saveSettings();
+            window.__jsdom_result = {
+                persisted: localStorage.getItem('socrates_maxQueryLimit'),
+                inputValue: input.value,
+                errorText: document.getElementById('settingsError').textContent
+            };
+        ''')
+        self.assertIsNone(result['persisted'], 'an over-ceiling value must not be silently persisted on the first click')
+        self.assertEqual(result['inputValue'], '100000', 'the input must show the clamped suggestion')
+        self.assertIn('100,000', result['errorText'])
+
+    def test_saveSettings_persists_valid_value_and_closes_modal(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            document.getElementById('settingsModal').classList.add('active');
+            var input = document.getElementById('maxQueryLimitInput');
+            input.value = '60000';
+            input.max = '100000';
+            localStorage.removeItem('socrates_maxQueryLimit');
+            // The modal only closes once neither Settings field is blocking
+            // (see TestUserConfigurableUploadSize) -- give the other field a
+            // valid value too, matching what showSettingsModal() would have
+            // already prefilled in real usage.
+            document.getElementById('maxUploadSizeInput').value = '1000';
+            await saveSettings();
+            window.__jsdom_result = {
+                persisted: localStorage.getItem('socrates_maxQueryLimit'),
+                isActive: document.getElementById('settingsModal').classList.contains('active')
+            };
+        ''')
+        self.assertEqual(result['persisted'], '60000')
+        self.assertFalse(result['isActive'], 'the modal must close after a successful save')
+
+    def test_saveSettings_skips_refresh_when_no_analysis_loaded(self):
+        """currentMd5 defaults to '' - saveSettings must not call
+        refreshAnalysisData when no analysis is currently loaded."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var refreshCalls = 0;
+            window.refreshAnalysisData = async function() { refreshCalls++; };
+            var input = document.getElementById('maxQueryLimitInput');
+            input.value = '60000';
+            localStorage.removeItem('socrates_maxQueryLimit');
+            await saveSettings();
+            window.__jsdom_result = { refreshCalls: refreshCalls };
+        ''')
+        self.assertEqual(result['refreshCalls'], 0)
+
+    def test_saveSettings_calls_refreshAnalysisData_only_when_md5_set(self):
+        """currentMd5 is let-scoped and can't be assigned across separate
+        eval calls in the JSDOM test harness (unlike the var-scoped globals),
+        so this is verified via source inspection rather than execution."""
+        func = JS_CONTENT.split('async function saveSettings()')[1].split('function showAnalysisUI')[0]
+        self.assertIn('if (currentMd5)', func,
+                      'saveSettings must only refresh the loaded analysis when one is actually loaded')
+        self.assertIn('await refreshAnalysisData()', func)
+
+    def test_saveSettings_disables_save_button_around_refresh(self):
+        func = JS_CONTENT.split('async function saveSettings()')[1].split('function showAnalysisUI')[0]
+        self.assertIn('saveBtn.disabled = true', func)
+        self.assertIn('saveBtn.disabled = false', func)
+        self.assertIn('finally', func,
+                      'the Save button must be re-enabled in a finally block even if refreshAnalysisData throws')
+
+    def test_settings_menu_item_in_static_html(self):
+        self.assertIn('onclick="showSettingsModal(); closeMenu();"', HTML_CONTENT,
+                      'the static header menu markup must include a Settings item')
+
+    def test_settings_menu_item_in_renderGearMenu(self):
+        func = JS_CONTENT.split('function renderGearMenu()')[1].split('// Subtle code-rain background')[0]
+        self.assertIn('showSettingsModal(); closeMenu();', func,
+                      'the dynamically-rebuilt header menu template must also include a Settings item')
+
+
+class TestUserConfigurableUploadSize(unittest.TestCase):
+    """Mirrors TestUserConfigurableQueryLimit for the second Settings-modal
+    field: a user-configurable personal upload-size ceiling
+    (getUserMaxUploadSizeMB(), backed by localStorage), clamped server-side
+    to config.MAX_UPLOAD_SIZE and surfaced via the same Settings modal,
+    independent of the query-limit field's validation state."""
+
+    def test_getUserMaxUploadSizeMB_reads_valid_localStorage_value(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_maxUploadSizeMB', '2000');
+            window.__jsdom_result = { value: getUserMaxUploadSizeMB() };
+        ''')
+        self.assertEqual(result['value'], 2000)
+
+    def test_getUserMaxUploadSizeMB_falls_back_to_default_when_missing(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.removeItem('socrates_maxUploadSizeMB');
+            window.__jsdom_result = { value: getUserMaxUploadSizeMB() };
+        ''')
+        self.assertEqual(result['value'], 1000)
+
+    def test_getUserMaxUploadSizeMB_rejects_adversarial_values(self):
+        from tests.jsdom_helper import js_statements
+        adversarial = ['__proto__', 'Infinity', '9' * 30, '-500', '0', 'NaN', '']
+        result = js_statements('''
+            var values = ''' + json.dumps(adversarial) + ''';
+            var results = values.map(function(v) {
+                localStorage.setItem('socrates_maxUploadSizeMB', v);
+                return getUserMaxUploadSizeMB();
+            });
+            window.__jsdom_result = { results: results };
+        ''')
+        for v, r in zip(adversarial, result['results']):
+            self.assertEqual(r, 1000, f'adversarial value {v!r} must fall back to the default')
+
+    def test_getUserMaxUploadSizeMB_rejects_out_of_range_values(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_maxUploadSizeMB', '50');
+            var tooLow = getUserMaxUploadSizeMB();
+            localStorage.setItem('socrates_maxUploadSizeMB', '999999');
+            var tooHigh = getUserMaxUploadSizeMB();
+            window.__jsdom_result = { tooLow: tooLow, tooHigh: tooHigh };
+        ''')
+        self.assertEqual(result['tooLow'], 1000, 'below the 100 floor must fall back to the default')
+        self.assertEqual(result['tooHigh'], 1000, 'above the 20000 sanity ceiling must fall back to the default')
+
+    def test_upload_fetch_includes_resolved_size_header(self):
+        """uploadPcap and loadFromUrl both depend on DOM elements (#pcapUpload,
+        #pcapUrl) that only exist once a template string elsewhere in the app
+        has rendered them -- not in the jsdom harness's base DOM -- so, like
+        the existing currentMd5-dependent saveSettings tests above, this is
+        verified via source inspection rather than live execution."""
+        func = JS_CONTENT.split('async function uploadPcap')[1].split('async function checkStatus')[0]
+        self.assertIn("headers: {'X-Max-Upload-Size': String(getUserMaxUploadSizeMB() * 1024 * 1024)}", func,
+                      'uploadPcap must send the resolved upload-size limit as a header')
+
+    def test_load_url_body_includes_resolved_max_upload_size(self):
+        func = JS_CONTENT.split('async function loadFromUrl')[1].split('async function uploadPcap')[0]
+        self.assertIn('maxUploadSize: getUserMaxUploadSizeMB() * 1024 * 1024', func,
+                      'loadFromUrl must send the resolved upload-size limit in the request body')
+
+    def test_showSettingsModal_prefills_upload_size_input(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_maxUploadSizeMB', '2500');
+            window.fetch = function() {
+                return Promise.resolve({ json: () => Promise.resolve({ maxQueryLimit: 100000, maxUploadSize: 5000 * 1024 * 1024 }) });
+            };
+            showSettingsModal();
+            window.__jsdom_result = { inputValue: document.getElementById('maxUploadSizeInput').value };
+        ''')
+        self.assertEqual(result['inputValue'], '2500')
+
+    def test_showSettingsModal_degrades_gracefully_when_limits_fetch_fails(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function() { return Promise.reject(new Error('offline')); };
+            showSettingsModal();
+            window.__jsdom_result = {
+                isActive: document.getElementById('settingsModal').classList.contains('active'),
+                hintHasDefault: document.getElementById('uploadSizeHint').textContent.indexOf('Default') >= 0
+            };
+        ''')
+        self.assertTrue(result['isActive'], 'the modal must still open even if /api/limits fails')
+        self.assertTrue(result['hintHasDefault'], 'the hint must still show the default when the server ceiling is unavailable')
+
+    def test_saveSettings_rejects_value_below_floor_independent_of_other_field(self):
+        """An invalid upload-size value must not block the query-limit field
+        from persisting, and vice versa -- the two fields validate/persist
+        independently."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            document.getElementById('maxQueryLimitInput').value = '60000';
+            document.getElementById('maxQueryLimitInput').max = '100000';
+            document.getElementById('maxUploadSizeInput').value = '50';
+            localStorage.removeItem('socrates_maxQueryLimit');
+            localStorage.removeItem('socrates_maxUploadSizeMB');
+            await saveSettings();
+            window.__jsdom_result = {
+                queryLimitPersisted: localStorage.getItem('socrates_maxQueryLimit'),
+                uploadSizePersisted: localStorage.getItem('socrates_maxUploadSizeMB'),
+                uploadErrorShown: document.getElementById('uploadSizeError').style.display === 'block',
+                modalStillOpen: document.getElementById('settingsModal').classList.contains('active')
+            };
+        ''')
+        self.assertEqual(result['queryLimitPersisted'], '60000',
+                         'a valid query-limit value must persist even though the upload-size field is invalid')
+        self.assertIsNone(result['uploadSizePersisted'], 'an invalid upload-size value must not be persisted')
+        self.assertTrue(result['uploadErrorShown'])
+
+    def test_saveSettings_clamps_upload_size_above_server_ceiling_with_message(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var input = document.getElementById('maxUploadSizeInput');
+            input.value = '999999';
+            input.max = '5000';
+            localStorage.removeItem('socrates_maxUploadSizeMB');
+            await saveSettings();
+            window.__jsdom_result = {
+                persisted: localStorage.getItem('socrates_maxUploadSizeMB'),
+                inputValue: input.value,
+                errorText: document.getElementById('uploadSizeError').textContent
+            };
+        ''')
+        self.assertIsNone(result['persisted'], 'an over-ceiling value must not be silently persisted on the first click')
+        self.assertEqual(result['inputValue'], '5000', 'the input must show the clamped suggestion')
+        self.assertIn('5,000', result['errorText'])
+
+    def test_saveSettings_persists_valid_upload_size_independent_of_query_limit(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            document.getElementById('settingsModal').classList.add('active');
+            document.getElementById('maxQueryLimitInput').value = '60000';
+            document.getElementById('maxQueryLimitInput').max = '100000';
+            var input = document.getElementById('maxUploadSizeInput');
+            input.value = '2000';
+            input.max = '5000';
+            localStorage.removeItem('socrates_maxUploadSizeMB');
+            await saveSettings();
+            window.__jsdom_result = {
+                persisted: localStorage.getItem('socrates_maxUploadSizeMB'),
+                isActive: document.getElementById('settingsModal').classList.contains('active')
+            };
+        ''')
+        self.assertEqual(result['persisted'], '2000')
+        self.assertFalse(result['isActive'], 'the modal must close once both fields are valid')
+
+    def test_saveSettings_does_not_trigger_refresh_for_upload_size_only_change(self):
+        """Changing only the upload-size field must not trigger
+        refreshAnalysisData -- that call is scoped to the query-limit field,
+        since upload size has no bearing on already-loaded analysis data."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var refreshCalls = 0;
+            window.refreshAnalysisData = async function() { refreshCalls++; };
+            document.getElementById('maxQueryLimitInput').value = '60000';
+            document.getElementById('maxUploadSizeInput').value = '2000';
+            localStorage.removeItem('socrates_maxQueryLimit');
+            localStorage.removeItem('socrates_maxUploadSizeMB');
+            await saveSettings();
+            window.__jsdom_result = { refreshCalls: refreshCalls };
+        ''')
+        self.assertEqual(result['refreshCalls'], 0, 'currentMd5 is empty by default, so no refresh should fire either way')
+
+
+class TestNewProtocolEventTypes(unittest.TestCase):
+    """REGRESSION: quic and dhcp events (quic alone was 10% of all events in
+    a real analysis) previously fell through getColumnsForType's generic
+    default (just the 6-column Time/Protocol/Source/Dest prefix, no
+    protocol-specific detail at all), even though Suricata logs real,
+    useful fields for them. This covers quic/dhcp plus every other event
+    type Suricata's eve.json can produce that this app didn't previously
+    handle: ftp_data, smb, ssh, krb5, sip, snmp, mqtt, dcerpc, rdp,
+    tftp, ike, nfs, rfb, bittorrent_dht, smtp, enip, ntp. Field names are verified
+    against Suricata's actual logger source (rust/src/<proto>/log*.rs) and,
+    where available, real local eve.json samples -- not guessed."""
+
+    GENERIC_FALLBACK = ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port']
+
+    # (event_type, sample event object, {column_label: expected_substring})
+    CASES = [
+        # ja3/ja3s are objects ({"hash": ..., "string": ...}) in Suricata's
+        # real eve.json output, not plain strings - confirmed against real
+        # local data. Using a flat-string sample here previously masked a
+        # real bug: buildRowForEvent/extractValue extracted the whole object,
+        # which the frontend then rendered as the literal text
+        # "[object Object]" instead of the hash.
+        ('quic', {'event_type': 'quic', 'quic': {'sni': 'example.com', 'version': '1',
+                                                  'ja3': {'hash': 'abc123', 'string': '771,4866,...'},
+                                                  'ja3s': {'hash': 'def456', 'string': '771,4866,...'}}},
+         {'SNI': 'example.com', 'QUIC Version': '1', 'JA3': 'abc123', 'JA3S': 'def456'}),
+        ('dhcp', {'event_type': 'dhcp', 'dhcp': {'dhcp_type': 'ack', 'client_mac': 'ac:bc:b5:ea:6f:5b', 'assigned_ip': '192.168.1.50', 'hostname': 'laptop1'}},
+         {'DHCP Type': 'ack', 'Client MAC': 'ac:bc:b5:ea:6f:5b', 'Assigned IP': '192.168.1.50', 'Hostname': 'laptop1'}),
+        ('ftp_data', {'event_type': 'ftp_data', 'ftp_data': {'command': 'STOR', 'filename': 'secret.html'}},
+         {'FTP Command': 'STOR', 'Filename': 'secret.html'}),
+        ('smb', {'event_type': 'smb', 'smb': {'command': 'SMB2_COMMAND_CREATE', 'filename': 'passwords.docx', 'share': '\\\\SERVER\\Share', 'ntlmssp': {'user': 'jdoe'}}},
+         {'SMB Command': 'SMB2_COMMAND_CREATE', 'Filename': 'passwords.docx', 'Share': '\\\\SERVER\\Share', 'SMB User': 'jdoe'}),
+        ('ssh', {'event_type': 'ssh', 'ssh': {'client': {'software_version': 'OpenSSH_8.9'}, 'server': {'software_version': 'OpenSSH_9.2'}}},
+         {'Client Version': 'OpenSSH_8.9', 'Server Version': 'OpenSSH_9.2'}),
+        ('krb5', {'event_type': 'krb5', 'krb5': {'cname': 'alice', 'sname': 'krbtgt/EXAMPLE.COM', 'realm': 'EXAMPLE.COM', 'error_code': 'KDC_ERR_PREAUTH_REQUIRED'}},
+         {'Client': 'alice', 'Service': 'krbtgt/EXAMPLE.COM', 'Realm': 'EXAMPLE.COM', 'Error Code': 'KDC_ERR_PREAUTH_REQUIRED'}),
+        ('sip', {'event_type': 'sip', 'sip': {'method': 'INVITE', 'uri': 'sip:bob@example.com', 'code': 200, 'reason': 'OK'}},
+         {'SIP Method': 'INVITE', 'URI': 'sip:bob@example.com', 'SIP Code': '200', 'Reason': 'OK'}),
+        ('snmp', {'event_type': 'snmp', 'snmp': {'version': 2, 'pdu_type': 'get_request', 'community': 'public'}},
+         {'SNMP Version': '2', 'PDU Type': 'get_request', 'Community': 'public'}),
+        ('mqtt', {'event_type': 'mqtt', 'mqtt': {'publish': {'topic': 'sensors/temp', 'client_id': 'device1'}}},
+         {'MQTT Type': 'publish', 'Topic': 'sensors/temp'}),
+        ('dcerpc', {'event_type': 'dcerpc', 'dcerpc': {'interfaces': [{'uuid': '12345678-1234-1234-1234-123456789abc'}], 'request': {'opnum': 5}, 'call_id': 3}},
+         {'Interface UUID': '12345678-1234-1234-1234-123456789abc', 'Opnum': '5', 'Call ID': '3'}),
+        ('rdp', {'event_type': 'rdp', 'rdp': {'event_type': 'initial_request', 'cookie': 'mstshash=abc', 'client_name': 'WORKSTATION1'}},
+         {'RDP Event': 'initial_request', 'Cookie': 'mstshash=abc', 'Client Name': 'WORKSTATION1'}),
+        ('tftp', {'event_type': 'tftp', 'tftp': {'packet': 'write', 'file': 'firmware.bin', 'mode': 'octet'}},
+         {'Packet': 'write', 'File': 'firmware.bin', 'Mode': 'octet'}),
+        ('ike', {'event_type': 'ike', 'ike': {'exchange_type': 34, 'version_major': 2, 'version_minor': 0, 'init_spi': 'abcd1234'}},
+         {'Exchange Type': '34', 'IKE Version': '2.0', 'Init SPI': 'abcd1234'}),
+        ('nfs', {'event_type': 'nfs', 'nfs': {'procedure': 'READ', 'filename': '/export/data.txt'}},
+         {'Procedure': 'READ', 'Filename': '/export/data.txt'}),
+        # client/server_protocol_version are {major, minor} objects and
+        # security_type is nested under 'authentication' in Suricata's real
+        # eve.json (rust/src/rfb/logger.rs) - confirmed against real traffic.
+        # A flat-string/top-level sample here previously masked a real bug,
+        # same class as the quic ja3/ja3s issue above.
+        ('rfb', {'event_type': 'rfb', 'rfb': {'client_protocol_version': {'major': '003', 'minor': '008'},
+                                               'server_protocol_version': {'major': '003', 'minor': '008'},
+                                               'authentication': {'security_type': 2}}},
+         {'Client Version': '003.008', 'Server Version': '003.008', 'Security Type': '2'}),
+        ('bittorrent_dht', {'event_type': 'bittorrent_dht', 'bittorrent_dht': {'request_type': 'get_peers', 'info_hash': 'deadbeef'}},
+         {'Request Type': 'get_peers', 'Info Hash': 'deadbeef'}),
+        ('smtp', {'event_type': 'smtp', 'smtp': {'helo': 'mail.example.com', 'mail_from': 'a@example.com', 'rcpt_to': ['b@example.com']}},
+         {'Helo': 'mail.example.com', 'Mail From': 'a@example.com', 'Rcpt To': 'b@example.com'}),
+        ('enip', {'event_type': 'enip', 'enip': {'request': {'command': 'RegisterSession'},
+                                                  'response': {'command': 'RegisterSession', 'status': 'Success'}}},
+         {'Command': 'RegisterSession', 'Status': 'Success'}),
+        ('ntp', {'event_type': 'ntp', 'ntp': {'version': 4, 'mode': 3, 'stratum': 2, 'reference_id': '0a:0a:0a:01'}},
+         {'Version': '4', 'Mode': '3', 'Stratum': '2', 'Reference ID': '0a:0a:0a:01'}),
+    ]
+
+    def test_getColumnsForType_no_longer_falls_back_to_generic_default(self):
+        from tests.jsdom_helper import js_statements
+        event_types = [c[0] for c in self.CASES]
+        result = js_statements('''
+            var types = ''' + json.dumps(event_types) + ''';
+            window.__jsdom_result = { columns: types.map(function(t) { return getColumnsForType(t); }) };
+        ''')
+        for etype, cols in zip(event_types, result['columns']):
+            with self.subTest(event_type=etype):
+                self.assertNotEqual(cols, self.GENERIC_FALLBACK,
+                                     f'{etype} must have protocol-specific columns, not the generic 6-column fallback')
+
+    def test_buildRowForEvent_renders_real_field_values(self):
+        from tests.jsdom_helper import js_statements
+        for etype, sample_event, expected in self.CASES:
+            with self.subTest(event_type=etype):
+                result = js_statements('''
+                    window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(sample_event) + ''') };
+                ''')
+                for label, expected_value in expected.items():
+                    self.assertIn(expected_value, result['html'],
+                                  f'{etype} row HTML must contain {label}={expected_value!r}')
+
+    def test_no_rendered_row_contains_object_object(self):
+        """REGRESSION: quic.ja3/ja3s are objects ({"hash":..., "string":...})
+        in Suricata's real eve.json, not plain strings. Extracting the whole
+        object instead of .hash renders as the literal text "[object Object]"
+        (escapeHtml does String(value), not JSON.stringify) - this must never
+        appear in any rendered row for any of the new protocol types."""
+        from tests.jsdom_helper import js_statements
+        event_types = [c[0] for c in self.CASES]
+        samples = {c[0]: c[1] for c in self.CASES}
+        result = js_statements('''
+            var types = ''' + json.dumps(event_types) + ''';
+            var samples = ''' + json.dumps(samples) + ''';
+            window.__jsdom_result = {
+                offenders: types.filter(function(t) {
+                    return buildRowForEvent(samples[t]).indexOf('[object Object]') >= 0;
+                })
+            };
+        ''')
+        self.assertEqual(result['offenders'], [])
+
+    def test_extractValue_matches_buildRowForEvent_values(self):
+        """extractValue (used by the merged All Events view and aggregation
+        tables) must agree with buildRowForEvent's per-type table on the
+        same underlying fields."""
+        from tests.jsdom_helper import js_statements
+        for etype, sample_event, expected in self.CASES:
+            with self.subTest(event_type=etype):
+                labels = list(expected.keys())
+                result = js_statements('''
+                    var labels = ''' + json.dumps(labels) + ''';
+                    var e = ''' + json.dumps(sample_event) + ''';
+                    window.__jsdom_result = { values: labels.map(function(l) { return extractValue(e, l, 0); }) };
+                ''')
+                for label, value in zip(labels, result['values']):
+                    self.assertIn(expected[label], str(value),
+                                  f'{etype} extractValue({label!r}) = {value!r}, expected to contain {expected[label]!r}')
+
+    def test_detail_case_handles_all_new_types_without_error(self):
+        """The merged All Events view's Detail column must produce some
+        non-crashing, renderable value for every new event type (a plain
+        string or number is fine -- e.g. rfb's security_type is a real
+        numeric Suricata field; an object/array or undefined is not, since
+        those wouldn't render sensibly via escapeHtml)."""
+        from tests.jsdom_helper import js_statements
+        event_types = [c[0] for c in self.CASES]
+        samples = {c[0]: c[1] for c in self.CASES}
+        result = js_statements('''
+            var types = ''' + json.dumps(event_types) + ''';
+            var samples = ''' + json.dumps(samples) + ''';
+            window.__jsdom_result = {
+                ok: types.every(function(t) {
+                    var v = extractValue(samples[t], 'Detail', 0);
+                    return v !== undefined && (typeof v === 'string' || typeof v === 'number');
+                })
+            };
+        ''')
+        self.assertTrue(result['ok'])
+
+
+class TestHttp2UsesHttpEventType(unittest.TestCase):
+    """REGRESSION: an earlier pass added a dedicated 'http2' branch to
+    getColumnsForType/buildRowForEvent/extractValue, keyed on
+    event_type === 'http2' and reading from a top-level e.http2.request/
+    e.http2.response shape. That event_type and shape never occur in real
+    Suricata output: confirmed against Suricata's own logger source
+    (rust/src/http2/logger.rs, which unconditionally opens the "http" JSON
+    object - js.open_object("http") - and nests HTTP/2-frame-specific detail
+    under a "http2" key *inside* "http", not at the top level) and against a
+    real h2c (cleartext HTTP/2 via Upgrade) capture processed end-to-end,
+    which produced event_type "http" with top-level http_method/url/status
+    fields identical in name to plain HTTP/1.1. The dead 'http2' branches
+    were removed; real HTTP/2 traffic (h2c here - true TLS-ALPN h2 is opaque
+    to Suricata without decryption keys) is rendered by the existing 'http'
+    handling, which already reads those exact field names."""
+
+    # Real field shape from an actual h2c capture (Suricata 7.0.10,
+    # http2-h2c.pcap from wiki.wireshark.org/http2) - not guessed. Note
+    # 'hostname' is absent: Suricata's http2 logger only maps a literal
+    # "host" header to it, not the ":authority" pseudo-header HTTP/2
+    # clients actually send.
+    REAL_H2C_EVENT = {
+        'event_type': 'http',
+        'http': {
+            'version': '2',
+            'http_method': 'GET',
+            'url': '/robots.txt',
+            'http_user_agent': 'curl/7.61.0',
+            'status': 200,
+            'length': 62,
+            'http2': {'stream_id': 1, 'request': {}, 'response': {}},
+        },
+    }
+
+    def test_getColumnsForType_http2_is_not_a_distinct_event_type(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { cols: getColumnsForType('http2') };
+        ''')
+        generic_fallback = ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port']
+        self.assertEqual(result['cols'], generic_fallback,
+                          "event_type is never literally 'http2' in real Suricata output, "
+                          "so getColumnsForType must not special-case it")
+
+    def test_buildRowForEvent_renders_real_h2c_fields_via_http_case(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(self.REAL_H2C_EVENT) + ''') };
+        ''')
+        for expected in ('GET', '/robots.txt', '200'):
+            self.assertIn(expected, result['html'])
+
+    def test_extractValue_reads_real_h2c_fields(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var e = ''' + json.dumps(self.REAL_H2C_EVENT) + ''';
+            window.__jsdom_result = {
+                method: extractValue(e, 'Method', 0),
+                url: extractValue(e, 'URL', 0),
+                status: extractValue(e, 'Status', 0),
+            };
+        ''')
+        self.assertEqual(result['method'], 'GET')
+        self.assertEqual(result['url'], '/robots.txt')
+        self.assertEqual(result['status'], '200')
+
+
+class TestFtpAnomalyColumnSupport(unittest.TestCase):
+    """REGRESSION: unlike the 19 protocols in TestNewProtocolEventTypes above
+    (which never had any support), 'ftp' and 'anomaly' are original event
+    types that predate this session's work entirely, yet had the exact same
+    symptom - getColumnsForType fell through to the generic 6-column default
+    for both, with zero protocol-specific columns. anomaly also carried a
+    separate, deeper bug: extractValue's Detail case read e.anomaly?.message,
+    a field that has never existed in Suricata's eve.json anomaly schema
+    (confirmed against real local data - the actual field is 'event')."""
+
+    GENERIC_FALLBACK = ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port']
+
+    FTP_EVENT = {'event_type': 'ftp', 'ftp': {'command': 'STOR', 'command_data': 'secret.txt',
+                                               'completion_code': ['150', '226'],
+                                               'reply': ['Accepted', 'Transfer complete']}}
+    ANOMALY_EVENT = {'event_type': 'anomaly', 'anomaly': {
+        'event': 'APPLAYER_DETECT_PROTOCOL_ONLY_ONE_DIRECTION',
+        'type': 'applayer', 'layer': 'proto_detect', 'app_proto': 'ftp'}}
+
+    def test_getColumnsForType_no_longer_falls_back_to_generic_default(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = {
+                ftp: getColumnsForType('ftp'),
+                anomaly: getColumnsForType('anomaly')
+            };
+        ''')
+        self.assertNotEqual(result['ftp'], self.GENERIC_FALLBACK)
+        self.assertNotEqual(result['anomaly'], self.GENERIC_FALLBACK)
+
+    def test_buildRowForEvent_renders_real_ftp_fields(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(self.FTP_EVENT) + ''') };
+        ''')
+        for expected in ('STOR', 'secret.txt', '150, 226', 'Accepted'):
+            self.assertIn(expected, result['html'])
+
+    def test_buildRowForEvent_renders_real_anomaly_fields(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(self.ANOMALY_EVENT) + ''') };
+        ''')
+        for expected in ('APPLAYER_DETECT_PROTOCOL_ONLY_ONE_DIRECTION', 'applayer', 'proto_detect'):
+            self.assertIn(expected, result['html'])
+
+    def test_extractValue_type_case_handles_anomaly_alongside_dnp3_and_dns(self):
+        """The shared 'Type' column label must still work correctly for
+        dnp3/dns after adding the new anomaly branch."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = {
+                anomaly: extractValue(''' + json.dumps(self.ANOMALY_EVENT) + ''', 'Type', 0),
+                dnp3: extractValue({event_type: 'dnp3', dnp3: {type: 'unsolicited_response'}}, 'Type', 0),
+                dns: extractValue({event_type: 'dns', dns: {rrtype: 'A'}}, 'Type', 0)
+            };
+        ''')
+        self.assertEqual(result['anomaly'], 'applayer')
+        self.assertEqual(result['dnp3'], 'unsolicited_response')
+        self.assertEqual(result['dns'], 'A')
+
+    def test_detail_case_uses_anomaly_event_not_message(self):
+        """REGRESSION: the merged All Events view's Detail column must use
+        anomaly.event (real field), not anomaly.message (never existed)."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { detail: extractValue(''' + json.dumps(self.ANOMALY_EVENT) + ''', 'Detail', 0) };
+        ''')
+        self.assertEqual(result['detail'], 'APPLAYER_DETECT_PROTOCOL_ONLY_ONE_DIRECTION')
+
+    def test_render_anomaly_details_uses_anomaly_event_not_message(self):
+        """REGRESSION: the same anomaly.event-not-message bugfix as the
+        Detail column above, missed in the side-panel renderer
+        (renderAnomalyDetails) when it was first fixed - it still showed a
+        'Message' row reading a field that has never existed in Suricata's
+        eve.json anomaly schema."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: renderAnomalyDetails(''' + json.dumps(self.ANOMALY_EVENT) + ''') };
+        ''')
+        self.assertIn('APPLAYER_DETECT_PROTOCOL_ONLY_ONE_DIRECTION', result['html'])
+        self.assertNotIn('>Message<', result['html'])
+
+    def test_detail_case_handles_ftp_with_no_command_via_reply_fallback(self):
+        """Many real ftp events (server banners/greetings) have no 'command'
+        field at all - Detail should still show something useful via the
+        first reply line, not go blank."""
+        from tests.jsdom_helper import js_statements
+        banner_event = {'event_type': 'ftp', 'ftp': {'reply': ['Welcome to Pure-FTPd'], 'completion_code': ['220']}}
+        result = js_statements('''
+            window.__jsdom_result = { detail: extractValue(''' + json.dumps(banner_event) + ''', 'Detail', 0) };
+        ''')
+        self.assertEqual(result['detail'], 'Welcome to Pure-FTPd')
+
+
+class TestDnsV3LoggingFormat(unittest.TestCase):
+    """REGRESSION: upgrading to Suricata 8 switched DNS logging to its new
+    "V3" format by default (confirmed against rust/src/dns/log.rs and real
+    Suricata 8.0.6 output) - dns.rrname/dns.rrtype, which every DNS column/
+    row/detail case read directly, no longer exist at all; the same info
+    moved to dns.queries[0].rrname/rrtype. Every real DNS event's Query/Type
+    silently rendered blank under Suricata 8 before this fix - a severe
+    regression given DNS is one of the highest-volume, most-viewed event
+    types. Old-format (V1/V2, e.g. previously-stored Suricata 7 analyses)
+    events must keep working via the flat-field fallback."""
+
+    V3_REQUEST = {'event_type': 'dns', 'dns': {
+        'version': 3, 'type': 'request',
+        'queries': [{'rrname': 'example.com', 'rrtype': 'A'}]}}
+    V1_FLAT = {'event_type': 'dns', 'dns': {'rrname': 'legacy.example.com', 'rrtype': 'AAAA'}}
+
+    def test_buildRowForEvent_reads_v3_queries_array(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(self.V3_REQUEST) + ''') };
+        ''')
+        self.assertIn('example.com', result['html'])
+        self.assertIn('A', result['html'])
+
+    def test_buildRowForEvent_still_reads_old_flat_format(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(self.V1_FLAT) + ''') };
+        ''')
+        self.assertIn('legacy.example.com', result['html'])
+        self.assertIn('AAAA', result['html'])
+
+    def test_extractValue_query_and_type_read_v3_queries_array(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var e = ''' + json.dumps(self.V3_REQUEST) + ''';
+            window.__jsdom_result = {
+                query: extractValue(e, 'Query', 0),
+                type: extractValue(e, 'Type', 0),
+                detail: extractValue(e, 'Detail', 0),
+            };
+        ''')
+        self.assertEqual(result['query'], 'example.com')
+        self.assertEqual(result['type'], 'A')
+        self.assertEqual(result['detail'], 'example.com')
+
+
+class TestSuricata8NewProtocols(unittest.TestCase):
+    """New event types available after upgrading from Suricata 7.0.10 to
+    8.0.6 (Debian trixie-backports): websocket, pop3, mdns, ldap, arp. Field
+    names verified against Suricata's own logger source (rust/src/<proto>/
+    logger.rs or log.rs, src/output-json-arp.c for arp), not guessed."""
+
+    GENERIC_FALLBACK = ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port']
+
+    CASES = [
+        ('websocket', {'event_type': 'websocket', 'websocket': {
+            'fin': True, 'opcode': 'text', 'payload_printable': 'hello world'}},
+         {'Opcode': 'text', 'Fin': 'true', 'Payload': 'hello world'}),
+        ('pop3', {'event_type': 'pop3', 'pop3': {
+            'request': {'command': 'USER', 'args': ['alice']},
+            'response': {'success': True, 'status': 'OK'}}},
+         {'Command': 'USER', 'Args': 'alice', 'Status': 'OK'}),
+        ('mdns', {'event_type': 'mdns', 'mdns': {
+            'type': 'response', 'queries': [{'rrname': 'printer.local', 'rrtype': 'A'}]}},
+         {'Query': 'printer.local', 'Type': 'A'}),
+        # A single ldap transaction can carry both request and responses
+        # together (confirmed against logger.rs: both are logged from the
+        # same tx when both are present by log time). result_code lives
+        # inside a differently-named sub-object per operation
+        # (bind_response here) - not a static field name.
+        ('ldap', {'event_type': 'ldap', 'ldap': {
+            'request': {'message_id': 1, 'operation': 'bind_request',
+                        'bind_request': {'version': 3, 'name': 'cn=admin,dc=example,dc=com'}},
+            'responses': [{'message_id': 1, 'operation': 'bind_response',
+                           'bind_response': {'result_code': 'success', 'matched_dn': '', 'message': ''}}]}},
+         {'Operation': 'bind_request', 'Message ID': '1', 'Result Code': 'success'}),
+        ('arp', {'event_type': 'arp', 'arp': {
+            'hw_type': 'ethernet', 'proto_type': 'ipv4', 'opcode': 'request',
+            'src_mac': 'aa:bb:cc:dd:ee:ff', 'src_ip': '192.168.1.1',
+            'dest_mac': '00:00:00:00:00:00', 'dest_ip': '192.168.1.254'}},
+         {'Opcode': 'request', 'Src MAC': 'aa:bb:cc:dd:ee:ff', 'Dest MAC': '00:00:00:00:00:00'}),
+    ]
+
+    def test_getColumnsForType_no_longer_falls_back_to_generic_default(self):
+        from tests.jsdom_helper import js_statements
+        event_types = [c[0] for c in self.CASES]
+        result = js_statements('''
+            var types = ''' + json.dumps(event_types) + ''';
+            window.__jsdom_result = { columns: types.map(function(t) { return getColumnsForType(t); }) };
+        ''')
+        for etype, cols in zip(event_types, result['columns']):
+            with self.subTest(event_type=etype):
+                self.assertNotEqual(cols, self.GENERIC_FALLBACK)
+
+    def test_buildRowForEvent_renders_real_field_values(self):
+        from tests.jsdom_helper import js_statements
+        for etype, sample_event, expected in self.CASES:
+            with self.subTest(event_type=etype):
+                result = js_statements('''
+                    window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(sample_event) + ''') };
+                ''')
+                for label, expected_value in expected.items():
+                    self.assertIn(expected_value, result['html'],
+                                  f'{etype} row HTML must contain {label}={expected_value!r}')
+
+    def test_extractValue_matches_buildRowForEvent_values(self):
+        from tests.jsdom_helper import js_statements
+        for etype, sample_event, expected in self.CASES:
+            with self.subTest(event_type=etype):
+                labels = list(expected.keys())
+                result = js_statements('''
+                    var labels = ''' + json.dumps(labels) + ''';
+                    var e = ''' + json.dumps(sample_event) + ''';
+                    window.__jsdom_result = { values: labels.map(function(l) { return extractValue(e, l, 0); }) };
+                ''')
+                for label, value in zip(labels, result['values']):
+                    self.assertIn(expected[label], str(value),
+                                  f'{etype} extractValue({label!r}) = {value!r}, expected to contain {expected[label]!r}')
+
+    def test_ldap_excluded_from_server_aggregation_and_sort(self):
+        """ldap's fields are dynamically keyed by operation type, like mqtt -
+        must fall back to client-side computation instead of hitting an
+        always-empty server result."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = {
+                agg: canUseServerAggregation('ldap'),
+                sort: canServerSortEventType('ldap'),
+            };
+        ''')
+        self.assertFalse(result['agg'])
+        self.assertFalse(result['sort'])
+
+
+class TestServerSideSort(unittest.TestCase):
+    """Column-header sort for the 10 pcap per-type tabs now goes server-side
+    (order_by/sort_dir on /api/events) instead of forcing a full-batch fetch
+    - 'all'/'sigmaalert'/'log'/'binary' keep the original full-batch-then-
+    client-sort behavior unchanged (canServerSortEventType excludes them)."""
+
+    def _make_section(self, event_type='flow'):
+        return f'''
+            var section = document.createElement('div');
+            section.className = 'section';
+            section.id = 'section-{event_type}';
+            document.body.appendChild(section);
+        '''
+
+    def test_canServerSortEventType_true_for_pcap_types(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = {
+                flow: canServerSortEventType('flow'),
+                dns: canServerSortEventType('dns'),
+                alert: canServerSortEventType('alert'),
+                all: canServerSortEventType('all'),
+            };
+        ''')
+        self.assertTrue(result['flow'])
+        self.assertTrue(result['dns'])
+        self.assertTrue(result['alert'])
+        self.assertTrue(result['all'],
+                        "'all' now has a SQL equivalent for its Type/Detail columns (db.py's _all_events_detail_expr)")
+
+    def test_canServerSortEventType_false_for_excluded_types(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = {
+                sigmaalert: canServerSortEventType('sigmaalert'),
+                log: canServerSortEventType('log'),
+                binary: canServerSortEventType('binary'),
+                mqtt: canServerSortEventType('mqtt'),
+                empty: canServerSortEventType(''),
+                nullish: canServerSortEventType(null),
+            };
+        ''')
+        self.assertFalse(result['sigmaalert'])
+        self.assertFalse(result['log'])
+        self.assertFalse(result['binary'])
+        self.assertFalse(result['mqtt'], 'mqtt columns have no _sort_expr mapping beyond Time - must use full client-side sort')
+        self.assertFalse(result['empty'])
+        self.assertFalse(result['nullish'])
+
+    def test_sortCurrentTable_appends_order_by_for_supported_type(self):
+        """currentSort/tabDataCache/activeTableRender are all let-scoped and
+        can't be read or assigned directly across separate eval calls in the
+        JSDOM test harness - state is driven entirely via real function calls
+        (buildSection/sortCurrentTable) and observed only through the shared
+        window.fetch mock's call log, which is reliable across evals."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('flow') + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) return Promise.resolve({ json: () => Promise.resolve([]) });
+                return Promise.resolve({ json: () => Promise.resolve({ count: 0 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            await buildSection('flow', []);
+            await sortCurrentTable(1);  // colIndex 1 -> 'Protocol'
+            var eventsCalls = fetchCalls.filter(u => u.indexOf('/api/events') >= 0);
+            window.__jsdom_result = { lastEventsUrl: eventsCalls[eventsCalls.length - 1] };
+        ''')
+        self.assertIn('order_by=Protocol', result['lastEventsUrl'])
+        self.assertIn('sort_dir=asc', result['lastEventsUrl'])
+
+    def test_sortCurrentTable_encodes_special_characters_in_column_label(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('flow') + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) return Promise.resolve({ json: () => Promise.resolve([]) });
+                return Promise.resolve({ json: () => Promise.resolve({ count: 0 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            var pktsIdx = getColumnsForType('flow').indexOf('Pkts \\u2192');
+            await buildSection('flow', []);
+            await sortCurrentTable(pktsIdx);
+            var eventsCalls = fetchCalls.filter(u => u.indexOf('/api/events') >= 0);
+            window.__jsdom_result = { lastEventsUrl: eventsCalls[eventsCalls.length - 1], pktsIdx: pktsIdx };
+        ''')
+        self.assertGreaterEqual(result['pktsIdx'], 0)
+        self.assertIn('order_by=Pkts', result['lastEventsUrl'])
+        self.assertIn('sort_dir=asc', result['lastEventsUrl'])
+
+    def test_sortCurrentTable_omits_order_by_when_switching_to_a_different_unsorted_section(self):
+        """If a sort is active for one section, fetchEventsPage's section-key
+        guard must stop it from leaking into an unrelated section's fetch -
+        simulated here by rendering 'dns' with a sort active, then rendering
+        'flow' fresh (as if switching tabs without first resetting state)."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(
+            self._make_section('dns') + self._make_section('flow') + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) return Promise.resolve({ json: () => Promise.resolve([]) });
+                return Promise.resolve({ json: () => Promise.resolve({ count: 0 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            await buildSection('dns', []);
+            await sortCurrentTable(1);
+            fetchCalls.length = 0;
+            await buildSection('flow', []);
+            var eventsCalls = fetchCalls.filter(u => u.indexOf('/api/events') >= 0);
+            window.__jsdom_result = { lastEventsUrl: eventsCalls[eventsCalls.length - 1] };
+        ''')
+        self.assertNotIn('order_by=', result['lastEventsUrl'],
+                         "a sort active for 'dns' must not apply to 'flow's fetch")
+
+    def test_sortCurrentTable_skips_ensureCappedBatch_for_supported_type_no_filter(self):
+        """No full-batch (ensureCappedBatch) fetch - i.e. no /api/events call
+        using the large default query-limit with no offset - should occur
+        for a server-sortable type with no active filter."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('flow') + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) return Promise.resolve({ json: () => Promise.resolve([]) });
+                return Promise.resolve({ json: () => Promise.resolve({ count: 0 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            await buildSection('flow', []);
+            await sortCurrentTable(1);
+            var fullBatchCalls = fetchCalls.filter(u => u.indexOf('/api/events') >= 0 && u.indexOf('offset=') < 0);
+            window.__jsdom_result = { fullBatchCallCount: fullBatchCalls.length };
+        ''')
+        self.assertEqual(result['fullBatchCallCount'], 0,
+                         'sortCurrentTable must not trigger a full-batch (offset-less) fetch for a server-sortable type with no filter')
+
+    def test_sortCurrentTable_still_uses_ensureCappedBatch_for_unsupported_type(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('sigmaalert') + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0 || url.indexOf('/api/sigma-alerts') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { severity: 'high', rule_title: 'R1', mitre_techniques: '[]', logsource: 'windows', original_log: '{}' }
+                    ]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({ count: 1 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            // buildSigmaAlertSectionContent is the real renderer for this tab
+            // (buildSection is only ever used for the 10 pcap per-type tabs) -
+            // calling it populates the let-scoped activeTableRender correctly.
+            await buildSigmaAlertSectionContent('section-sigmaalert', null);
+            fetchCalls.length = 0;
+            try {
+                await sortCurrentTable(0);
+            } catch (e) {
+                // PRE-EXISTING bug, unrelated to server-side sort: once
+                // currentSort is non-null, buildSigmaAlertSectionContent's
+                // rerender (bound to alerts=null from the scalable branch)
+                // falls into its client-fallback branch and crashes on
+                // alerts.length. Not this test's concern - the ensureCappedBatch
+                // fetch (what we're checking) already happened before this throws.
+            }
+            var fullBatchCalls = fetchCalls.filter(u => u.indexOf('/api/sigma-alerts') >= 0 && u.indexOf('offset=') < 0);
+            window.__jsdom_result = { fullBatchCallCount: fullBatchCalls.length };
+        ''')
+        self.assertEqual(result['fullBatchCallCount'], 1,
+                        'sortCurrentTable must still call ensureCappedBatch (full-batch, offset-less fetch) for an out-of-scope type like sigmaalert')
+
+    def test_sortCurrentTable_still_uses_ensureCappedBatch_when_filter_active(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('flow') + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) return Promise.resolve({ json: () => Promise.resolve([]) });
+                return Promise.resolve({ json: () => Promise.resolve({ count: 0 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            await buildSection('flow', []);
+            currentFilters = { 'Protocol': 'TCP' };
+            fetchCalls.length = 0;
+            await sortCurrentTable(1);
+            var fullBatchCalls = fetchCalls.filter(u => u.indexOf('/api/events') >= 0 && u.indexOf('offset=') < 0);
+            window.__jsdom_result = { fullBatchCallCount: fullBatchCalls.length };
+        ''')
+        self.assertEqual(result['fullBatchCallCount'], 1,
+                        'sortCurrentTable must still call ensureCappedBatch (full-batch, offset-less fetch) when a column filter is active, even for a server-sortable type')
+
+
+class TestSigmaAlertSortCrashRegression(unittest.TestCase):
+    """REGRESSION: buildSigmaAlertSectionContent's scalable-branch rerender
+    closure used to hardcode null for its `alerts` param, assuming the next
+    invocation would also be scalable. Clicking a column header (sigmaalert
+    is not server-sortable) sets currentSort, flipping canUseScalableFetch()
+    false before that same closure fires - the client-fallback branch then
+    crashed on alerts.length. Fixed by recomputing a real filtered list in
+    the closure, plus a defensive fallback in the function itself."""
+
+    def test_sort_click_on_unfiltered_sigmaalert_tab_does_not_crash(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var section = document.createElement('div');
+            section.className = 'section';
+            section.id = 'section-sigmaalert';
+            document.body.appendChild(section);
+
+            window.fetch = function(url) {
+                if (url.indexOf('/api/sigma-alerts') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { severity: 'high', rule_title: 'R1', mitre_techniques: '[]', logsource: 'windows', original_log: '{}' },
+                        { severity: 'medium', rule_title: 'R2', mitre_techniques: '[]', logsource: 'windows', original_log: '{}' }
+                    ]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({ count: 2 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            isLogAnalysisMode = true;
+            // Scalable branch - sets activeTableRender with the buggy
+            // hardcoded-null closure (pre-fix) as its rerender.
+            await buildSigmaAlertSectionContent('section-sigmaalert', null);
+            var threw = false;
+            try {
+                await sortCurrentTable(0);
+            } catch (e) {
+                threw = true;
+            }
+            var rowCount = document.querySelectorAll('#section-sigmaalert table tbody tr:not(.detail-row)').length;
+            window.__jsdom_result = { threw: threw, rowCount: rowCount };
+        ''')
+        self.assertFalse(result['threw'], 'clicking a column header on an unfiltered Sigma Alerts tab must not throw')
+        self.assertEqual(result['rowCount'], 2, 'the re-rendered table must still show the real alert rows, not an empty/broken render')
+
+    def test_buildSigmaAlertSectionContent_handles_null_alerts_defensively(self):
+        """Direct unit test of the defensive fallback: even called with a
+        raw null (as if from a stale closure) while in non-scalable mode,
+        the function must recompute real data instead of crashing."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var section = document.createElement('div');
+            section.className = 'section';
+            section.id = 'section-sigmaalert';
+            document.body.appendChild(section);
+
+            window.fetch = function(url) {
+                if (url.indexOf('/api/sigma-alerts') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { severity: 'high', rule_title: 'R1', mitre_techniques: '[]', logsource: 'windows', original_log: '{}' }
+                    ]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({ count: 1 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = { 'Severity': 'high' };
+            currentSearch = [];
+            await ensureCappedBatch('sigmaalert');  // real tabDataCache population
+
+            var threw = false;
+            try {
+                await buildSigmaAlertSectionContent('section-sigmaalert', null);
+            } catch (e) {
+                threw = true;
+            }
+            var rowCount = document.querySelectorAll('#section-sigmaalert table tbody tr:not(.detail-row)').length;
+            window.__jsdom_result = { threw: threw, rowCount: rowCount };
+        ''')
+        self.assertFalse(result['threw'], 'buildSigmaAlertSectionContent(sectionId, null) must not crash in non-scalable mode')
+        self.assertEqual(result['rowCount'], 1)
+
+
+class TestAllTabServerSideSortAndAggregation(unittest.TestCase):
+    """The merged 'All Events' tab now has server-side sort/aggregation too
+    (db.py's _all_events_detail_expr covers its 'Detail' column, UPPER(
+    event_type) covers 'Type') - mirrors the per-type-tab feature classes
+    above (TestServerSideSort/TestAggregationServerFetch)."""
+
+    def _make_all_section(self):
+        return '''
+            var section = document.createElement('div');
+            section.className = 'section';
+            section.id = 'section-all';
+            document.body.appendChild(section);
+            var aggContainer = document.createElement('div');
+            aggContainer.id = 'aggregations';
+            document.body.appendChild(aggContainer);
+        '''
+
+    def test_getColumnsForType_all_returns_ALL_EVENTS_COLUMNS(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { cols: getColumnsForType('all') };
+        ''')
+        self.assertEqual(result['cols'],
+                         ['Time', 'Type', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Detail'])
+
+    def test_fetchAggregationData_all_omits_type_param(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: () => Promise.resolve({}) });
+            };
+            currentMd5 = 'abc123';
+            currentSearch = [];
+            await fetchAggregationData('all');
+            window.__jsdom_result = { url: fetchCalls[0] };
+        ''')
+        self.assertNotIn('type=', result['url'],
+                         "fetchAggregationData('all') must not send a literal type=all - it isn't a real db event_type")
+
+    def test_fetchAggregationData_per_type_still_includes_type_param(self):
+        """Regression guard: the typeParam fix must not break the existing
+        per-type-tab behavior."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: () => Promise.resolve({}) });
+            };
+            currentMd5 = 'abc123';
+            currentSearch = [];
+            await fetchAggregationData('flow');
+            window.__jsdom_result = { url: fetchCalls[0] };
+        ''')
+        self.assertIn('type=flow', result['url'])
+
+    def test_buildAllEvents_appends_order_by_when_sorted(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_all_section() + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) return Promise.resolve({ json: () => Promise.resolve([]) });
+                return Promise.resolve({ json: () => Promise.resolve({ count: 0 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            await buildAllEvents();
+            await sortCurrentTable(1);  // colIndex 1 -> 'Type' in ALL_EVENTS_COLUMNS
+            var eventsCalls = fetchCalls.filter(u => u.indexOf('/api/events') >= 0);
+            window.__jsdom_result = { lastEventsUrl: eventsCalls[eventsCalls.length - 1] };
+        ''')
+        self.assertIn('order_by=Type', result['lastEventsUrl'])
+        self.assertIn('sort_dir=asc', result['lastEventsUrl'])
+
+    def test_sortCurrentTable_skips_ensureCappedBatch_for_all_tab_no_filter(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_all_section() + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/events') >= 0) return Promise.resolve({ json: () => Promise.resolve([]) });
+                return Promise.resolve({ json: () => Promise.resolve({ count: 0 }) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            await buildAllEvents();
+            await sortCurrentTable(7);  // 'Detail'
+            var fullBatchCalls = fetchCalls.filter(u => u.indexOf('/api/events') >= 0 && u.indexOf('offset=') < 0);
+            window.__jsdom_result = { fullBatchCallCount: fullBatchCalls.length };
+        ''')
+        self.assertEqual(result['fullBatchCallCount'], 0,
+                         "sorting the 'all' tab by Detail must not trigger a full-batch fetch now that it's server-sortable")
+
+    def test_buildAggregationsSectionAll_uses_server_endpoint_when_unfiltered(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_all_section() + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                if (url.indexOf('/api/aggregation-data') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        'Type': [{value: 'FLOW', count: 3}],
+                        'Detail': [{value: 'sig1', count: 1}]
+                    }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            advancedMode = true;
+            await buildAggregationsSectionAll();
+            window.__jsdom_result = {
+                aggCalls: fetchCalls.filter(u => u.indexOf('/api/aggregation-data') >= 0).length,
+                aggUrlHasType: fetchCalls.some(u => u.indexOf('/api/aggregation-data') >= 0 && u.indexOf('type=') >= 0),
+                fullBatchCalls: fetchCalls.filter(u => u.indexOf('/api/events') >= 0 && u.indexOf('limit=') >= 0).length,
+                aggHtml: document.getElementById('aggregations').innerHTML
+            };
+        ''')
+        self.assertEqual(result['aggCalls'], 1,
+                         'buildAggregationsSectionAll must call /api/aggregation-data when unfiltered')
+        self.assertFalse(result['aggUrlHasType'], 'the merged aggregation request must not send type=all')
+        self.assertEqual(result['fullBatchCalls'], 0,
+                         'the server-aggregation path must not need the full capped batch')
+        self.assertIn('FLOW', result['aggHtml'])
+
+    def test_buildAggregationsSectionAll_falls_back_to_client_when_filtered(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_all_section() + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = { 'Protocol': 'TCP' };
+            currentSearch = [];
+            advancedMode = true;
+            await buildAggregationsSectionAll();
+            window.__jsdom_result = {
+                aggCalls: fetchCalls.filter(u => u.indexOf('/api/aggregation-data') >= 0).length
+            };
+        ''')
+        self.assertEqual(result['aggCalls'], 0,
+                         'an active column filter must keep buildAggregationsSectionAll on the client-side path')
+
+    def test_buildAllEventRow_shows_detail_for_previously_blank_types(self):
+        """REGRESSION: buildAllEventRow used to maintain its own incomplete
+        copy of the Detail logic, always blank for modbus/dnp3/pgsql/
+        filealerts even though those were already correctly sortable via
+        extractValue. Now it delegates to extractValue directly."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var modbusRow = buildAllEventRow({
+                event_type: 'modbus', timestamp: '2026-01-01T00:00:00', proto: 'TCP',
+                src_ip: '1.1.1.1', src_port: 502, dest_ip: '2.2.2.2', dest_port: 502,
+                modbus: { request: { function_code: 'WrMultCoils' } }
+            });
+            var dnp3Row = buildAllEventRow({
+                event_type: 'dnp3', timestamp: '2026-01-01T00:00:01', proto: 'TCP',
+                src_ip: '1.1.1.1', dest_ip: '2.2.2.2',
+                dnp3: { type: 'unsolicited_response' }
+            });
+            window.__jsdom_result = { modbusRow: modbusRow, dnp3Row: dnp3Row };
+        ''')
+        self.assertIn('WrMultCoils', result['modbusRow'])
+        self.assertIn('unsolicited_response', result['dnp3Row'])
 
 
 if __name__ == '__main__':

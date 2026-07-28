@@ -327,8 +327,8 @@ class TestIsLogFileByExtension(unittest.TestCase):
         self._assert_not_log_ext('file.json.exe')
 
 
-class TestResolveSafeIp(unittest.TestCase):
-    """Tests for resolve_safe_ip, which callers must use to pin a connection
+class TestResolveSafeIps(unittest.TestCase):
+    """Tests for resolve_safe_ips, which callers must use to pin a connection
     to a validated IP instead of letting the HTTP client re-resolve the
     hostname (closing the DNS-rebinding TOCTOU window)."""
 
@@ -338,39 +338,39 @@ class TestResolveSafeIp(unittest.TestCase):
 
     def test_returns_ip_for_public_host(self):
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('93.184.216.34')):
-            self.assertEqual(validators.resolve_safe_ip('example.com'), '93.184.216.34')
+            self.assertEqual(validators.resolve_safe_ips('example.com')[0], '93.184.216.34')
 
     def test_rejects_private_10x(self):
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('10.0.0.5')):
             with self.assertRaises(ValueError):
-                validators.resolve_safe_ip('internal.example.com')
+                validators.resolve_safe_ips('internal.example.com')
 
     def test_rejects_loopback(self):
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('127.0.0.1')):
             with self.assertRaises(ValueError):
-                validators.resolve_safe_ip('sneaky.example.com')
+                validators.resolve_safe_ips('sneaky.example.com')
 
     def test_rejects_link_local_metadata_ip(self):
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('169.254.169.254')):
             with self.assertRaises(ValueError):
-                validators.resolve_safe_ip('metadata.example.com')
+                validators.resolve_safe_ips('metadata.example.com')
 
     def test_raises_on_dns_failure(self):
         with unittest.mock.patch('socket.getaddrinfo', side_effect=socket.gaierror):
             with self.assertRaises(ValueError):
-                validators.resolve_safe_ip('doesnotexist.invalid')
+                validators.resolve_safe_ips('doesnotexist.invalid')
 
     def test_raises_on_dns_timeout(self):
         with unittest.mock.patch('socket.getaddrinfo', side_effect=socket.timeout):
             with self.assertRaises(ValueError):
-                validators.resolve_safe_ip('slow.example.com')
+                validators.resolve_safe_ips('slow.example.com')
 
     def test_returned_ip_is_what_validate_url_safety_checked(self):
-        """resolve_safe_ip must apply the same blocklist as validate_url_safety
-        so the IP it returns for pinning is exactly what was already vetted."""
+        """resolve_safe_ips must apply the same blocklist as validate_url_safety
+        so the IPs it returns for pinning are exactly what was already vetted."""
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('192.168.1.1')):
             with self.assertRaises(ValueError) as ctx:
-                validators.resolve_safe_ip('router.local')
+                validators.resolve_safe_ips('router.local')
             self.assertIn('private', str(ctx.exception).lower())
 
     def test_resolve_safe_ips_returns_all_addresses_preserving_order(self):
@@ -414,19 +414,19 @@ class TestResolveSafeIp(unittest.TestCase):
         """::ffff:127.0.0.1 must be blocked like 127.0.0.1."""
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('::ffff:127.0.0.1')):
             with self.assertRaises(ValueError):
-                validators.resolve_safe_ip('v6mapped.example.com')
+                validators.resolve_safe_ips('v6mapped.example.com')
 
     def test_rejects_ipv4_mapped_private(self):
         """::ffff:10.0.0.1 must be blocked like 10.0.0.1."""
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('::ffff:10.0.0.1')):
             with self.assertRaises(ValueError):
-                validators.resolve_safe_ip('v6mapped-private.example.com')
+                validators.resolve_safe_ips('v6mapped-private.example.com')
 
     def test_rejects_ipv4_compatible_loopback(self):
         """::127.0.0.1 (IPv4-compatible) must be blocked."""
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('::127.0.0.1')):
             with self.assertRaises(ValueError):
-                validators.resolve_safe_ip('v6compat.example.com')
+                validators.resolve_safe_ips('v6compat.example.com')
 
 
 if __name__ == '__main__':

@@ -22,10 +22,34 @@ import config
 import db
 import socrates as server
 import suricata_analyzer
-from validators import validate_pcap_content
+from validators import is_pcap_file
 
 SERVER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'socrates.py')
 SURICATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'suricata_analyzer.py')
+
+
+class SyncThread:
+    """Drop-in replacement for threading.Thread that runs its target
+    synchronously on .start(), for patching socrates.threading.Thread in
+    tests. socrates.py runs file/log analysis in a real background daemon
+    thread and callers poll /api/check-status with a fixed time budget -
+    under the full test suite's load (many other tests' own background
+    threads still contending for CPU/subprocess slots), that budget can be
+    missed even though the analysis itself is fast once scheduled, causing
+    intermittent failures that don't reproduce when the test runs alone.
+    Patching the target to run inline removes the race (and the need to
+    poll) entirely, rather than just widening the timeout."""
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+
+    def start(self):
+        if self._target:
+            self._target(*self._args, **self._kwargs)
+
+    def join(self, timeout=None):
+        pass
 
 
 class TestIPValidation(unittest.TestCase):
@@ -288,10 +312,23 @@ class TestFetchUrlSafely(unittest.TestCase):
         cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
         cls.thread.start()
 
+        # _fetch_url_safely now streams to disk under server._upload_tmp_dir()
+        # (derived from server.DATA_DIR) instead of returning bytes -- sandbox
+        # DATA_DIR so these tests don't write into the real data directory.
+        cls.tmpdir = tempfile.mkdtemp()
+        cls.original_base = server.DATA_DIR
+        server.DATA_DIR = cls.tmpdir
+
     @classmethod
     def tearDownClass(cls):
         cls.httpd.shutdown()
         cls.httpd.server_close()
+        server.DATA_DIR = cls.original_base
+        shutil.rmtree(cls.tmpdir, ignore_errors=True)
+
+    def _upload_tmp_contents(self):
+        d = os.path.join(server.DATA_DIR, config.UPLOAD_TMP_SUBDIR)
+        return os.listdir(d) if os.path.isdir(d) else []
 
     def test_follows_redirect_and_revalidates_each_hop(self):
         """REGRESSION: a redirect target must be validated too, not just the
@@ -304,10 +341,12 @@ class TestFetchUrlSafely(unittest.TestCase):
 
         with unittest.mock.patch('socrates.validate_url_safety', side_effect=spy_validate), \
              unittest.mock.patch('socrates.resolve_safe_ips', return_value=['127.0.0.1']):
-            data = server._fetch_url_safely(
+            path = server._fetch_url_safely(
                 f'http://localhost:{self.port}/redirect', timeout=5, max_size=10_000_000
             )
-        self.assertEqual(data, b'final-payload')
+        with open(path, 'rb') as f:
+            self.assertEqual(f.read(), b'final-payload')
+        os.unlink(path)
         self.assertEqual(len(validated_urls), 2, 'both the initial URL and the redirect target must be validated')
         self.assertIn('/redirect', validated_urls[0])
         self.assertIn('/final', validated_urls[1])
@@ -333,63 +372,96 @@ class TestFetchUrlSafely(unittest.TestCase):
                 server._fetch_url_safely(
                     f'http://localhost:{self.port}/big', timeout=5, max_size=100
                 )
+        self.assertEqual(self._upload_tmp_contents(), [], 'partial download must be cleaned up on size-limit failure')
 
     def test_plain_fetch_returns_body(self):
         with unittest.mock.patch('socrates.validate_url_safety', return_value=None), \
              unittest.mock.patch('socrates.resolve_safe_ips', return_value=['127.0.0.1']):
-            data = server._fetch_url_safely(
+            path = server._fetch_url_safely(
                 f'http://localhost:{self.port}/final', timeout=5, max_size=10_000_000
             )
-        self.assertEqual(data, b'final-payload')
+        with open(path, 'rb') as f:
+            self.assertEqual(f.read(), b'final-payload')
+        os.unlink(path)
+
+
+class TestCleanupUploadTmpDir(unittest.TestCase):
+    """_cleanup_upload_tmp_dir() sweeps orphaned files/dirs left behind in
+    upload-tmp/ by a process that died mid-upload (crash, OOM-kill, kill -9)
+    before its own request-scoped cleanup could run. It's meant to run once
+    at startup, before the server accepts requests - at that point anything
+    in upload-tmp/ is guaranteed orphaned, so no age check is needed."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.original_data_dir = server.DATA_DIR
+        server.DATA_DIR = self.tmpdir
+
+    def tearDown(self):
+        server.DATA_DIR = self.original_data_dir
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_removes_leftover_files_and_directories(self):
+        upload_tmp = server._upload_tmp_dir()
+        # A leftover file (e.g. from _parse_multipart_stream/_fetch_url_safely)
+        with open(os.path.join(upload_tmp, 'orphaned-upload.download'), 'wb') as f:
+            f.write(b'partial data')
+        # A leftover directory (e.g. from _extract_zip_contents' tmp_dir)
+        orphaned_dir = os.path.join(upload_tmp, 'orphaned-extract-dir')
+        os.makedirs(orphaned_dir)
+        with open(os.path.join(orphaned_dir, 'extracted.pcap'), 'wb') as f:
+            f.write(b'pcap data')
+
+        server._cleanup_upload_tmp_dir()
+
+        self.assertEqual(os.listdir(upload_tmp), [],
+                          'all leftover files and directories must be removed')
+
+    def test_noop_on_empty_dir(self):
+        """Must not error when upload-tmp/ is already empty (the common case
+        on a clean shutdown/restart)."""
+        server._cleanup_upload_tmp_dir()
+        self.assertEqual(os.listdir(server._upload_tmp_dir()), [])
+
+    def test_main_calls_cleanup_before_accepting_requests(self):
+        """REGRESSION GUARD: the cleanup must actually be wired into main(),
+        not just exist as a callable dead function."""
+        with open(SERVER_FILE, 'r') as f:
+            content = f.read()
+        cleanup_call_idx = content.index('_cleanup_upload_tmp_dir()')
+        serve_forever_idx = content.index('serve_forever()')
+        self.assertLess(cleanup_call_idx, serve_forever_idx,
+                         '_cleanup_upload_tmp_dir() must run before the server starts accepting requests')
 
 
 class TestPcapContentValidation(unittest.TestCase):
     def test_pcap_magic_little_endian(self):
         data = b'\xd4\xc3\xb2\xa1' + b'\x00' * 20
-        self.assertTrue(validate_pcap_content(data))
+        self.assertTrue(is_pcap_file(data))
 
     def test_pcap_magic_big_endian(self):
         data = b'\xa1\xb2\xc3\xd4' + b'\x00' * 20
-        self.assertTrue(validate_pcap_content(data))
+        self.assertTrue(is_pcap_file(data))
 
     def test_pcapng_magic(self):
         data = b'\x0a\x0d\x0d\x0a' + b'\x00' * 20
-        self.assertTrue(validate_pcap_content(data))
+        self.assertTrue(is_pcap_file(data))
 
     def test_random_data_rejected(self):
         data = b'this is not a pcap file at all'
-        self.assertFalse(validate_pcap_content(data))
+        self.assertFalse(is_pcap_file(data))
 
     def test_html_rejected(self):
         data = b'<html><body>not a pcap</body></html>'
-        self.assertFalse(validate_pcap_content(data))
+        self.assertFalse(is_pcap_file(data))
 
     def test_elf_rejected(self):
         data = b'\x7fELF' + b'\x00' * 20
-        self.assertFalse(validate_pcap_content(data))
+        self.assertFalse(is_pcap_file(data))
 
     def test_short_data_not_pcap(self):
         data = b'\x00' * 3
-        self.assertFalse(validate_pcap_content(data))
-
-    def test_zip_magic_accepted(self):
-        data = b'PK\x03\x04' + b'\x00' * 20
-        self.assertTrue(validate_pcap_content(data))
-
-    def test_zip_empty_accepted(self):
-        data = b'PK\x05\x06' + b'\x00' * 20
-        self.assertTrue(validate_pcap_content(data))
-
-    def test_short_zip_rejected(self):
-        data = b'PK\x03'
-        self.assertFalse(validate_pcap_content(data))
-
-    def test_old_zip_suffix_check_removed(self):
-        """Ensure the broken data.endswith(b'.zip') check is gone."""
-        with open(SERVER_FILE, 'r') as f:
-            content = f.read()
-        self.assertNotIn("data.endswith(b'.zip')", content)
-        self.assertNotIn('data.endswith(b".zip")', content)
+        self.assertFalse(is_pcap_file(data))
 
 
 class TestMD5Validation(unittest.TestCase):
@@ -529,8 +601,8 @@ class TestAPIEndpoints(unittest.TestCase):
         status, body = self._get(f'/api/stats?md5={md5}&q=alert')
         self.assertEqual(status, 200)
         data = json.loads(body)
-        self.assertEqual(data.get('alert'), 1)
-        self.assertNotIn('dns', data)
+        self.assertEqual(data['counts'].get('alert'), 1)
+        self.assertNotIn('dns', data['counts'])
 
     def test_count_with_q_parameter(self):
         md5 = 'a3f5c5f7e7b5f5e5d5c5b5a595857565'
@@ -546,6 +618,36 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(status, 200)
         data = json.loads(body)
         self.assertEqual(data['count'], 1)
+
+    def test_events_all_types_excludes_stats_row(self):
+        md5 = '11223344556677889900aabbccddeeff'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+            f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.2.3.4"}\n')
+            f.write('{"event_type": "dns", "timestamp": "2026-01-01T00:00:01", "src_ip": "5.6.7.8"}\n')
+            f.write('{"event_type": "stats", "timestamp": "2026-01-01T00:00:02"}\n')
+        db_file = os.path.join(md5dir, 'events.db')
+        db.create_sqlite_db(db_file, os.path.join(md5dir, 'eve.json'))
+
+        # No &type= param - the merged "All Events" query - must exclude 'stats'
+        status, body = self._get(f'/api/events?md5={md5}')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(len(data), 2, 'stats row must be excluded from the merged all-types query')
+        self.assertNotIn('stats', [e['event_type'] for e in data])
+
+        # Count must match the row query exactly, for pagination consistency
+        status, body = self._get(f'/api/count?md5={md5}')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['count'], 2)
+
+        # Explicitly requesting type=stats must still work
+        status, body = self._get(f'/api/events?md5={md5}&type=stats')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['event_type'], 'stats')
 
     def test_events_with_multiple_q_params(self):
         md5 = 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7'
@@ -578,7 +680,25 @@ class TestAPIEndpoints(unittest.TestCase):
         status, body = self._get(f'/api/stats?md5={md5}&q=alert&q=80')
         self.assertEqual(status, 200)
         data = json.loads(body)
-        self.assertEqual(data.get('alert'), 1)
+        self.assertEqual(data['counts'].get('alert'), 1)
+
+    def test_stats_includes_date_range_excluding_stats_row(self):
+        md5 = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+            f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.2.3.4"}\n')
+            f.write('{"event_type": "dns", "timestamp": "2026-01-01T00:00:05", "src_ip": "5.6.7.8"}\n')
+            f.write('{"event_type": "stats", "timestamp": "2026-01-01T00:00:59"}\n')
+        db_file = os.path.join(md5dir, 'events.db')
+        db.create_sqlite_db(db_file, os.path.join(md5dir, 'eve.json'))
+
+        status, body = self._get(f'/api/stats?md5={md5}')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertIn('date_range', data)
+        self.assertEqual(data['date_range']['min'], '2026-01-01T00:00:00')
+        self.assertEqual(data['date_range']['max'], '2026-01-01T00:00:05')
 
     def test_count_with_multiple_q_params(self):
         md5 = 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9'
@@ -594,6 +714,350 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(status, 200)
         data = json.loads(body)
         self.assertEqual(data['count'], 1)
+
+    def test_sigma_count_with_q_parameter(self):
+        md5 = 'e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        db_file = os.path.join(md5dir, 'events.db')
+        db.init_empty_db(db_file)
+        db.insert_sigma_alerts(db_file, [
+            {'timestamp': '2026-01-01T00:00:00', 'rule_title': 'Suspicious PowerShell', 'severity': 'high'},
+            {'timestamp': '2026-01-01T00:00:01', 'rule_title': 'Benign Login', 'severity': 'low'},
+        ])
+
+        status, body = self._get(f'/api/sigma-count?md5={md5}&q=PowerShell')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['count'], 1)
+
+    def test_sigma_count_no_filter_returns_total(self):
+        md5 = 'f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        db_file = os.path.join(md5dir, 'events.db')
+        db.init_empty_db(db_file)
+        db.insert_sigma_alerts(db_file, [
+            {'timestamp': '2026-01-01T00:00:00', 'rule_title': 'Rule A', 'severity': 'high'},
+            {'timestamp': '2026-01-01T00:00:01', 'rule_title': 'Rule B', 'severity': 'low'},
+        ])
+
+        status, body = self._get(f'/api/sigma-count?md5={md5}')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['count'], 2)
+
+    def test_sigma_count_requires_md5(self):
+        status, body = self._get('/api/sigma-count')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_sigma_count_invalid_md5_returns_400(self):
+        status, body = self._get('/api/sigma-count?md5=invalid')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_sigma_count_traversal_md5_returns_400(self):
+        status, body = self._get('/api/sigma-count?md5=../etc/passwd')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_sankey_data_with_populated_events(self):
+        md5 = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d7'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+            f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "dest_port": 443}\n')
+            f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:01", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "dest_port": 443}\n')
+        db_file = os.path.join(md5dir, 'events.db')
+        db.create_sqlite_db(db_file, os.path.join(md5dir, 'eve.json'))
+
+        status, body = self._get(f'/api/sankey-data?md5={md5}')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertIn('nodes', data)
+        self.assertIn('links', data)
+        names = {n['name'] for n in data['nodes']}
+        self.assertIn('1.1.1.1', names)
+        self.assertIn('2.2.2.2', names)
+        self.assertIn('443', names)
+
+    def test_sankey_data_with_type_filter(self):
+        md5 = 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e8'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+            f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "dest_port": 443}\n')
+            f.write('{"event_type": "dns", "timestamp": "2026-01-01T00:00:01", "src_ip": "5.5.5.5", "dest_ip": "6.6.6.6", "dest_port": 53}\n')
+        db_file = os.path.join(md5dir, 'events.db')
+        db.create_sqlite_db(db_file, os.path.join(md5dir, 'eve.json'))
+
+        status, body = self._get(f'/api/sankey-data?md5={md5}&type=dns')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        names = {n['name'] for n in data['nodes']}
+        self.assertIn('5.5.5.5', names)
+        self.assertNotIn('1.1.1.1', names)
+
+    def test_sankey_data_with_q_parameter(self):
+        md5 = 'c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f9'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+            f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "dest_port": 443}\n')
+            f.write('{"event_type": "dns", "timestamp": "2026-01-01T00:00:01", "src_ip": "5.5.5.5", "dest_ip": "6.6.6.6", "dest_port": 53}\n')
+        db_file = os.path.join(md5dir, 'events.db')
+        db.create_sqlite_db(db_file, os.path.join(md5dir, 'eve.json'))
+
+        status, body = self._get(f'/api/sankey-data?md5={md5}&q=dns')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        names = {n['name'] for n in data['nodes']}
+        self.assertIn('5.5.5.5', names)
+        self.assertNotIn('1.1.1.1', names)
+
+    def test_sankey_data_requires_md5(self):
+        status, body = self._get('/api/sankey-data')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_sankey_data_invalid_md5_returns_400(self):
+        status, body = self._get('/api/sankey-data?md5=invalid')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_sankey_data_traversal_md5_returns_400(self):
+        status, body = self._get('/api/sankey-data?md5=../etc/passwd')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_aggregation_data_with_type_filter(self):
+        md5 = 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a1'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+            f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "proto": "TCP", "alert": {"category": "Trojan", "severity": 2}}\n')
+            f.write('{"event_type": "dns", "timestamp": "2026-01-01T00:00:01", "src_ip": "5.5.5.5", "dest_ip": "6.6.6.6", "proto": "UDP", "dns": {"rrname": "example.com", "rrtype": "A"}}\n')
+        db_file = os.path.join(md5dir, 'events.db')
+        db.create_sqlite_db(db_file, os.path.join(md5dir, 'eve.json'))
+
+        try:
+            status, body = self._get(f'/api/aggregation-data?md5={md5}&type=alert')
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data['Category'], [{'value': 'Trojan', 'count': 1}])
+            self.assertNotIn('Query', data, 'dns-only column must not appear for an alert-type request')
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_aggregation_data_with_q_parameter(self):
+        md5 = 'e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b2'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+            f.write('{"event_type": "dns", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "proto": "UDP", "dns": {"rrname": "example.com", "rrtype": "A"}}\n')
+            f.write('{"event_type": "dns", "timestamp": "2026-01-01T00:00:01", "src_ip": "5.5.5.5", "dest_ip": "6.6.6.6", "proto": "UDP", "dns": {"rrname": "other.org", "rrtype": "A"}}\n')
+        db_file = os.path.join(md5dir, 'events.db')
+        db.create_sqlite_db(db_file, os.path.join(md5dir, 'eve.json'))
+
+        try:
+            status, body = self._get(f'/api/aggregation-data?md5={md5}&type=dns&q=example')
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data['Query'], [{'value': 'example.com', 'count': 1}])
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_aggregation_data_requires_md5(self):
+        status, body = self._get('/api/aggregation-data')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_aggregation_data_invalid_md5_returns_400(self):
+        status, body = self._get('/api/aggregation-data?md5=invalid')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_aggregation_data_traversal_md5_returns_400(self):
+        status, body = self._get('/api/aggregation-data?md5=../etc/passwd')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_aggregation_data_missing_type_returns_merged_data(self):
+        """A missing/absent 'type' param means the merged 'all events' view -
+        now supported server-side, returning real Type/Detail/Protocol/etc.
+        aggregations across all event types, not an empty dict."""
+        md5 = 'f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c3'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+            f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "proto": "TCP", "alert": {"signature": "ET TEST sig"}}\n')
+        db_file = os.path.join(md5dir, 'events.db')
+        db.create_sqlite_db(db_file, os.path.join(md5dir, 'eve.json'))
+
+        try:
+            status, body = self._get(f'/api/aggregation-data?md5={md5}')
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data['Type'], [{'value': 'ALERT', 'count': 1}])
+            self.assertEqual(data['Detail'], [{'value': 'ET TEST sig', 'count': 1}])
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_sankey_data_unfiltered_is_cached(self):
+        """An unfiltered (no q) /api/sankey-data response must be served from
+        cache on repeat requests - proven by mutating events.db directly
+        underneath the app (bypassing normal invalidation) and confirming
+        the response stays the stale, first-computed result."""
+        md5 = 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            eve_file = os.path.join(md5dir, 'eve.json')
+            db_file = os.path.join(md5dir, 'events.db')
+            with open(eve_file, 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "dest_port": 80}\n')
+            db.create_sqlite_db(db_file, eve_file)
+
+            status, body1 = self._get(f'/api/sankey-data?md5={md5}')
+            self.assertEqual(status, 200)
+            status, body2 = self._get(f'/api/sankey-data?md5={md5}')
+            self.assertEqual(status, 200)
+            self.assertEqual(body1, body2)
+
+            # Mutate events.db directly, bypassing the app entirely - a
+            # genuine recompute would see this; a cache hit would not.
+            with open(eve_file, 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "9.9.9.9", "dest_ip": "8.8.8.8", "dest_port": 443}\n')
+            os.remove(db_file)
+            db.create_sqlite_db(db_file, eve_file)
+
+            status, body3 = self._get(f'/api/sankey-data?md5={md5}')
+            self.assertEqual(status, 200)
+            self.assertEqual(body3, body1, 'unfiltered sankey-data must be served from cache, not recomputed')
+        finally:
+            server._evict_analysis_cache(md5)
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_sankey_data_with_q_is_never_cached(self):
+        """A search-filtered /api/sankey-data request must always recompute -
+        it must reflect a direct events.db mutation made between requests."""
+        md5 = 'a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            eve_file = os.path.join(md5dir, 'eve.json')
+            db_file = os.path.join(md5dir, 'events.db')
+            with open(eve_file, 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "dest_port": 80}\n')
+            db.create_sqlite_db(db_file, eve_file)
+
+            status, body1 = self._get(f'/api/sankey-data?md5={md5}&q=alert')
+            self.assertEqual(status, 200)
+
+            with open(eve_file, 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "9.9.9.9", "dest_ip": "8.8.8.8", "dest_port": 443}\n')
+            os.remove(db_file)
+            db.create_sqlite_db(db_file, eve_file)
+
+            status, body2 = self._get(f'/api/sankey-data?md5={md5}&q=alert')
+            self.assertEqual(status, 200)
+            self.assertNotEqual(body1, body2, 'search-filtered sankey-data must never be cached')
+        finally:
+            server._evict_analysis_cache(md5)
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_aggregation_data_unfiltered_is_cached(self):
+        md5 = 'a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            eve_file = os.path.join(md5dir, 'eve.json')
+            db_file = os.path.join(md5dir, 'events.db')
+            with open(eve_file, 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "proto": "TCP", "alert": {"category": "Trojan", "severity": 2}}\n')
+            db.create_sqlite_db(db_file, eve_file)
+
+            status, body1 = self._get(f'/api/aggregation-data?md5={md5}&type=alert')
+            self.assertEqual(status, 200)
+
+            with open(eve_file, 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "9.9.9.9", "dest_ip": "8.8.8.8", "proto": "UDP", "alert": {"category": "Info", "severity": 0}}\n')
+            os.remove(db_file)
+            db.create_sqlite_db(db_file, eve_file)
+
+            status, body2 = self._get(f'/api/aggregation-data?md5={md5}&type=alert')
+            self.assertEqual(status, 200)
+            self.assertEqual(body1, body2, 'unfiltered aggregation-data must be served from cache, not recomputed')
+        finally:
+            server._evict_analysis_cache(md5)
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_delete_analysis_evicts_sankey_and_aggregation_cache(self):
+        """After /api/delete-analysis, a fresh analysis re-created under the
+        same md5 must not see the previous analysis's cached results."""
+        md5 = 'a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            eve_file = os.path.join(md5dir, 'eve.json')
+            db_file = os.path.join(md5dir, 'events.db')
+            with open(eve_file, 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "dest_port": 80}\n')
+            db.create_sqlite_db(db_file, eve_file)
+
+            status, body1 = self._get(f'/api/sankey-data?md5={md5}')
+            self.assertEqual(status, 200)
+
+            status, body = self._post('/api/delete-analysis', {'md5': md5})
+            self.assertEqual(status, 200)
+
+            os.makedirs(md5dir, exist_ok=True)
+            with open(eve_file, 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "9.9.9.9", "dest_ip": "8.8.8.8", "dest_port": 443}\n')
+            db.create_sqlite_db(db_file, eve_file)
+
+            status, body2 = self._get(f'/api/sankey-data?md5={md5}')
+            self.assertEqual(status, 200)
+            self.assertNotEqual(body1, body2, 'delete-analysis must evict the cache, not leave stale data for a re-created md5')
+        finally:
+            server._evict_analysis_cache(md5)
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_delete_all_analyses_clears_caches(self):
+        md5 = 'a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            eve_file = os.path.join(md5dir, 'eve.json')
+            db_file = os.path.join(md5dir, 'events.db')
+            with open(eve_file, 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "dest_port": 80}\n')
+            db.create_sqlite_db(db_file, eve_file)
+
+            status, body = self._get(f'/api/sankey-data?md5={md5}')
+            self.assertEqual(status, 200)
+            self.assertTrue(any(k[0] == md5 for k in server._SANKEY_CACHE),
+                             'sankey cache must be populated before delete-all')
+
+            status, body = self._post('/api/delete-all-analyses', {})
+            self.assertEqual(status, 200)
+            self.assertFalse(any(k[0] == md5 for k in server._SANKEY_CACHE),
+                              'delete-all-analyses must clear the sankey cache')
+            self.assertEqual(len(server._AGGREGATION_CACHE), 0,
+                              'delete-all-analyses must clear the aggregation cache')
+        finally:
+            server._evict_analysis_cache(md5)
+            shutil.rmtree(md5dir, ignore_errors=True)
 
     def test_events_invalid_limit(self):
         md5 = 'a' * 32
@@ -621,6 +1085,131 @@ class TestAPIEndpoints(unittest.TestCase):
         md5 = 'a' * 32
         status, body = self._get(f'/api/events?md5={md5}&limit=0')
         self.assertEqual(status, 200)
+
+    def _seed_flow_events(self, md5, events):
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        eve_path = os.path.join(md5dir, 'eve.json')
+        with open(eve_path, 'w') as f:
+            for e in events:
+                f.write(json.dumps(e) + '\n')
+        db.create_sqlite_db(os.path.join(md5dir, 'events.db'), eve_path)
+        return md5dir
+
+    def test_events_order_by_real_column(self):
+        md5 = 'd' * 32
+        md5dir = self._seed_flow_events(md5, [
+            {'event_type': 'flow', 'timestamp': '2026-01-01T00:00:00', 'proto': 'TCP', 'src_ip': '1.1.1.1'},
+            {'event_type': 'flow', 'timestamp': '2026-01-01T00:00:01', 'proto': 'UDP', 'src_ip': '2.2.2.2'},
+            {'event_type': 'flow', 'timestamp': '2026-01-01T00:00:02', 'proto': 'ICMP', 'src_ip': '3.3.3.3'},
+        ])
+        try:
+            status, body = self._get(f'/api/events?md5={md5}&type=flow&order_by=Protocol&sort_dir=asc')
+            self.assertEqual(status, 200)
+            events = json.loads(body)
+            self.assertEqual([e['proto'] for e in events], ['ICMP', 'TCP', 'UDP'])
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_events_json_raw_passthrough_returns_valid_multi_row_response(self):
+        """/api/events now builds its response via query_events_sqlite_json's
+        raw json_data passthrough (skipping the parse/reserialize round
+        trip) - confirm the HTTP response is still valid, correctly-shaped
+        JSON with the real field values for every row, not just row 1."""
+        md5 = 'f' * 32
+        md5dir = self._seed_flow_events(md5, [
+            {'event_type': 'flow', 'timestamp': '2026-01-01T00:00:00', 'proto': 'TCP', 'src_ip': '1.1.1.1', 'dest_port': 443},
+            {'event_type': 'flow', 'timestamp': '2026-01-01T00:00:01', 'proto': 'UDP', 'src_ip': '2.2.2.2', 'dest_port': 53},
+            {'event_type': 'flow', 'timestamp': '2026-01-01T00:00:02', 'proto': 'TCP', 'src_ip': '3.3.3.3', 'dest_port': 80},
+        ])
+        try:
+            status, body = self._get(f'/api/events?md5={md5}&type=flow')
+            self.assertEqual(status, 200)
+            events = json.loads(body)
+            self.assertEqual(len(events), 3)
+            self.assertEqual([e['src_ip'] for e in events], ['1.1.1.1', '2.2.2.2', '3.3.3.3'])
+            self.assertEqual([e['dest_port'] for e in events], [443, 53, 80])
+            self.assertTrue(all(e['event_type'] == 'flow' for e in events))
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_events_order_by_injection_attempt_is_safely_ignored(self):
+        """A malicious order_by value must never reach raw SQL - it should
+        be silently ignored (falls back to default timestamp order), not
+        error, and must not affect the underlying database."""
+        md5 = 'e' * 32
+        md5dir = self._seed_flow_events(md5, [
+            {'event_type': 'flow', 'timestamp': '2026-01-01T00:00:01', 'proto': 'TCP', 'src_ip': '2.2.2.2'},
+            {'event_type': 'flow', 'timestamp': '2026-01-01T00:00:00', 'proto': 'UDP', 'src_ip': '1.1.1.1'},
+        ])
+        try:
+            import urllib.parse
+            malicious = urllib.parse.quote("'; DROP TABLE events; --")
+            status, body = self._get(f'/api/events?md5={md5}&type=flow&order_by={malicious}')
+            self.assertEqual(status, 200)
+            events = json.loads(body)
+            # Falls back to default timestamp-ascending order, not an error.
+            self.assertEqual([e['src_ip'] for e in events], ['1.1.1.1', '2.2.2.2'])
+
+            # The events table must still be fully intact afterward.
+            status2, body2 = self._get(f'/api/count?md5={md5}&type=flow')
+            self.assertEqual(status2, 200)
+            self.assertEqual(json.loads(body2)['count'], 2)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_max_query_limit_is_100000(self):
+        self.assertEqual(config.MAX_QUERY_LIMIT, 100000)
+
+    def test_limits_endpoint_returns_max_query_limit(self):
+        status, body = self._get('/api/limits')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {
+            'maxQueryLimit': config.MAX_QUERY_LIMIT,
+            'maxUploadSize': config.MAX_UPLOAD_SIZE,
+        })
+
+    def test_events_limit_clamped_to_max_query_limit(self):
+        md5 = 'b' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        eve_path = os.path.join(md5dir, 'eve.json')
+        with open(eve_path, 'w') as f:
+            for i in range(config.MAX_QUERY_LIMIT + 1):
+                f.write(json.dumps({
+                    'event_type': 'flow', 'timestamp': '2026-01-01T00:00:00',
+                    'src_ip': '1.1.1.1', 'dest_ip': '2.2.2.2', 'proto': 'TCP',
+                    'flow_id': i,
+                }) + '\n')
+        db.create_sqlite_db(os.path.join(md5dir, 'events.db'), eve_path)
+
+        try:
+            status, body = self._get(f'/api/events?md5={md5}&limit={config.MAX_QUERY_LIMIT + 1000}')
+            self.assertEqual(status, 200)
+            events = json.loads(body)
+            self.assertEqual(len(events), config.MAX_QUERY_LIMIT)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_sigma_alerts_limit_clamped_to_max_query_limit(self):
+        md5 = 'c' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        db_path = os.path.join(md5dir, 'events.db')
+        alerts = [{
+            'timestamp': '2026-01-01T00:00:00', 'rule_title': f'Rule {i}',
+            'rule_id': str(i), 'severity': 'high', 'level': 'high',
+            'logsource': 'test', 'original_log': '{}', 'json_data': '{}',
+        } for i in range(config.MAX_QUERY_LIMIT + 1)]
+        db.insert_sigma_alerts(db_path, alerts)
+
+        try:
+            status, body = self._get(f'/api/sigma-alerts?md5={md5}&limit={config.MAX_QUERY_LIMIT + 1000}')
+            self.assertEqual(status, 200)
+            result = json.loads(body)
+            self.assertEqual(len(result), config.MAX_QUERY_LIMIT)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
 
     def test_stats_requires_md5(self):
         status, body = self._get('/api/stats')
@@ -665,6 +1254,23 @@ class TestAPIEndpoints(unittest.TestCase):
     def test_ascii_stream_requires_md5(self):
         status, _ = self._get('/api/ascii-stream?src=1.2.3.4&sport=80&dst=5.6.7.8&dport=443')
         self.assertEqual(status, 400)
+
+    def test_pcap_path_finds_file_with_no_recognized_extension(self):
+        """REGRESSION: a pcap saved with no recognized extension (e.g. a
+        Security Onion so-pcap.<timestamp> download) must still resolve via
+        magic-byte detection instead of returning 'No pcap found'."""
+        md5 = 'd' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        pcap_name = 'so-pcap.1784903949'
+        with open(os.path.join(md5dir, pcap_name), 'wb') as f:
+            f.write(b'\xd4\xc3\xb2\xa1' + b'\x00' * 20)
+        try:
+            status, body = self._get(f'/api/pcap-path?md5={md5}')
+            self.assertEqual(status, 200)
+            self.assertEqual(body, pcap_name)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
 
     def test_analyses_empty(self):
         status, body = self._get('/api/analyses')
@@ -868,11 +1474,19 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(data.get('status'), 'processing')
         self.assertEqual(data.get('phase'), 'files', 'Non-PCAP upload must report files phase')
 
+    @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
     @unittest.mock.patch('socrates.scan_single_file')
     @unittest.mock.patch('socrates.check_yara_executable')
     @unittest.mock.patch('socrates.setup_yara_rules')
     def test_upload_non_pcap_creates_file_analysis_db(self, mock_setup, mock_check, mock_scan):
-        """Uploading a non-PCAP file creates events.db with fileinfo + filealerts."""
+        """Uploading a non-PCAP file creates events.db with fileinfo + filealerts.
+
+        Patches socrates.threading.Thread with SyncThread so the analysis
+        that /api/upload normally dispatches to a background daemon thread
+        runs synchronously instead - by the time _post_multipart returns,
+        analysis has already completed, so no polling/timeout is needed and
+        the test can't flake under full-suite load (see SyncThread's
+        docstring for why the polling version could)."""
         mock_setup.return_value = '/tmp/fake-yara-rules'
         mock_check.return_value = True
         matches = [{
@@ -890,14 +1504,6 @@ class TestAPIEndpoints(unittest.TestCase):
         data = json.loads(body)
         md5 = data['md5']
         self.assertEqual(data.get('phase'), 'files')
-
-        # Poll until analysis is ready
-        for _ in range(30):
-            time.sleep(0.2)
-            status, body = self._post('/api/check-status', {'md5': md5})
-            result = json.loads(body)
-            if result.get('status') == 'ready':
-                break
 
         dir_path = os.path.join(server.DATA_DIR, md5)
         db_path = os.path.join(dir_path, 'events.db')
@@ -1416,9 +2022,9 @@ class TestAPIEndpoints(unittest.TestCase):
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
         # Verify shared extraction helper exists
-        self.assertIn("def _attempt_zip_extract(zip_ref, extract_dir, passwords):", content,
+        self.assertIn("def _attempt_zip_extract(zip_ref, extract_dir, passwords, max_size=None):", content,
                       'Must define _attempt_zip_extract helper')
-        helper_section = content.split("def _attempt_zip_extract(zip_ref, extract_dir, passwords):")[1].split("def extract_pcap_from_zip(")[0]
+        helper_section = content.split("def _attempt_zip_extract(zip_ref, extract_dir, passwords, max_size=None):")[1].split("def extract_pcap_from_zip(")[0]
         # Should try no password first
         self.assertIn("zip_ref.extractall(extract_dir)", helper_section,
                       'Must attempt extraction without password')
@@ -1426,7 +2032,7 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertIn("for pwd in passwords:", helper_section,
                       'Must loop over candidate passwords')
         # Verify _extract_zip_contents uses the shared helper
-        self.assertIn("_attempt_zip_extract(zip_ref, extract_dir, passwords)", content,
+        self.assertIn("_attempt_zip_extract(zip_ref, extract_dir, passwords, max_size)", content,
                       '_extract_zip_contents must delegate to _attempt_zip_extract')
         # Upload handler should derive passwords from filename
         upload_section = content.split("def handle_post_upload(self):")[1].split("def handle_post_load_url(self):")[0]
@@ -1438,8 +2044,24 @@ class TestAPIEndpoints(unittest.TestCase):
                       'Must construct MTA-style date password')
         # _process_uploaded_file must call _extract_zip_contents
         process_section = content.split("def _process_uploaded_file(self,")[1].split("def handle_post_upload(self):")[0]
-        self.assertIn("_extract_zip_contents(file_data, tmp_dir, passwords or [])", process_section,
+        self.assertIn("_extract_zip_contents(src_path, tmp_dir, passwords or [], effective_max)", process_section,
                       'Must call _extract_zip_contents helper')
+
+    def test_load_url_tries_password_protected_zips(self):
+        """load-url handler must always try the plain 'infected' password (cheap, harmless
+        even for non-MTA URLs), and try the MTA date-derived password first when the URL
+        is from malware-traffic-analysis.net with a /YYYY/MM/DD/ path."""
+        with open(SERVER_FILE, 'r') as f:
+            content = f.read()
+        load_url_section = content.split("def handle_post_load_url(self):")[1].split("\n    def ")[0]
+        self.assertIn("passwords = [b'infected']", load_url_section,
+                      'Must always try infected password, regardless of URL source')
+        self.assertIn("if 'malware-traffic-analysis.net' in url:", load_url_section,
+                      'Must gate the dated password on the MTA domain')
+        self.assertIn(r"re.search(r'/(\d{4})/(\d{2})/(\d{2})/', url)", load_url_section,
+                      'Must derive date-based password from the MTA URL path')
+        self.assertIn("passwords.insert(0, f'infected_{year}{month}{day}'.encode())", load_url_section,
+                      'Dated MTA password must be tried before the plain fallback')
 
     def test_upload_same_pcap_in_different_zips(self):
         import io
@@ -1584,11 +2206,53 @@ class TestAPIEndpoints(unittest.TestCase):
             f.write('{"event_type": "alert"}\n')
         with open(os.path.join(md5dir, 'events.db'), 'w') as f:
             f.write('')
-        
+
         status, body = self._post('/api/check-status', {'md5': 'abc123def45678901234567890123456'})
         self.assertEqual(status, 200)
         data = json.loads(body)
         self.assertEqual(data.get('status'), 'ready')
+
+    def test_check_status_not_ready_while_phase_active_even_with_db(self):
+        """REGRESSION: events.db is created the instant create_sqlite_db opens
+        its connection, well before the row-by-row ingest finishes - so its
+        mere existence isn't sufficient for 'ready'. A live .phase file
+        (still 'importing') means the database exists but may not be fully
+        populated yet; reporting 'ready' here let the frontend fetch and
+        display incomplete/empty stats that were never refreshed again."""
+        md5 = 'bbb123def45678901234567890123456'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'events.db'), 'w') as f:
+            f.write('')
+        with open(os.path.join(md5dir, '.phase'), 'w') as f:
+            f.write('importing')
+
+        status, body = self._post('/api/check-status', {'md5': md5})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data.get('status'), 'processing',
+                         "events.db existing must not mean 'ready' while .phase is still active")
+        self.assertEqual(data.get('phase'), 'importing')
+
+    def test_check_status_ready_once_stale_phase_cleaned_up(self):
+        """A stale (hung/crashed) .phase file is still auto-cleaned exactly as
+        before - once removed, an existing events.db correctly reports ready."""
+        md5 = 'ccc123def45678901234567890123456'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'events.db'), 'w') as f:
+            f.write('')
+        phase_path = os.path.join(md5dir, '.phase')
+        with open(phase_path, 'w') as f:
+            f.write('importing')
+        old_time = time.time() - 700
+        os.utime(phase_path, (old_time, old_time))
+
+        status, body = self._post('/api/check-status', {'md5': md5})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data.get('status'), 'ready')
+        self.assertFalse(os.path.exists(phase_path), 'stale .phase must still be cleaned up')
 
     def test_check_status_ready_with_eve_json_only(self):
         md5dir = os.path.join(self.tmpdir, 'abcdef12345678901234567890123456')
@@ -1957,10 +2621,13 @@ class TestLoadUrlContentValidation(unittest.TestCase):
     def test_load_url_detects_pcap_by_magic(self):
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
-        self.assertIn('is_pcap_file(file_data)', content,
+        self.assertIn('is_pcap_file(prefix)', content,
                       'load_url must detect PCAP by magic bytes')
-        self.assertIn('def is_pcap_file(data):', content,
-                      'is_pcap_file helper must exist')
+        validators_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'validators.py')
+        with open(validators_file, 'r') as f:
+            validators_content = f.read()
+        self.assertIn('def is_pcap_file(data):', validators_content,
+                      'is_pcap_file helper must exist in validators module')
 
 
 
@@ -1972,7 +2639,13 @@ class TestThreadedServer(unittest.TestCase):
 
 class TestSizeLimitMessages(unittest.TestCase):
     def test_max_eve_size_constant(self):
-        self.assertEqual(config.MAX_EVE_SIZE, 1000 * 1024 * 1024)
+        self.assertEqual(config.MAX_EVE_SIZE, 5000 * 1024 * 1024)
+
+    def test_max_upload_size_constant(self):
+        self.assertEqual(config.MAX_UPLOAD_SIZE, 5000 * 1024 * 1024)
+
+    def test_default_upload_size_constant(self):
+        self.assertEqual(config.DEFAULT_UPLOAD_SIZE, 1000 * 1024 * 1024)
     
     def test_error_message_consistency(self):
         with open(SERVER_FILE, 'r') as f:
@@ -2178,18 +2851,31 @@ class TestSuricataProcessingLock(unittest.TestCase):
 
 
 class TestNameTxtPathSafety(unittest.TestCase):
+    def _display_name_helper_section(self, content):
+        """Both /api/analyses and /api/load-analysis resolve display names via
+        the shared _resolve_display_name helper, which must validate name.txt."""
+        self.assertIn("def _resolve_display_name(self, dir_path, md5):", content,
+                      'display name resolution must be shared via _resolve_display_name')
+        return content.split("def _resolve_display_name(self, dir_path, md5):")[1].split("def _validate_stream_params(self, params):")[0]
+
     def test_analyses_checks_name_txt_safety(self):
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
         analyses_section = content.split("def handle_get_analyses(self, params):")[1].split("def handle_get_load_analysis(self, params):")[0]
-        self.assertIn("is_safe_path(dir_path, name_path)", analyses_section,
+        self.assertIn("self._resolve_display_name(dir_path, md5_dir)", analyses_section,
+                      '/api/analyses must resolve display names via the shared helper')
+        helper_section = self._display_name_helper_section(content)
+        self.assertIn("is_safe_path(dir_path, name_path)", helper_section,
                       '/api/analyses must validate name.txt path')
 
     def test_load_analysis_checks_name_txt_safety(self):
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
-        load_section = content.split("def handle_get_load_analysis(self, params):")[1].split("def handle_get_delete_analysis(self, params):")[0]
-        self.assertIn("is_safe_path(dir_path, name_path)", load_section,
+        load_section = content.split("def handle_get_load_analysis(self, params):")[1].split("def handle_post_delete_analysis(self):")[0]
+        self.assertIn("self._resolve_display_name(dir_path, md5)", load_section,
+                      '/api/load-analysis must resolve display names via the shared helper')
+        helper_section = self._display_name_helper_section(content)
+        self.assertIn("is_safe_path(dir_path, name_path)", helper_section,
                       '/api/load-analysis must validate name.txt path')
 
 
@@ -2214,6 +2900,72 @@ class TestSuricataRuleRawEnabled(unittest.TestCase):
                       'reanalyze must call spawn_suricata for PCAP files')
 
 
+class TestFindPcapFile(unittest.TestCase):
+    """REGRESSION: some real pcaps have no recognized extension at all (e.g.
+    Security Onion's so-pcap.<timestamp> downloads) -- they were still
+    correctly detected and ingested as pcaps at upload time via magic-byte
+    sniffing (is_pcap_file), so _find_pcap_file must use the same detection
+    method as a fallback rather than relying on the filename extension
+    alone. Previously, extension-only lookups caused 'No pcap file found'
+    on the ASCII Transcript/Hexdump/Download-stream views, a wrong filename
+    from /api/pcap-path, and a silent misclassification in Reanalyze (a
+    real pcap treated as a standalone file, run through the wrong pipeline)."""
+
+    PCAP_MAGIC = b'\xd4\xc3\xb2\xa1' + b'\x00' * 20
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_finds_file_with_recognized_extension(self):
+        with open(os.path.join(self.tmpdir, 'capture.pcap'), 'wb') as f:
+            f.write(self.PCAP_MAGIC)
+        self.assertEqual(server._find_pcap_file(self.tmpdir), 'capture.pcap')
+
+    def test_falls_back_to_magic_bytes_when_extension_missing(self):
+        """The exact real-world case: a pcap named like a Security Onion
+        download, with no recognized extension."""
+        with open(os.path.join(self.tmpdir, 'so-pcap.1784903949'), 'wb') as f:
+            f.write(self.PCAP_MAGIC)
+        self.assertEqual(server._find_pcap_file(self.tmpdir), 'so-pcap.1784903949')
+
+    def test_extension_match_preferred_over_magic_byte_scan(self):
+        """When both exist, the fast extension-based match wins without
+        needing to scan other files at all."""
+        with open(os.path.join(self.tmpdir, 'capture.pcap'), 'wb') as f:
+            f.write(self.PCAP_MAGIC)
+        with open(os.path.join(self.tmpdir, 'other-file'), 'wb') as f:
+            f.write(self.PCAP_MAGIC)
+        self.assertEqual(server._find_pcap_file(self.tmpdir), 'capture.pcap')
+
+    def test_ignores_artifacts_and_hidden_files_during_fallback_scan(self):
+        with open(os.path.join(self.tmpdir, 'eve.json'), 'w') as f:
+            f.write(self.PCAP_MAGIC.decode('latin1'))  # artifact -- must be skipped even though "content" matches
+        with open(os.path.join(self.tmpdir, '.hidden'), 'wb') as f:
+            f.write(self.PCAP_MAGIC)
+        with open(os.path.join(self.tmpdir, 'name.txt'), 'w') as f:
+            f.write('so-pcap.1784903949')
+        self.assertIsNone(server._find_pcap_file(self.tmpdir))
+
+    def test_returns_none_when_no_pcap_present(self):
+        with open(os.path.join(self.tmpdir, 'not-a-pcap.txt'), 'w') as f:
+            f.write('just some text')
+        self.assertIsNone(server._find_pcap_file(self.tmpdir))
+
+    def test_returns_none_for_missing_directory(self):
+        self.assertIsNone(server._find_pcap_file(os.path.join(self.tmpdir, 'does-not-exist')))
+
+    def test_skips_subdirectories_during_fallback_scan(self):
+        """The filestore/ directory (extracted YARA-scanned files) must not
+        be mistaken for a candidate pcap file."""
+        os.makedirs(os.path.join(self.tmpdir, 'filestore'))
+        with open(os.path.join(self.tmpdir, 'so-pcap.123'), 'wb') as f:
+            f.write(self.PCAP_MAGIC)
+        self.assertEqual(server._find_pcap_file(self.tmpdir), 'so-pcap.123')
+
+
 class TestReanalyzeEndpoint(unittest.TestCase):
     def test_reanalyze_endpoint_exists(self):
         """Verify /api/reanalyze endpoint exists in POST_ROUTES."""
@@ -2223,14 +2975,31 @@ class TestReanalyzeEndpoint(unittest.TestCase):
                       'POST /api/reanalyze endpoint must exist')
 
     def test_reanalyze_deletes_analysis_artifacts(self):
-        """Verify reanalyze removes eve.json, events.db, .phase, .error, yara_matches.json, sigma_matches.json, and .meta."""
+        """Verify reanalyze removes eve.json, events.db, .phase, .error, yara_matches.json, sigma_matches.json, .meta, and file_metadata.json."""
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
+        # Artifact lists are centralized in module-level constants
+        self.assertIn("PCAP_ANALYSIS_ARTIFACTS = ('eve.json', 'events.db', '.phase', '.error', 'yara_matches.json', 'sigma_matches.json', '.meta', 'file_metadata.json')", content,
+                      'PCAP artifact list must be centralized in PCAP_ANALYSIS_ARTIFACTS')
         reanalyze_section = content.split("def handle_post_reanalyze(self):")[1]
-        self.assertIn("for artifact in ('eve.json', 'events.db', '.phase', '.error', 'yara_matches.json', 'sigma_matches.json', '.meta'):", reanalyze_section,
+        self.assertIn("for artifact in PCAP_ANALYSIS_ARTIFACTS:", reanalyze_section,
                       'reanalyze must loop over analysis artifacts to delete')
         self.assertIn('os.unlink(artifact_path)', reanalyze_section,
                       'reanalyze must unlink artifact files')
+
+    def test_reanalyze_evicts_sankey_and_aggregation_cache(self):
+        """Reanalyze deletes and rebuilds events.db, so any cached Sankey/
+        aggregation result for this md5 must be evicted - otherwise the next
+        view would show stale data from before the re-analysis."""
+        with open(SERVER_FILE, 'r') as f:
+            content = f.read()
+        reanalyze_section = content.split("def handle_post_reanalyze(self):")[1]
+        # Must evict before the artifact-deletion loop, not after.
+        evict_pos = reanalyze_section.find('_evict_analysis_cache(md5)')
+        loop_pos = reanalyze_section.find('for artifact in PCAP_ANALYSIS_ARTIFACTS:')
+        self.assertNotEqual(evict_pos, -1, 'reanalyze must call _evict_analysis_cache(md5)')
+        self.assertLess(evict_pos, loop_pos,
+                         'cache eviction must happen before events.db is deleted/rebuilt')
 
     def test_reanalyze_keeps_pcap_and_name(self):
         """Verify reanalyze does NOT delete pcap files or name.txt."""
@@ -2342,6 +3111,32 @@ class TestAirgapFallback(unittest.TestCase):
                       'Should warn when no rules are available')
 
 
+class TestSuricataExistingRulesNoInternetMessage(unittest.TestCase):
+    @unittest.mock.patch('suricata_analyzer.subprocess.run')
+    @unittest.mock.patch('suricata_analyzer.has_internet_access')
+    def test_uses_existing_rules_message_when_offline_with_prior_rules(self, mock_internet, mock_run):
+        """REGRESSION: a re-run with no internet and no baked-in rules dir
+        (e.g. a subsequent offline startup on a non-Docker install) must not
+        print the scary 'may not have rules to use' warning if rules from a
+        previous successful run already exist on disk."""
+        mock_internet.return_value = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, 'suricata', 'rules')
+            os.makedirs(rules_dir, exist_ok=True)
+            with open(os.path.join(rules_dir, 'suricata.rules'), 'w') as f:
+                f.write('# pre-existing rules from a previous run\n')
+
+            captured = io.StringIO()
+            with unittest.mock.patch('sys.stdout', captured):
+                suricata_analyzer.setup_suricata_config(tmpdir)
+
+        output = captured.getvalue()
+        self.assertIn('using existing Suricata rules from a previous run', output,
+                      'Must reassure that existing rules are still in place')
+        self.assertNotIn('may not have rules to use', output,
+                         'Must not print the no-rules warning when rules already exist')
+
+
 class TestSuricataUpdateTimeout(unittest.TestCase):
     @unittest.mock.patch('suricata_analyzer.subprocess.run')
     @unittest.mock.patch('suricata_analyzer.has_internet_access')
@@ -2354,6 +3149,50 @@ class TestSuricataUpdateTimeout(unittest.TestCase):
                 suricata_analyzer.setup_suricata_config(tmpdir)
             except subprocess.TimeoutExpired:
                 self.fail('setup_suricata_config raised TimeoutExpired')
+
+
+class TestSuricataArpStaysDisabledByDefault(unittest.TestCase):
+    @unittest.mock.patch('suricata_analyzer.subprocess.run')
+    @unittest.mock.patch('suricata_analyzer.has_internet_access')
+    def test_setup_suricata_config_does_not_enable_arp_by_default(self, mock_internet, mock_run):
+        """REGRESSION GUARD: arp is deliberately opt-in (see
+        _enable_eve_log_arp's docstring) - a real volume/signal tradeoff on
+        a live network that must stay a deliberate choice, not something
+        setup_suricata_config() silently flips on for every install. This
+        calls the actual end-to-end pipeline (not just _enable_eve_log_arp
+        in isolation) against a real /etc/suricata copy, so a future change
+        that wires arp into the automatic tuple would be caught here."""
+        mock_internet.return_value = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            suricata_analyzer.setup_suricata_config(tmpdir)
+            with open(os.path.join(tmpdir, 'suricata', 'suricata.yaml')) as f:
+                content = f.read()
+        self.assertIn('        - arp:\n            enabled: no', content,
+                       'arp must stay disabled unless explicitly opted in via enable_arp')
+
+    @unittest.mock.patch('suricata_analyzer.subprocess.run')
+    @unittest.mock.patch('suricata_analyzer.has_internet_access')
+    def test_setup_suricata_config_enables_arp_when_opted_in(self, mock_internet, mock_run):
+        """setup_suricata_config(enable_arp=True) - wired to the
+        ENABLE_ARP_LOGGING env var in socrates.py's main() - must actually
+        flip arp on end-to-end, not just leave the opt-in mechanism dead."""
+        mock_internet.return_value = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            suricata_analyzer.setup_suricata_config(tmpdir, enable_arp=True)
+            with open(os.path.join(tmpdir, 'suricata', 'suricata.yaml')) as f:
+                content = f.read()
+        self.assertIn('        - arp:\n            enabled: yes', content,
+                       'arp must be enabled when enable_arp=True is passed through')
+
+    def test_main_reads_enable_arp_logging_env_var(self):
+        """socrates.py's main() must read ENABLE_ARP_LOGGING and pass it
+        through to setup_suricata_config - otherwise enable_arp=True is only
+        reachable by editing source, defeating the point of an opt-in env
+        var (mirrors the existing DEMO env var pattern)."""
+        with open(SERVER_FILE, 'r') as f:
+            content = f.read()
+        self.assertIn("os.environ.get('ENABLE_ARP_LOGGING')", content)
+        self.assertIn("setup_suricata_config(DATA_DIR, enable_arp=", content)
 
 
 class TestSuricataProtocolEnable(unittest.TestCase):
@@ -2410,6 +3249,21 @@ class TestSuricataProtocolEnable(unittest.TestCase):
         self.assertIn('            enabled: yes', result)
         self.assertNotIn('            enabled: no', result)
 
+    def test_enable_eve_log_protocol_types_default_includes_enip_ntp(self):
+        """Now that this app runs on Suricata 8.0.6 (enip logging landed in
+        8.0.0, ntp logging in 8.0.5 - confirmed against those release tags),
+        enip/ntp are back in the *default* protocols tuple, not just
+        supported when passed explicitly. See this function's docstring for
+        the Suricata 7.0.10 history where they had to be excluded."""
+        sample = '''        - pgsql:
+            enabled: no
+        - stats:
+            totals: yes
+'''
+        result = suricata_analyzer._enable_eve_log_protocol_types(sample)
+        self.assertIn('        - enip:', result)
+        self.assertIn('        - ntp:', result)
+
     def test_enable_eve_log_protocol_types_does_not_duplicate(self):
         """Entries that already exist should not be duplicated."""
         sample = '''        - pgsql:
@@ -2422,6 +3276,71 @@ class TestSuricataProtocolEnable(unittest.TestCase):
         result = suricata_analyzer._enable_eve_log_protocol_types(sample)
         self.assertEqual(result.count('        - modbus:'), 1)
         self.assertEqual(result.count('        - dnp3:'), 1)
+
+    def test_enable_eve_log_protocol_types_supports_arbitrary_protocols(self):
+        """The protocols tuple is not hardcoded - any protocol name can be
+        passed explicitly and gets added the same way, independent of
+        whatever the current default tuple happens to be. Exercises the
+        mechanism generically with a couple of made-up names."""
+        sample = '''        - pgsql:
+            enabled: no
+        - stats:
+            totals: yes
+'''
+        result = suricata_analyzer._enable_eve_log_protocol_types(sample, protocols=('foo', 'bar'))
+        self.assertIn('        - foo:', result)
+        self.assertIn('        - bar:', result)
+
+    def test_enable_eve_log_protocol_types_adds_new_protocol_to_already_provisioned_config(self):
+        """REGRESSION: the original implementation used one regex requiring
+        `- pgsql:` to be followed only by indented property lines up to
+        `- stats:`. That's only true on a pristine config - once a previous
+        run had already inserted bare `- modbus:`/`- dnp3:` header lines in
+        between (exactly what this function itself does), the regex could
+        never match again on a second run, so adding a new protocol to the
+        tuple later would never actually get inserted into any
+        already-provisioned install - it would silently do nothing. This
+        reproduces that exact scenario: modbus/dnp3 already present from an
+        earlier run, two new protocols requested on top of that."""
+        sample = '''        - pgsql:
+            enabled: yes
+        - modbus:
+        - dnp3:
+        - stats:
+            totals: yes
+'''
+        result = suricata_analyzer._enable_eve_log_protocol_types(
+            sample, protocols=('modbus', 'dnp3', 'enip', 'ntp'))
+        self.assertIn('        - enip:', result)
+        self.assertIn('        - ntp:', result)
+        self.assertEqual(result.count('        - modbus:'), 1)
+        self.assertEqual(result.count('        - dnp3:'), 1)
+
+    def test_enable_eve_log_arp_flips_enabled_no_to_yes(self):
+        """arp ships disabled by default (Suricata's own comment: 'Many
+        events can be logged') - this is deliberately not wired into
+        setup_suricata_config() automatically, unlike modbus/dnp3/enip/ntp/
+        pgsql, since arp's volume/signal tradeoff needs a deliberate
+        decision. Just tests the mechanism works when called explicitly."""
+        sample = '''        - arp:
+            enabled: no        # Many events can be logged. Disabled by default
+        - dhcp:
+            enabled: yes
+'''
+        result = suricata_analyzer._enable_eve_log_arp(sample)
+        self.assertIn('enabled: yes        # Many events can be logged. Disabled by default', result)
+        self.assertNotIn('enabled: no', result)
+
+    def test_enable_eve_log_arp_is_idempotent(self):
+        """Calling it again on an already-enabled config must not error or
+        duplicate anything."""
+        sample = '''        - arp:
+            enabled: yes
+        - dhcp:
+            enabled: yes
+'''
+        result = suricata_analyzer._enable_eve_log_arp(sample)
+        self.assertEqual(result, sample)
 
 
 class TestProtocolEventUI(unittest.TestCase):
@@ -2556,10 +3475,10 @@ class TestExecutableChecks(unittest.TestCase):
         self.assertIsInstance(result, list)
 
     def test_required_executables_defined(self):
-        self.assertIn('tcpdump', server.REQUIRED_EXECUTABLES)
-        self.assertIn('tshark', server.REQUIRED_EXECUTABLES)
-        self.assertIn('suricata', server.REQUIRED_EXECUTABLES)
-        self.assertIn('suricata-update', server.REQUIRED_EXECUTABLES)
+        self.assertIn('tcpdump', suricata_analyzer.REQUIRED_EXECUTABLES)
+        self.assertIn('tshark', suricata_analyzer.REQUIRED_EXECUTABLES)
+        self.assertIn('suricata', suricata_analyzer.REQUIRED_EXECUTABLES)
+        self.assertIn('suricata-update', suricata_analyzer.REQUIRED_EXECUTABLES)
 
     @unittest.mock.patch('suricata_analyzer.shutil.which')
     def test_check_executables_all_missing(self, mock_which):
@@ -2720,6 +3639,148 @@ class TestZipBombPrevention(unittest.TestCase):
         with zipfile.ZipFile(zip_buffer, 'r') as zf:
             # Should not raise
             validators.validate_zip_extraction(zf, '/tmp/extract')
+
+    def test_effective_max_overrides_hard_ceiling(self):
+        """REGRESSION: validate_zip_extraction must honor a caller-supplied
+        max_size (the resolved per-request ceiling) rather than always
+        falling back to the fixed config.MAX_UPLOAD_SIZE hard ceiling -- a
+        user who hasn't opted into a higher personal upload limit must not
+        get the full 5GB hard ceiling as their zip-bomb decompression budget."""
+        import validators
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w') as zf:
+            zf.writestr('file.txt', b'hello world')
+        zip_buffer.seek(0)
+        with zipfile.ZipFile(zip_buffer, 'r') as zf:
+            real_getinfo = zf.getinfo
+            def fake_getinfo(name):
+                info = real_getinfo(name)
+                info.file_size = 2000  # well under config.MAX_UPLOAD_SIZE...
+                return info
+            zf.getinfo = fake_getinfo
+            # ...but over a smaller, caller-supplied effective_max.
+            with self.assertRaises(ValueError) as ctx:
+                validators.validate_zip_extraction(zf, '/tmp/extract', max_size=1000)
+            self.assertIn('ZIP member too large', str(ctx.exception))
+            # The same data passes when max_size is high enough.
+            validators.validate_zip_extraction(zf, '/tmp/extract', max_size=5000)
+
+
+class TestResolveUploadSizeLimit(unittest.TestCase):
+    """Tests for _resolve_upload_size_limit, which mirrors _parse_pagination's
+    clamping semantics for the user-configurable upload-size setting."""
+
+    def test_valid_value_under_ceiling(self):
+        self.assertEqual(server._resolve_upload_size_limit(2000 * 1024 * 1024), 2000 * 1024 * 1024)
+
+    def test_missing_falls_back_to_default(self):
+        self.assertEqual(server._resolve_upload_size_limit(None), config.DEFAULT_UPLOAD_SIZE)
+
+    def test_malformed_falls_back_to_default(self):
+        self.assertEqual(server._resolve_upload_size_limit('not-a-number'), config.DEFAULT_UPLOAD_SIZE)
+
+    def test_negative_falls_back_to_default(self):
+        self.assertEqual(server._resolve_upload_size_limit(-5), config.DEFAULT_UPLOAD_SIZE)
+
+    def test_zero_falls_back_to_default(self):
+        self.assertEqual(server._resolve_upload_size_limit(0), config.DEFAULT_UPLOAD_SIZE)
+
+    def test_over_ceiling_clamped(self):
+        self.assertEqual(
+            server._resolve_upload_size_limit(config.MAX_UPLOAD_SIZE + 1000),
+            config.MAX_UPLOAD_SIZE,
+        )
+
+    def test_string_of_valid_number_accepted(self):
+        """Header values arrive as strings -- must parse cleanly."""
+        self.assertEqual(server._resolve_upload_size_limit('2000000000'), 2000000000)
+
+
+class TestCheckDiskSpace(unittest.TestCase):
+    def _make_handler(self):
+        handler = server.Handler.__new__(server.Handler)
+        handler._send_error = unittest.mock.MagicMock()
+        return handler
+
+    def test_rejects_when_insufficient_space(self):
+        handler = self._make_handler()
+        fake_usage = unittest.mock.MagicMock(free=50 * 1024 * 1024)
+        with unittest.mock.patch('shutil.disk_usage', return_value=fake_usage):
+            result = handler._check_disk_space(100 * 1024 * 1024)
+        self.assertFalse(result)
+        handler._send_error.assert_called_once_with(507, 'Not enough disk space available for this upload')
+
+    def test_allows_when_ample_space(self):
+        handler = self._make_handler()
+        fake_usage = unittest.mock.MagicMock(free=10 * 1024 * 1024 * 1024)
+        with unittest.mock.patch('shutil.disk_usage', return_value=fake_usage):
+            result = handler._check_disk_space(100 * 1024 * 1024)
+        self.assertTrue(result)
+        handler._send_error.assert_not_called()
+
+    def test_respects_safety_margin(self):
+        """Free space exactly equal to required_bytes (no margin left) must
+        still be rejected -- the safety margin is not optional headroom."""
+        handler = self._make_handler()
+        fake_usage = unittest.mock.MagicMock(free=100 * 1024 * 1024)
+        with unittest.mock.patch('shutil.disk_usage', return_value=fake_usage):
+            result = handler._check_disk_space(100 * 1024 * 1024)
+        self.assertFalse(result)
+
+    def test_fails_open_on_os_error(self):
+        """If free space can't be determined, don't block the upload over
+        an unrelated filesystem/stat error."""
+        handler = self._make_handler()
+        with unittest.mock.patch('shutil.disk_usage', side_effect=OSError('boom')):
+            result = handler._check_disk_space(100 * 1024 * 1024)
+        self.assertTrue(result)
+        handler._send_error.assert_not_called()
+
+
+class TestUploadSizeHeaderEnforced(unittest.TestCase):
+    """Tests that handle_post_upload actually uses the resolved per-request
+    ceiling (from X-Max-Upload-Size), not just the fixed default."""
+
+    def _make_handler(self, content_length, max_upload_size_header=None):
+        handler = server.Handler.__new__(server.Handler)
+        headers = {'Content-Length': str(content_length)}
+        if max_upload_size_header is not None:
+            headers['X-Max-Upload-Size'] = str(max_upload_size_header)
+        handler.headers = headers
+        handler.rfile = io.BytesIO(b'')
+        handler._send_error = unittest.mock.MagicMock()
+        # Stop the test at the disk-space check -- everything downstream of
+        # it (multipart parsing, processing) isn't what this test verifies.
+        handler._check_disk_space = unittest.mock.MagicMock(return_value=False)
+        return handler
+
+    def test_content_length_over_default_rejected_without_header(self):
+        """Without an override header, the old 1GB default ceiling still applies."""
+        handler = self._make_handler(config.DEFAULT_UPLOAD_SIZE + 1)
+        handler.handle_post_upload()
+        handler._send_error.assert_called_once_with(400, 'Invalid Content-Length')
+        handler._check_disk_space.assert_not_called()
+
+    def test_content_length_over_default_but_under_header_accepted(self):
+        """With an override header requesting more (up to the hard ceiling),
+        a Content-Length above the old default must be allowed past the
+        initial size check and reach the disk-space check. The disk-space
+        check itself must be sized against the resolved ceiling
+        (effective_max), not the raw Content-Length -- a compressed upload's
+        Content-Length can be far smaller than what it's allowed to expand
+        to, so checking free space against effective_max is the actual
+        worst case."""
+        handler = self._make_handler(config.DEFAULT_UPLOAD_SIZE + 1, max_upload_size_header=config.MAX_UPLOAD_SIZE)
+        handler.handle_post_upload()
+        handler._check_disk_space.assert_called_once_with(config.MAX_UPLOAD_SIZE)
+
+    def test_content_length_over_hard_ceiling_rejected_even_with_header(self):
+        """A header requesting more than the hard ceiling doesn't help --
+        still clamped to config.MAX_UPLOAD_SIZE."""
+        handler = self._make_handler(config.MAX_UPLOAD_SIZE + 1000, max_upload_size_header=config.MAX_UPLOAD_SIZE + 1000)
+        handler.handle_post_upload()
+        handler._send_error.assert_called_once_with(400, 'Invalid Content-Length')
+        handler._check_disk_space.assert_not_called()
 
 
 class TestReadPostBody(unittest.TestCase):
@@ -2931,6 +3992,27 @@ class TestDockerfile(unittest.TestCase):
         self.assertIn('COPY --from=zircolite-builder /usr/local/lib/zircolite ', final_stage,
                       'Final stage must copy the zircolite script from the builder stage')
 
+    def test_dockerfile_installs_suricata_from_trixie_backports(self):
+        """REGRESSION: debian:13-slim's own repo only has Suricata 7.0.10,
+        which has no eve-log output module for enip/ntp at all and lacks
+        websocket/pop3/mdns/ldap/arp entirely - confirmed on a real trixie
+        install. Suricata must come from Debian's own trixie-backports repo
+        (8.0.6 as of writing) instead, mirroring the exact upgrade path
+        validated live rather than pulling in OISF's own third-party repo.
+
+        suricata-update must come from trixie-backports too (1.3.8 vs.
+        regular trixie's 1.3.4) - 1.3.8 fixes a real security issue
+        (arbitrary file write via path traversal in rule archive
+        extraction: OISF redmine #8633), independent of any Suricata-8
+        compatibility need."""
+        final_stage = self._dockerfile_final_stage()
+        self.assertIn('trixie-backports', final_stage,
+                      'Dockerfile must add the trixie-backports apt source')
+        self.assertIn('-t trixie-backports suricata', final_stage,
+                      'suricata must be installed explicitly from trixie-backports')
+        self.assertIn('-t trixie-backports suricata suricata-update', final_stage,
+                      'suricata-update must be installed from trixie-backports too (security fix, redmine #8633)')
+
     def test_final_stage_uses_runtime_libs_not_dev_headers(self):
         """Final stage needs the runtime shared libs for lxml's compiled
         extension (libxml2/libxslt1.1), not the -dev header packages."""
@@ -3005,10 +4087,36 @@ class TestDockerfile(unittest.TestCase):
                         'podman compose file must use keep-id userns_mode')
 
 
+class _ChunkedReader:
+    """A file-like object that returns at most chunk_size bytes per .read()
+    call regardless of what's requested, simulating a socket delivering
+    partial reads -- used to exercise _parse_multipart_stream's lookback
+    buffer for boundary markers split across chunk boundaries."""
+
+    def __init__(self, data, chunk_size):
+        self._data = data
+        self._chunk_size = chunk_size
+        self._pos = 0
+
+    def read(self, n=-1):
+        size = self._chunk_size if n is None or n < 0 else min(n, self._chunk_size)
+        end = min(len(self._data), self._pos + size)
+        chunk = self._data[self._pos:end]
+        self._pos = end
+        return chunk
+
+
 class TestMultipartParsing(unittest.TestCase):
-    """REGRESSION: the upload parser must handle quoted/unquoted boundaries
-    and filenames, skip preamble, and return (None, None) when no file part is
-    present."""
+    """REGRESSION: the streaming upload parser must handle quoted/unquoted
+    boundaries and filenames, skip preamble, and return (None, None) when no
+    file part is present -- and must correctly reassemble a boundary marker
+    split across two separate chunk reads."""
+
+    def setUp(self):
+        self.dest_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.dest_dir, ignore_errors=True)
 
     def _make_body(self, boundary, filename, content, quote_filename=True, preamble=''):
         disp = 'Content-Disposition: form-data; name="pcap"; '
@@ -3024,9 +4132,16 @@ class TestMultipartParsing(unittest.TestCase):
         ).encode() + content + f'\r\n--{boundary}--\r\n'.encode()
         return body
 
-    def _parse(self, body, content_type):
+    def _parse(self, body, content_type, reader=None):
         handler = server.Handler.__new__(server.Handler)
-        return handler._parse_multipart_file(body, content_type)
+        rfile = reader if reader is not None else io.BytesIO(body)
+        path, name = handler._parse_multipart_stream(rfile, len(body), content_type, self.dest_dir)
+        if path is None:
+            return None, name
+        with open(path, 'rb') as f:
+            data = f.read()
+        os.unlink(path)
+        return data, name
 
     def test_quoted_boundary(self):
         body = self._make_body('WebKitBoundary', 'test.pcap', b'PCAPDATA')
@@ -3063,6 +4178,37 @@ class TestMultipartParsing(unittest.TestCase):
         data, name = self._parse(body, ct)
         self.assertIsNone(data)
         self.assertIsNone(name)
+
+    def test_end_boundary_split_across_chunk_read(self):
+        """The terminating boundary marker (\\r\\n--boundary) may arrive split
+        across two separate socket reads -- the lookback buffer must still
+        catch it, without truncating or duplicating any file bytes."""
+        content = b'A' * 500 + b'PCAPDATA' + b'B' * 500
+        body = self._make_body('Boundary', 'test.pcap', content)
+        ct = 'multipart/form-data; boundary=Boundary'
+        marker = b'\r\n--Boundary'
+        offset = body.find(marker)
+        self.assertNotEqual(offset, -1)
+        # Pick a chunk size so a read boundary lands inside the marker itself.
+        chunk_size = offset + 3
+        reader = _ChunkedReader(body, chunk_size)
+        data, name = self._parse(body, ct, reader=reader)
+        self.assertEqual(name, 'test.pcap')
+        self.assertEqual(data, content)
+
+    def test_header_terminator_split_across_chunk_read(self):
+        """The \\r\\n\\r\\n terminating the part headers may also arrive split
+        across two reads -- the header-accumulation loop must carry the
+        partial match forward correctly."""
+        body = self._make_body('Boundary', 'test.pcap', b'PCAPDATA')
+        ct = 'multipart/form-data; boundary=Boundary'
+        header_term = body.find(b'\r\n\r\n')
+        self.assertNotEqual(header_term, -1)
+        chunk_size = header_term + 2
+        reader = _ChunkedReader(body, chunk_size)
+        data, name = self._parse(body, ct, reader=reader)
+        self.assertEqual(name, 'test.pcap')
+        self.assertEqual(data, b'PCAPDATA')
 
 
 if __name__ == '__main__':

@@ -20,7 +20,7 @@
                     <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                 </svg>
             </a>
-            <a href="#" onclick="showWelcome(); return false;" style="color: var(--text-bright); text-decoration: none; font-size: 1.2rem; font-weight: 700;">SO-CRATES</a>
+            <a href="#" onclick="showWelcome(); return false;" class="app-logo-text" style="color: var(--text-bright); text-decoration: none; font-size: 1.2rem; font-weight: 700;">SO-CRATES</a>
             <span id="appHeaderFilename" class="app-header-filename"></span>
             <span id="appHeaderMeta" class="app-header-meta"></span>
         </div>
@@ -35,38 +35,163 @@
                         <span><svg class="theme-icon-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
                         <span>Help</span>
                     </button>
+                    <button class="app-header-menu-item" onclick="showSettingsModal(); closeMenu();">
+                        <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></span>
+                        <span>Settings</span>
+                    </button>
                     <div class="app-header-menu-sep"></div>
                     <div class="app-header-menu-header">Dark Themes</div>
-                    <button class="app-header-menu-item"
-                            onmouseenter="previewTheme('dark')"
+                    <button class="app-header-menu-item" data-theme-option="catppuccin"
+                            onmouseenter="previewTheme('catppuccin')"
                             onmouseleave="revertTheme()"
-                            onclick="commitTheme('dark')">
-                        <span>Midnight</span>
+                            onclick="commitTheme('catppuccin')">
+                        <span>Catppuccin</span>
                     </button>
-                    <button class="app-header-menu-item"
+                    <button class="app-header-menu-item" data-theme-option="ethereal"
+                            onmouseenter="previewTheme('ethereal')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('ethereal')">
+                        <span>Ethereal</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="everforest"
+                            onmouseenter="previewTheme('everforest')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('everforest')">
+                        <span>Everforest</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="gruvbox"
+                            onmouseenter="previewTheme('gruvbox')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('gruvbox')">
+                        <span>Gruvbox</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="hackerman"
+                            onmouseenter="previewTheme('hackerman')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('hackerman')">
+                        <span>Hackerman</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="kanagawa"
+                            onmouseenter="previewTheme('kanagawa')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('kanagawa')">
+                        <span>Kanagawa</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="lumon"
+                            onmouseenter="previewTheme('lumon')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('lumon')">
+                        <span>Lumon</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="matte-black"
                             onmouseenter="previewTheme('matte-black')"
                             onmouseleave="revertTheme()"
                             onclick="commitTheme('matte-black')">
                         <span>Matte Black</span>
                     </button>
-                    <button class="app-header-menu-item"
-                            onmouseenter="previewTheme('hacker')"
+                    <button class="app-header-menu-item" data-theme-option="miasma"
+                            onmouseenter="previewTheme('miasma')"
                             onmouseleave="revertTheme()"
-                            onclick="commitTheme('hacker')">
-                        <span>Hacker</span>
+                            onclick="commitTheme('miasma')">
+                        <span>Miasma</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="dark"
+                            onmouseenter="previewTheme('dark')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('dark')">
+                        <span>Midnight</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="nord"
+                            onmouseenter="previewTheme('nord')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('nord')">
+                        <span>Nord</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="osaka-jade"
+                            onmouseenter="previewTheme('osaka-jade')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('osaka-jade')">
+                        <span>Osaka Jade</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="retro-82"
+                            onmouseenter="previewTheme('retro-82')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('retro-82')">
+                        <span>Retro 82</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="ristretto"
+                            onmouseenter="previewTheme('ristretto')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('ristretto')">
+                        <span>Ristretto</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="tokyo-night"
+                            onmouseenter="previewTheme('tokyo-night')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('tokyo-night')">
+                        <span>Tokyo Night</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="vantablack"
+                            onmouseenter="previewTheme('vantablack')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('vantablack')">
+                        <span>Vantablack</span>
                     </button>
                     <div class="app-header-menu-header">Light Themes</div>
-                    <button class="app-header-menu-item"
+                    <button class="app-header-menu-item" data-theme-option="catppuccin-latte"
+                            onmouseenter="previewTheme('catppuccin-latte')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('catppuccin-latte')">
+                        <span>Catppuccin Latte</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="light"
                             onmouseenter="previewTheme('light')"
                             onmouseleave="revertTheme()"
                             onclick="commitTheme('light')">
                         <span>Daylight</span>
                     </button>
-                    <button class="app-header-menu-item"
+                    <button class="app-header-menu-item" data-theme-option="rose-pine"
+                            onmouseenter="previewTheme('rose-pine')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('rose-pine')">
+                        <span>Rose Pine</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="white"
+                            onmouseenter="previewTheme('white')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('white')">
+                        <span>White</span>
+                    </button>
+                    <div class="app-header-menu-header">Fun Themes</div>
+                    <button class="app-header-menu-item" data-theme-option="c64"
+                            onmouseenter="previewTheme('c64')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('c64')">
+                        <span>C64</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="cga"
+                            onmouseenter="previewTheme('cga')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('cga')">
+                        <span>CGA</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="hacker"
+                            onmouseenter="previewTheme('hacker')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('hacker')">
+                        <span>Hacker</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="sguil"
                             onmouseenter="previewTheme('sguil')"
                             onmouseleave="revertTheme()"
                             onclick="commitTheme('sguil')">
                         <span>Sguil</span>
+                    </button>
+                    <button class="app-header-menu-item" data-theme-option="vaporwave"
+                            onmouseenter="previewTheme('vaporwave')"
+                            onmouseleave="revertTheme()"
+                            onclick="commitTheme('vaporwave')">
+                        <span>Vaporwave</span>
                     </button>
                 </div>
             </div>
@@ -157,6 +282,37 @@
                         Show this message each time I connect
                     </label>
                     <button onclick="closeHelpModal()" style="background: var(--accent); color: var(--bg-primary); border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Got it!</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal" id="settingsModal" onclick="handleSettingsBackdropClick(event)">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3>Settings</h3>
+                    <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
+                </div>
+                <div id="settingsModalBody">
+                    <label for="maxQueryLimitInput" style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 8px;">
+                        Max rows fetched per view (aggregation tables, diagram, sorted/filtered tables)
+                    </label>
+                    <input type="number" id="maxQueryLimitInput" class="settings-number-input" min="1000" step="1000">
+                    <div id="settingsHint" style="color: var(--text-muted); font-size: 0.8rem; margin-top: 6px;"></div>
+                    <div style="color: var(--text-muted); font-size: 0.8rem; margin-top: 6px;">Larger limits may take longer to load, especially in the combined "All Events" / Sigma Alerts views.</div>
+                    <div id="settingsError" style="color: var(--badge-warning-text); font-size: 0.85rem; margin-top: 6px; display: none;"></div>
+
+                    <div style="border-top: 1px solid var(--bg-hover); margin: 18px 0;"></div>
+
+                    <label for="maxUploadSizeInput" style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 8px;">
+                        Max upload size (MB)
+                    </label>
+                    <input type="number" id="maxUploadSizeInput" class="settings-number-input" min="100" step="100">
+                    <div id="uploadSizeHint" style="color: var(--text-muted); font-size: 0.8rem; margin-top: 6px;"></div>
+                    <div id="uploadSizeError" style="color: var(--badge-warning-text); font-size: 0.85rem; margin-top: 6px; display: none;"></div>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 15px; border-top: 1px solid var(--bg-hover); margin-top: 10px;">
+                    <button onclick="closeSettingsModal()" style="background: transparent; color: var(--text-muted); border: 1px solid var(--bg-hover); padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Cancel</button>
+                    <button id="settingsSaveBtn" onclick="saveSettings()" style="background: var(--accent); color: var(--bg-primary); border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Save</button>
                 </div>
             </div>
         </div>
