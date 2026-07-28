@@ -1,6 +1,6 @@
 site_name: SO-CRATES
 site_description: Security Onion Containerized Rapid Analysis of Threats, Evil, and Sus
-site_url: https://dougburks.github.io/so-crates/
+site_url: https://so-crates.org/
 repo_url: https://github.com/dougburks/so-crates
 repo_name: dougburks/so-crates
 docs_dir: docs
