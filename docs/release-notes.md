@@ -37,18 +37,18 @@ analyses from Suricata 7 too.
   mqtt, http2, dcerpc, rdp, tftp, ike, nfs, rfb, bittorrent_dht, smtp — plus
   `ftp` and `anomaly`, which predated this work but had the same gap.
 - Fixed real data-shape bugs found while verifying against real traffic:
-  - `quic.ja3`/`ja3s` are objects (`{hash, string}`), not plain strings —
-    previously rendered as the literal text `[object Object]`.
-  - `rfb.client_protocol_version`/`server_protocol_version` are `{major,
-    minor}` objects, and `security_type` is nested under `authentication`,
-    not top-level.
-  - `anomaly.message` was read in three separate places (a field that has
-    never existed in Suricata's eve.json) — the real field is
-    `anomaly.event`.
-  - HTTP/2 traffic (including cleartext h2c) is always logged by Suricata
-    under `event_type: "http"`, never a separate `"http2"` type — removed
-    dead code that assumed otherwise; real HTTP/2 traffic already renders
-    correctly under the existing `http` tab.
+    - `quic.ja3`/`ja3s` are objects (`{hash, string}`), not plain strings —
+      previously rendered as the literal text `[object Object]`.
+    - `rfb.client_protocol_version`/`server_protocol_version` are `{major,
+      minor}` objects, and `security_type` is nested under `authentication`,
+      not top-level.
+    - `anomaly.message` was read in three separate places (a field that has
+      never existed in Suricata's eve.json) — the real field is
+      `anomaly.event`.
+    - HTTP/2 traffic (including cleartext h2c) is always logged by Suricata
+      under `event_type: "http"`, never a separate `"http2"` type — removed
+      dead code that assumed otherwise; real HTTP/2 traffic already renders
+      correctly under the existing `http` tab.
 - Fixed a Suricata config-generation bug: re-running setup on an
   already-provisioned install could silently stop adding any newly-added
   protocol to eve-log output, once earlier protocols had already been
