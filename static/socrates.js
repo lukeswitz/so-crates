@@ -88,7 +88,7 @@
         const THEME_GROUP_LABELS = { dark: 'Dark Themes', fun: 'Fun Themes', light: 'Light Themes' };
         const THEME_GROUP_ORDER = ['dark', 'light', 'fun'];
 
-        // Menu/hotkey cycle order: group by section (Dark, Fun, Light),
+        // Menu/hotkey cycle order: group by section (Dark, Light, Fun),
         // alphabetical by label within each section.
         const THEME_MENU_ORDER = THEME_GROUP_ORDER.flatMap(group =>
             Object.keys(THEMES)

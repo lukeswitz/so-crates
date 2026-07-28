@@ -1,6 +1,6 @@
 # Themes
 
-SO-CRATES includes twenty-five UI themes in three groups — Dark Themes, Fun Themes, and Light Themes. Press the `t` key to cycle through themes or choose one from the gear icon menu in the upper-right corner. The currently applied theme is marked with a ✓ in the menu (it follows hover previews), and your choice is persisted in the browser's `localStorage` and restored on the next visit.
+SO-CRATES includes twenty-five UI themes in three groups — Dark Themes, Light Themes, and Fun Themes. Press the `t` key to cycle through themes or choose one from the gear icon menu in the upper-right corner. The currently applied theme is marked with a ✓ in the menu (it follows hover previews), and your choice is persisted in the browser's `localStorage` and restored on the next visit.
 
 Click any screenshot below to zoom in.
 

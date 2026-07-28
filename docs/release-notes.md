@@ -71,7 +71,7 @@ analyses from Suricata 7 too.
 
 ### UI
 
-- 20 new themes (25 total, up from 5), grouped into Dark / Fun / Light
+- 20 new themes (25 total, up from 5), grouped into Dark / Light / Fun
   sections in the gear menu, each with its own favicon — including three
   new Fun themes: **CGA** (classic 4-color CGA Palette 1 High-Intensity —
   black background, cyan/magenta/white), **C64** (Commodore 64 blue-on-blue
@@ -112,7 +112,7 @@ analyses from Suricata 7 too.
   properly cross-linked, searchable, and navigable instead of split across
   files with no shared nav.
 - The Themes page shows a real screenshot of every one of the 25 themes,
-  grouped under Dark/Fun/Light headings, click-to-zoom.
+  grouped under Dark/Light/Fun headings, click-to-zoom.
 - Added `scripts/capture_screenshots.py` to regenerate every docs screenshot
   in one run against the app's own built-in sample pcap — no local fixture
   or hardcoded analysis needed.
