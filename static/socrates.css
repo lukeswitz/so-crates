@@ -25,6 +25,39 @@
             --tag-green-text: #66bb6a;
             --help-icon-color: #f1c40f;
         }
+
+        /* Mirrors :root exactly. :root only matches <html> itself, so a
+           nested element (the theme preview swatch) can't select "dark" by
+           just omitting data-theme - it would inherit whatever theme is
+           really active on <html> instead. This makes "dark" explicitly
+           selectable like every other theme, purely for that case. */
+        [data-theme="dark"] {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --bg-hover: #30363d;
+            --bg-hover-light: #484f58;
+            --border-color: #30363d;
+            --text-primary: #c9d1d9;
+            --text-bright: #f0f6fc;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --accent-hover: #1f6feb;
+            --bg-drop-active: #1c2333;
+            --modal-backdrop: rgba(0,0,0,0.8);
+            --badge-danger-text: #ff6b6b;
+            --danger-bg: #1f2328;
+            --badge-bg-neutral: #0b0e11;
+            --badge-warning-text: #ffa726;
+            --badge-success-text: #66bb6a;
+            --tag-red-text: #ff6b6b;
+            --tag-purple-text: #ba68c8;
+            --tag-orange-text: #ffa726;
+            --tag-blue-text: #42a5f5;
+            --tag-gray-text: #9e9e9e;
+            --tag-green-text: #66bb6a;
+            --help-icon-color: #f1c40f;
+        }
         [data-theme="light"] {
             --bg-primary: #ffffff;
             --bg-secondary: #f6f8fa;
@@ -798,6 +831,126 @@
             --help-icon-color: #6e6e6e;
         }
 
+        [data-theme="winxp"] {
+            --bg-primary: #15398C;
+            --bg-secondary: #1F4FB0;
+            --bg-tertiary: #2E63C7;
+            --bg-hover: #3A78E0;
+            --bg-hover-light: #5C93EE;
+            --border-color: #4A78C7;
+            --text-primary: #FFFFFF;
+            --text-bright: #FFFFFF;
+            --text-muted: #A9C4EE;
+            --accent: #6EBE1E;
+            --accent-hover: #8ED43C;
+            --interactive-highlight: #6EBE1E;
+            --bg-drop-active: #2E63C7;
+            --modal-backdrop: rgba(0,0,0,0.6);
+            --badge-danger-text: #FF6B6B;
+            --danger-bg: #0A2A6B;
+            --badge-bg-neutral: #0A2A6B;
+            --badge-warning-text: #FFCC33;
+            --badge-success-text: #6EBE1E;
+            --tag-red-text: #FF6B6B;
+            --tag-purple-text: #B98EE8;
+            --tag-orange-text: #FFA34D;
+            --tag-blue-text: #7FB8FF;
+            --tag-gray-text: #A9C4EE;
+            --tag-green-text: #6EBE1E;
+            --help-icon-color: #FFCC33;
+        }
+
+        /* Amber CRT terminal: like Hacker, one phosphor color at varying
+           intensity for the primary UI (bg/text/accent), with real red/
+           orange/blue kept for danger/warning/tag colors since a fully
+           monochrome badge set would make severity/type indicators
+           indistinguishable from each other - same tradeoff Hacker makes. */
+        [data-theme="amber"] {
+            --bg-primary: #000000;
+            --bg-secondary: #1A0F00;
+            --bg-tertiary: #2E1A00;
+            --bg-hover: #4D2E00;
+            --bg-hover-light: #664000;
+            --border-color: #4D2E00;
+            --text-primary: #FFB000;
+            --text-bright: #FFB000;
+            --text-muted: #B37A00;
+            --accent: #FFB000;
+            --accent-hover: #CC8D00;
+            --bg-drop-active: #331F00;
+            --modal-backdrop: rgba(0,0,0,0.85);
+            --badge-danger-text: #FF4D4D;
+            --danger-bg: #331F00;
+            --badge-bg-neutral: #0D0800;
+            --badge-warning-text: #FF6600;
+            --badge-success-text: #FFB000;
+            --tag-red-text: #FF4D4D;
+            --tag-purple-text: #C084FC;
+            --tag-orange-text: #FF6600;
+            --tag-blue-text: #4DABF7;
+            --tag-gray-text: #888888;
+            --tag-green-text: #FFB000;
+            --help-icon-color: var(--accent);
+        }
+        /* Subtle scanline texture - the one visual signature that makes a
+           CRT theme actually read as "CRT" rather than just "orange
+           terminal". Kept faint (low opacity, wide 3px spacing) so it
+           doesn't strain the eyes during a long analysis session; pointer-
+           events: none so it never blocks clicks; applies over modals too
+           since a real CRT's phosphor effect would cover the whole tube,
+           not stop at a dialog box. */
+        [data-theme="amber"] body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 9999;
+            background: repeating-linear-gradient(
+                to bottom,
+                rgba(0, 0, 0, 0) 0px,
+                rgba(0, 0, 0, 0) 2px,
+                rgba(0, 0, 0, 0.12) 3px
+            );
+        }
+
+        /* MS-DOS Blue: the flat cobalt-blue background of classic DOS
+           text-mode UIs (Norton Commander, EDIT.COM, QBasic) - the actual
+           standard 16-color EGA/VGA text-mode palette values, not an
+           approximation. Yellow accent mirrors Norton Commander's iconic
+           F1/F2/... function-key label color; cyan borders match its
+           classic box-drawing frames. Unlike CGA/Hacker/Amber (black
+           background with a bright foreground color), the blue itself is
+           the dominant color here - that flat saturated blue is the whole
+           point of the reference. */
+        [data-theme="msdos"] {
+            --bg-primary: #0000AA;
+            --bg-secondary: #0000CC;
+            --bg-tertiary: #1A1AE0;
+            --bg-hover: #3333EE;
+            --bg-hover-light: #5555FF;
+            --border-color: #55FFFF;
+            --text-primary: #FFFFFF;
+            --text-bright: #FFFFFF;
+            --text-muted: #AAAAAA;
+            --accent: #FFFF55;
+            --accent-hover: #FFFF99;
+            --interactive-highlight: #55FFFF;
+            --bg-drop-active: #1A1AE0;
+            --modal-backdrop: rgba(0,0,0,0.75);
+            --badge-danger-text: #FF5555;
+            --danger-bg: #000088;
+            --badge-bg-neutral: #000066;
+            --badge-warning-text: #FFFF55;
+            --badge-success-text: #55FF55;
+            --tag-red-text: #FF5555;
+            --tag-purple-text: #FF55FF;
+            --tag-orange-text: #FFAA55;
+            --tag-blue-text: #55FFFF;
+            --tag-gray-text: #AAAAAA;
+            --tag-green-text: #55FF55;
+            --help-icon-color: #FFFF55;
+        }
+
         [data-theme="hacker"] .search-btn {
             background: var(--bg-hover);
             color: var(--accent);
@@ -1036,21 +1189,38 @@
         .app-header-menu { position: relative; display: inline-flex; align-items: center; }
         .app-header-menu-btn { background: none; border: 1px solid var(--accent); color: var(--accent); width: 28px; height: 28px; border-radius: 6px; font-size: 1rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
         .app-header-menu-btn:hover { background: var(--accent); color: var(--bg-primary); }
-        .app-header-menu-dropdown { display: none; position: absolute; top: calc(100% + 6px); right: 0; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); min-width: 180px; z-index: 1002; overflow: hidden; }
+        .app-header-menu-dropdown { display: none; position: absolute; top: calc(100% + 6px); right: 0; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); min-width: 160px; z-index: 1002; max-height: 80vh; overflow-x: hidden; overflow-y: auto; }
         .app-header-menu-dropdown.active { display: block; }
         .app-header-menu-item { display: flex; align-items: center; gap: 8px; padding: 10px 14px; color: var(--text-primary); font-size: 0.9rem; cursor: pointer; border: none; background: none; width: 100%; text-align: left; white-space: nowrap; }
         .app-header-menu-item:hover { background: var(--bg-tertiary); }
-        .app-header-menu-item[data-theme-option]::before { content: ''; display: inline-block; width: 1em; flex-shrink: 0; }
-        .app-header-menu-item[data-theme-option].theme-active::before { content: '✓'; color: var(--accent); font-weight: 700; }
         .app-header-menu-header { display: flex; align-items: center; padding: 12px 14px 4px 14px; color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; cursor: default; pointer-events: none; background: transparent; }
         .app-header-menu-sep { border-top: 1px solid var(--border-color); margin: 4px 0; }
+        .theme-tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; padding: 4px 14px 16px 14px; }
+        .theme-tile { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 12px; color: var(--text-primary); font-size: 0.9rem; cursor: pointer; border: 1px solid var(--border-color); background: var(--bg-primary); border-radius: 8px; text-align: center; }
+        .theme-tile:hover { background: var(--bg-tertiary); border-color: var(--interactive-highlight, var(--accent)); }
+        .theme-tile[data-theme-option]::before { content: ''; display: inline-block; width: 1em; flex-shrink: 0; }
+        .theme-tile[data-theme-option].theme-active { border-color: var(--accent); border-width: 2px; font-weight: 600; }
+        .theme-tile[data-theme-option].theme-active::before { content: '✓'; color: var(--accent); font-weight: 700; }
+        /* Hover/click on a theme tile only ever touches this iframe's own
+           isolated document (see previewTheme()/revertTheme() in
+           socrates.js) - never the real page's document.documentElement. A
+           full-page recolor on every mouseenter, with no debounce or
+           transition, is exactly the kind of large-area rapid flash WCAG
+           2.3.1 exists to prevent; scoping the color change to this small,
+           separate document keeps it well under the "large area" threshold
+           regardless of how fast someone sweeps the grid. Border matches
+           every other card/panel in the app (.stat-card, .sample-card) so
+           it reads as a normal preview pane, not a boxed-off embedded page;
+           no scrollbar (see the srcdoc's own overflow:hidden). Sticky so it
+           stays visible while the grid below scrolls. */
+        .theme-preview-frame { display: block; position: sticky; top: 0; z-index: 1; width: calc(100% - 28px); height: 180px; margin: 0 14px 12px 14px; border: 1px solid var(--border-color); border-radius: 8px; }
         [data-theme="cga"] .app-header,
         [data-theme="cga"] .footer {
             background: #55ffff;
             --text-bright: #ff55ff;
             --text-muted: #ff55ff;
         }
-        [data-theme="cga"] .app-header-menu-dropdown {
+        [data-theme="cga"] #themesModal {
             --text-bright: #ffffff;
             --text-muted: #55aaaa;
         }

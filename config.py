@@ -42,6 +42,13 @@ SIGMA_RUN_TIMEOUT = 300                    # 5 minutes max for Zircolite log ana
 ZIRCOLITE_VERSION = '3.7.1'
 SIGMA_RULES_SUBDIR = 'sigma-rules'
 
+# Rules freshness
+# YARA Forge ships weekly and Zircolite-Rules-v2 ships daily, so this is a
+# deliberately conservative shared ceiling rather than matching either
+# cadence exactly - it just bounds how far a cached copy can drift before
+# the next server startup tries to refresh it.
+RULES_MAX_AGE_HOURS = 24
+
 # Uploads
 UPLOAD_TMP_SUBDIR = 'upload-tmp'
 

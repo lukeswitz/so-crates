@@ -83,6 +83,25 @@
             'rose-pine': { label: 'Rose Pine', group: 'light' },
             'vantablack': { label: 'Vantablack', group: 'dark' },
             'white': { label: 'White', group: 'light' },
+            'winxp': { label: 'Windows XP', group: 'fun' },
+            'amber': { label: 'Amber CRT', group: 'fun' },
+            'msdos': { label: 'MS-DOS Blue', group: 'fun' },
+        };
+
+        // Mirrors the keydown easter-egg checks below (kept separate rather
+        // than driving both from one loop, since the keydown handler is
+        // already tested against its literal source text) - used only to
+        // display each Fun theme's code while hovering it in the themes
+        // modal, not to detect the codes themselves.
+        const THEME_CHEAT_CODES = {
+            hacker: '31337',
+            sguil: 'sguil',
+            cga: 'cga',
+            c64: 'c64',
+            vaporwave: 'vapor',
+            winxp: 'winxp',
+            amber: 'amber',
+            msdos: 'dos',
         };
 
         const THEME_GROUP_LABELS = { dark: 'Dark Themes', fun: 'Fun Themes', light: 'Light Themes' };
@@ -115,26 +134,113 @@
             updateThemeMenu();
             updateCodeRain();
             updateFavicon();
-            // If the menu is open, treat this as the new baseline so a later
-            // close/revert does not undo the change.
-            const dropdown = document.getElementById('appHeaderMenuDropdown');
-            if (dropdown && dropdown.classList.contains('active')) {
+            // If the themes modal is open, treat this as the new baseline so
+            // a later close/revert does not undo the change, and keep the
+            // preview iframe in sync - otherwise changing the theme some
+            // other way while the modal is open (the 't' hotkey, a cheat
+            // code) would leave the preview showing a stale theme while the
+            // real page and the grid's checkmark have already moved on.
+            const themesModal = document.getElementById('themesModal');
+            if (themesModal && themesModal.classList.contains('active')) {
                 menuBaseTheme = themeName;
+                previewTheme(themeName);
             }
         }
 
+        // Real app markup/classes (.app-header, .stats-grid, .stat-card)
+        // reusing the real stylesheet, rendered in an isolated iframe
+        // document so previewing a theme never touches the real page's
+        // document.documentElement. Loaded once via srcdoc (relative URLs
+        // in srcdoc resolve against the parent document's URL, so
+        // static/socrates.css resolves the same way it does for the real
+        // page) and then just has its data-theme attribute toggled per
+        // hover - cheap, and avoids booting a second full copy of the app
+        // (which loading the real socrates.html in an iframe would mean:
+        // re-running init(), restarting the OhMyDebn theme-sync poll, etc.
+        // just for a hover preview).
+        const THEME_PREVIEW_SRCDOC = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="static/socrates.css">
+<style>
+  html, body { overflow: hidden; }
+  .app-header { position: static; border-bottom: none; }
+  .preview-container { padding: 12px 14px; }
+  .preview-stats-grid { grid-template-columns: repeat(3, 1fr); margin-bottom: 0; }
+</style>
+</head>
+<body>
+  <div class="app-header">
+    <div class="app-header-left">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <span class="app-logo-text" style="color: var(--text-bright); font-weight: 700;">SO-CRATES</span>
+      <span class="app-header-filename">sample.pcap</span>
+    </div>
+  </div>
+  <div class="preview-container">
+    <div class="stats-grid preview-stats-grid">
+      <div class="stat-card tab-active">
+        <div class="stat-number">128</div>
+        <div class="stat-label">Alerts</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">4,502</div>
+        <div class="stat-label">Flows</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">37</div>
+        <div class="stat-label">DNS</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+        let themePreviewFrameReady = false;
+
+        // Only ever touches the isolated preview iframe's own document,
+        // never the real page's document.documentElement. Hovering across a
+        // packed grid of ~26 tiles with no debounce would otherwise mean a
+        // full-page, high-contrast recolor on every mouseenter - exactly
+        // the large-area rapid-flash pattern WCAG 2.3.1 (Three Flashes or
+        // Below Threshold) exists to prevent. Scoping the change to this
+        // small, separate document keeps it well under that "large area"
+        // threshold regardless of how fast the cursor moves. commitTheme()
+        // (click) is the only path that still changes the real theme.
         function previewTheme(themeName) {
             const valid = Object.prototype.hasOwnProperty.call(THEMES, themeName);
             if (!valid) return;
-            const html = document.documentElement;
-            if (themeName === 'dark') {
-                html.removeAttribute('data-theme');
-            } else {
-                html.setAttribute('data-theme', themeName);
+            const frame = document.getElementById('themePreviewFrame');
+            const frameDoc = frame && frame.contentDocument;
+            if (frameDoc && frameDoc.documentElement) {
+                frameDoc.documentElement.setAttribute('data-theme', themeName);
             }
-            updateCodeRain();
-            updateFavicon();
-            updateThemeMenu();
+            updateThemeCheatCodeHint(themeName);
+        }
+
+        // "Previewing <name>" always shows, confirming what the preview
+        // panel currently displays (hover target, or the resting/baseline
+        // theme once nothing is hovered). The trailing "- Cheat code: X"
+        // part only applies to Fun themes, so its own space is reserved via
+        // visibility (not display) rather than the whole line, so the
+        // modal doesn't jump as that part appears/disappears while hovering
+        // across Fun vs. other themes.
+        function updateThemeCheatCodeHint(themeName) {
+            const label = document.getElementById('themePreviewingLabel');
+            const codePart = document.getElementById('themeCheatCodePart');
+            if (!label || !codePart) return;
+            label.textContent = THEMES[themeName].label;
+            const code = THEME_CHEAT_CODES[themeName];
+            if (code) {
+                codePart.querySelector('code').textContent = code;
+                codePart.style.visibility = 'visible';
+            } else {
+                codePart.style.visibility = 'hidden';
+            }
         }
 
         function revertTheme() {
@@ -143,9 +249,47 @@
             }
         }
 
+        // Applies the theme for real (unlike previewTheme(), which only
+        // touches the isolated preview iframe) but deliberately does not
+        // close the themes modal - lets someone click through several
+        // themes in a row, actually seeing the real app repaint each time,
+        // without reopening the picker. Each click is still a single,
+        // deliberate user-initiated action (not a rapid/incidental trigger
+        // like hover), so this doesn't reintroduce the flash-risk pattern
+        // previewTheme() was built to avoid. Escape/the close button/
+        // backdrop click remain the ways to actually close the modal.
         function commitTheme(themeName) {
             setTheme(themeName);
-            closeMenu();
+        }
+
+        // Polls /api/theme (populated from OHMYDEBN_THEME_FILE server-side,
+        // e.g. when launched via ohmydebn-socrates-run) and, if the user has
+        // opted in, applies whatever theme OhMyDebn last switched to. Off by
+        // default so a background desktop-theme change never repaints an
+        // open analysis session without the user asking for it. The server
+        // only loosely validates the file's contents, so setTheme() -- which
+        // rejects anything not in THEMES -- remains the real gate.
+        let themeSyncInterval = null;
+
+        async function pollOhmydebnTheme() {
+            if (document.hidden) return;
+            if (safeStorageGet(localStorage, 'socrates_syncThemeWithOS') !== 'true') return;
+            try {
+                const resp = await fetch('/api/theme');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (data.theme && data.theme !== getCurrentTheme()) {
+                    setTheme(data.theme);
+                }
+            } catch (e) {
+                // Ignore -- next poll will retry.
+            }
+        }
+
+        function startThemeSync() {
+            if (themeSyncInterval) return;
+            pollOhmydebnTheme();
+            themeSyncInterval = setInterval(pollOhmydebnTheme, 1000);
         }
 
         function toggleTheme() {
@@ -162,7 +306,7 @@
             // hover previews too (setTheme/previewTheme both call this), so
             // the checkmark always matches what is on screen.
             const current = getCurrentTheme();
-            const items = document.querySelectorAll('.app-header-menu-item[data-theme-option]');
+            const items = document.querySelectorAll('[data-theme-option]');
             items.forEach(function(item) {
                 const isActive = item.getAttribute('data-theme-option') === current;
                 item.classList.toggle('theme-active', isActive);
@@ -177,19 +321,6 @@
         const GEAR_ICON_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
 
         function renderGearMenu() {
-            let themeSections = '';
-            for (const group of THEME_GROUP_ORDER) {
-                themeSections += `<div class="app-header-menu-header">${THEME_GROUP_LABELS[group]}</div>`;
-                for (const key of THEME_MENU_ORDER.filter(k => THEMES[k].group === group)) {
-                    themeSections += `
-                        <button class="app-header-menu-item" data-theme-option="${key}"
-                                onmouseenter="previewTheme('${key}')"
-                                onmouseleave="revertTheme()"
-                                onclick="commitTheme('${key}')">
-                            <span>${THEMES[key].label}</span>
-                        </button>`;
-                }
-            }
             return `
                 <div class="app-header-menu">
                     <button class="app-header-menu-btn" onclick="toggleMenu()" title="Menu" id="appHeaderMenuBtn">
@@ -204,10 +335,30 @@
                             <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></span>
                             <span>Settings</span>
                         </button>
-                        <div class="app-header-menu-sep"></div>
-                        ${themeSections}
+                        <button class="app-header-menu-item" onclick="showThemesModal(); closeMenu();">
+                            <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg></span>
+                            <span>Themes</span>
+                        </button>
                     </div>
                 </div>`;
+        }
+
+        function renderThemesModalGrid() {
+            let html = '';
+            for (const group of THEME_GROUP_ORDER) {
+                html += `<div class="app-header-menu-header">${THEME_GROUP_LABELS[group]}</div><div class="theme-tile-grid">`;
+                for (const key of THEME_MENU_ORDER.filter(k => THEMES[k].group === group)) {
+                    html += `
+                        <button class="theme-tile" data-theme-option="${key}"
+                                onmouseenter="previewTheme('${key}')"
+                                onmouseleave="revertTheme()"
+                                onclick="commitTheme('${key}')">
+                            <span>${THEMES[key].label}</span>
+                        </button>`;
+                }
+                html += `</div>`;
+            }
+            return html;
         }
 
         // Subtle code-rain background for Hacker theme.
@@ -323,22 +474,93 @@
         function toggleMenu() {
             const dropdown = document.getElementById('appHeaderMenuDropdown');
             if (!dropdown) return;
-            const willOpen = !dropdown.classList.contains('active');
             dropdown.classList.toggle('active');
-            if (willOpen) {
-                menuBaseTheme = getCurrentTheme();
-            } else {
-                // Closing without a commit reverts any preview.
-                revertTheme();
-                menuBaseTheme = null;
-            }
         }
 
         function closeMenu() {
             const dropdown = document.getElementById('appHeaderMenuDropdown');
             if (dropdown) dropdown.classList.remove('active');
+        }
+
+        function showThemesModal() {
+            closeOtherMenuModals('themesModal');
+            document.getElementById('themesModalBody').innerHTML = renderThemesModalGrid();
+            updateThemeMenu();
+            menuBaseTheme = getCurrentTheme();
+            document.getElementById('syncThemeWithOS').checked = safeStorageGet(localStorage, 'socrates_syncThemeWithOS') === 'true';
+            // Hidden by default - only shown if OHMYDEBN_THEME_FILE is set
+            // server-side AND currently readable, so this never shows a
+            // control that can't do anything (e.g. not launched via
+            // ohmydebn-socrates-run). Never blocks the modal on this check
+            // (mirrors showSettingsModal()'s /api/limits fetch) - defaults
+            // to hidden on any fetch failure too, since "can't confirm it
+            // works" should fail closed, not show a maybe-broken toggle.
+            const syncContainer = document.getElementById('syncThemeWithOSContainer');
+            syncContainer.style.display = 'none';
+            fetch('/api/theme-sync-available').then(r => r.json()).then(data => {
+                syncContainer.style.display = data.available ? 'block' : 'none';
+            }).catch(() => {});
+            const frame = document.getElementById('themePreviewFrame');
+            if (!themePreviewFrameReady) {
+                frame.addEventListener('load', function() {
+                    themePreviewFrameReady = true;
+                    previewTheme(menuBaseTheme);
+                }, { once: true });
+                frame.srcdoc = THEME_PREVIEW_SRCDOC;
+            } else {
+                previewTheme(menuBaseTheme);
+            }
+            document.getElementById('themesModal').classList.add('active');
+        }
+
+        function closeThemesModal() {
+            document.getElementById('themesModal').classList.remove('active');
             revertTheme();
             menuBaseTheme = null;
+        }
+
+        function handleThemesBackdropClick(event) {
+            if (event.target === document.getElementById('themesModal')) {
+                closeThemesModal();
+            }
+        }
+
+        // Applies immediately on toggle, unlike the numeric Settings
+        // fields which need a "Save" click - the themes modal has no save
+        // step for anything else (theme clicks apply instantly too), so a
+        // deferred-until-Save toggle here would be an inconsistent trap
+        // (easy to check the box, forget to save, and have it silently not
+        // take effect).
+        function handleSyncThemeWithOSChange(checkbox) {
+            safeStorageSet(localStorage, 'socrates_syncThemeWithOS', String(checkbox.checked));
+            if (checkbox.checked) pollOhmydebnTheme();
+        }
+
+        // Opt-in only (checked before ever fetching, same as
+        // pollOhmydebnTheme()) - unlike the YARA/Sigma/Suricata rule
+        // freshness checks, a stale app version doesn't silently degrade
+        // the correctness of the current analysis, so there's no harm in
+        // requiring explicit consent rather than checking automatically.
+        // One-shot per page load (called once from init()), not polled -
+        // the running app version can't change while the tab is open.
+        async function checkForAppUpdate() {
+            if (safeStorageGet(localStorage, 'socrates_checkForUpdates') !== 'true') return;
+            try {
+                const resp = await fetch('/api/version-check');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const badge = document.getElementById('footerUpdateBadge');
+                if (badge && data.updateAvailable) {
+                    badge.style.display = 'inline';
+                }
+            } catch (e) {
+                // Ignore -- footer just shows the current version, no badge.
+            }
+        }
+
+        function handleCheckForUpdatesChange(checkbox) {
+            safeStorageSet(localStorage, 'socrates_checkForUpdates', String(checkbox.checked));
+            if (checkbox.checked) checkForAppUpdate();
         }
 
         document.addEventListener('click', function(e) {
@@ -1381,7 +1603,30 @@
             return true;
         }
 
+        // Help/Settings/Themes are all full-viewport overlays sharing the
+        // same .modal z-index, so if one is already open when another is
+        // triggered (e.g. the gear menu is still reachable while the
+        // Themes modal is showing), the newer one can render behind the
+        // older one depending on DOM order rather than on top of it -
+        // opening one visibly does nothing while the other is still
+        // technically .active underneath. Closing any other open menu
+        // modal before showing a new one keeps at most one active at a
+        // time, which sidesteps the stacking ambiguity entirely. Guarded
+        // per-modal (not an unconditional close-everything) because
+        // closeHelpModal() has real side effects (persisting the "show
+        // again" checkbox state) that must only fire if Help was actually
+        // open.
+        function closeOtherMenuModals(exceptId) {
+            const closers = { helpModal: closeHelpModal, settingsModal: closeSettingsModal, themesModal: closeThemesModal };
+            Object.keys(closers).forEach(function(id) {
+                if (id === exceptId) return;
+                const modal = document.getElementById(id);
+                if (modal && modal.classList.contains('active')) closers[id]();
+            });
+        }
+
         function showHelpModal() {
+            closeOtherMenuModals('helpModal');
             const isWelcome = document.getElementById('inputBoxes').style.display !== 'none';
             const modalTitle = document.getElementById('helpModalTitle');
             const modalBody = document.getElementById('helpModalBody');
@@ -1435,6 +1680,7 @@
         }
 
         function showSettingsModal() {
+            closeOtherMenuModals('settingsModal');
             const input = document.getElementById('maxQueryLimitInput');
             const hint = document.getElementById('settingsHint');
             const errorEl = document.getElementById('settingsError');
@@ -1448,6 +1694,8 @@
             uploadInput.value = getUserMaxUploadSizeMB();
             uploadErrorEl.style.display = 'none';
             uploadHint.textContent = `Default: ${CONFIG.DEFAULT_UPLOAD_SIZE_MB.toLocaleString()} MB.`;
+
+            document.getElementById('checkForUpdates').checked = safeStorageGet(localStorage, 'socrates_checkForUpdates') === 'true';
 
             // Never block the modal on this - fall back to showing just the
             // defaults if the server can't be reached (mirrors safeStorageGet's
@@ -1633,6 +1881,8 @@
             if (e.key === 'Escape') {
                 closeMenu();
                 closeHelpModal();
+                closeThemesModal();
+                closeSettingsModal();
             }
             if (e.key === '?' && !e.ctrlKey && !e.altKey && !e.metaKey && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
                 e.preventDefault();
@@ -1643,12 +1893,14 @@
                 toggleTheme();
             }
             // Easter eggs: type "31337" for Hacker theme, "sguil" for Sguil
-            // theme, "cga" for CGA theme, "c64" for C64 theme, or "vapor" for
-            // Vaporwave theme. Checked with endsWith() rather
-            // than === since the buffer holds the last 5 keys typed
-            // session-wide - a code shorter than 5 characters (like "cga")
-            // would otherwise only ever match in the first few keystrokes
-            // after page load, when the buffer hasn't filled up yet.
+            // theme, "cga" for CGA theme, "c64" for C64 theme, "vapor" for
+            // Vaporwave theme, "winxp" for Windows XP theme, "amber" for
+            // Amber CRT theme, or "dos" for MS-DOS Blue theme. Checked with
+            // endsWith() rather than === since the buffer holds the last 5
+            // keys typed session-wide - a code shorter than 5 characters
+            // (like "cga") would otherwise only ever match in the first few
+            // keystrokes after page load, when the buffer hasn't filled up
+            // yet.
             const tag = e.target.tagName;
             const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable;
             if (!isTyping && e.key.length === 1) {
@@ -1684,6 +1936,24 @@
                     e.preventDefault();
                     setTheme('vaporwave');
                     showToast('Switched to Vaporwave theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('winxp')) {
+                    e.preventDefault();
+                    setTheme('winxp');
+                    showToast('Switched to Windows XP theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('amber')) {
+                    e.preventDefault();
+                    setTheme('amber');
+                    showToast('Switched to Amber CRT theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('dos')) {
+                    e.preventDefault();
+                    setTheme('msdos');
+                    showToast('Switched to MS-DOS Blue theme.');
                     keyBuffer = '';
                 }
             }
@@ -5048,6 +5318,7 @@
                 updateThemeMenu();
                 updateCodeRain();
                 updateFavicon();
+                startThemeSync();
 
                 // Fetch and display version from server
                 try {
@@ -5062,6 +5333,7 @@
                 } catch(verErr) {
                     // Ignore version fetch errors — footer shows placeholder
                 }
+                checkForAppUpdate();
 
                 // Check for file query parameter (backward compatible with ?pcap=)
                 const urlParams = new URLSearchParams(window.location.search);

@@ -8,6 +8,8 @@ import ssl
 import subprocess
 import hashlib
 from urllib.parse import urlparse, parse_qs, urljoin
+import urllib.request
+import urllib.error
 import zipfile
 import re
 import tempfile
@@ -28,7 +30,7 @@ from validators import (
     validate_ip, validate_port, sanitize_filename, is_safe_path,
     validate_url_safety, resolve_safe_ips, validate_zip_extraction,
     is_log_file, is_log_file_by_extension, is_office_file_by_extension,
-    is_pcap_file,
+    is_pcap_file, make_reachability_checker,
 )
 from suricata_analyzer import (
     check_executables, setup_suricata_config, spawn_suricata,
@@ -41,10 +43,14 @@ from sigma_analyzer import (
 )
 import config
 
-VERSION = '3.0.0'
+VERSION = '3.1.0'
+GITHUB_RELEASES_API = 'https://api.github.com/repos/dougburks/so-crates/releases/latest'
 PORT = int(os.environ.get('PORT', 8000))
 BIND_ADDRESS = os.environ.get('BIND_ADDRESS', '127.0.0.1')
 DATA_DIR = os.environ.get('DATA_DIR', os.path.expanduser('~/socrates-data'))
+# Path to a file containing a single theme name, kept in sync by an external
+# tool (e.g. OhMyDebn's ohmydebn-theme-set). Unset means the feature is off.
+OHMYDEBN_THEME_FILE = os.environ.get('OHMYDEBN_THEME_FILE')
 # Re-export size limits for backward compatibility
 MAX_TRANSCRIPT_SIZE = config.MAX_TRANSCRIPT_SIZE
 MAX_UPLOAD_SIZE = config.MAX_UPLOAD_SIZE
@@ -53,6 +59,11 @@ SURICATA_DIR = os.path.join(DATA_DIR, 'suricata')
 
 PCAP_EXTENSIONS = ('.pcap', '.pcapng', '.cap', '.trace')
 MD5_RE = re.compile(r'^[a-f0-9]{32}$')
+# Deliberately permissive rather than an enum of known theme names, so the
+# client's own THEMES allowlist (static/socrates.js) stays the single source
+# of truth; this just bounds what a malformed/oversized file can smuggle
+# through as JSON.
+THEME_NAME_RE = re.compile(r'^[a-z0-9-]{1,40}$')
 
 # Pipeline output artifacts removed by /api/reanalyze before re-running analysis
 PCAP_ANALYSIS_ARTIFACTS = ('eve.json', 'events.db', '.phase', '.error', 'yara_matches.json', 'sigma_matches.json', '.meta', 'file_metadata.json')
@@ -241,6 +252,19 @@ def _read_meta(dir_path):
         except (OSError, json.JSONDecodeError):
             pass
     return None
+
+
+def _is_newer_version(candidate, current):
+    """Compare two 'X.Y.Z' version strings. Returns False (not True/an
+    exception) for anything malformed, since a GitHub release tag that
+    doesn't parse as expected should never be treated as "newer" - fails
+    closed to "no update available" rather than surfacing a bogus badge."""
+    try:
+        candidate_parts = tuple(int(x) for x in candidate.split('.'))
+        current_parts = tuple(int(x) for x in current.split('.'))
+    except (ValueError, AttributeError):
+        return False
+    return candidate_parts > current_parts
 
 
 def _upload_tmp_dir():
@@ -578,7 +602,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '/api/load-analysis': 'handle_get_load_analysis',
         '/api/pcap-path': 'handle_get_pcap_path',
         '/api/version': 'handle_get_version',
+        '/api/version-check': 'handle_get_version_check',
         '/api/limits': 'handle_get_limits',
+        '/api/theme': 'handle_get_theme',
+        '/api/theme-sync-available': 'handle_get_theme_sync_available',
         '/api/sigma-alerts': 'handle_get_sigma_alerts',
         '/api/sigma-count': 'handle_get_sigma_count',
         '/api/sigma-stats': 'handle_get_sigma_stats',
@@ -989,8 +1016,64 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def handle_get_version(self, params):
         self._send_json({'version': VERSION})
 
+    def handle_get_version_check(self, params):
+        """Hits GitHub's releases API - the frontend never calls this route
+        unless the user has explicitly opted in via the Settings checkbox
+        (see pollOhmydebnTheme() for the same "check localStorage before
+        ever fetching" pattern this mirrors). GITHUB_RELEASES_API is a
+        hardcoded constant, not user input, so this doesn't need the
+        SSRF-hardened path _fetch_url_safely() exists for - same reasoning
+        already applied to the YARA Forge/Sigma rule downloads' hardcoded
+        URLs."""
+        latest_version = None
+        update_available = False
+        try:
+            req = urllib.request.Request(
+                GITHUB_RELEASES_API,
+                headers={'User-Agent': 'so-crates', 'Accept': 'application/vnd.github+json'},
+            )
+            with urllib.request.urlopen(req, timeout=config.URL_DOWNLOAD_TIMEOUT) as resp:
+                data = json.loads(resp.read())
+            tag = data.get('tag_name', '')
+            candidate = tag[1:] if tag.startswith('v') else tag
+            if _is_newer_version(candidate, VERSION):
+                latest_version = candidate
+                update_available = True
+        except (OSError, urllib.error.URLError, ValueError, AttributeError):
+            pass
+        self._send_json({
+            'currentVersion': VERSION,
+            'latestVersion': latest_version,
+            'updateAvailable': update_available,
+        })
+
     def handle_get_limits(self, params):
         self._send_json({'maxQueryLimit': config.MAX_QUERY_LIMIT, 'maxUploadSize': config.MAX_UPLOAD_SIZE})
+
+    def handle_get_theme(self, params):
+        theme = None
+        if OHMYDEBN_THEME_FILE:
+            try:
+                with open(OHMYDEBN_THEME_FILE, 'r') as f:
+                    candidate = f.read(256).strip()
+                if THEME_NAME_RE.match(candidate):
+                    theme = candidate
+            except OSError:
+                pass
+        self._send_json({'theme': theme})
+
+    def handle_get_theme_sync_available(self, params):
+        """Lets the frontend hide the "Sync theme to OhMyDebn" toggle
+        entirely rather than showing a control that can never do anything
+        (OHMYDEBN_THEME_FILE unset, or set but unreadable)."""
+        available = False
+        if OHMYDEBN_THEME_FILE:
+            try:
+                with open(OHMYDEBN_THEME_FILE, 'r'):
+                    available = True
+            except OSError:
+                pass
+        self._send_json({'available': available})
 
     def handle_get_sigma_alerts(self, params):
         md5 = params.get('md5', [''])[0]
@@ -1625,10 +1708,14 @@ def main():
     ================================================================
     """)
 
-    # Run setup - handles rules download first
+    # Run setup - handles rules download first. YARA and Sigma's (x2, one
+    # per ruleset) staleness checks share one reachability probe via
+    # rules_reachable_check instead of each blocking through its own
+    # timeout if github.com is slow/unreachable.
     setup_suricata_config(DATA_DIR, enable_arp=bool(os.environ.get('ENABLE_ARP_LOGGING')))
-    setup_yara_rules(DATA_DIR)
-    setup_sigma_rules(DATA_DIR)
+    rules_reachable_check = make_reachability_checker('github.com', 443, timeout=5)
+    setup_yara_rules(DATA_DIR, reachable_check=rules_reachable_check)
+    setup_sigma_rules(DATA_DIR, reachable_check=rules_reachable_check)
 
     if os.environ.get('DEMO'):
         msg = 'SO-CRATES is now running. Click the link on the left!'

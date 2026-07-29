@@ -27,7 +27,7 @@ THEMES = [
     'dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night',
     'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte',
     'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord',
-    'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white',
+    'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'winxp', 'amber', 'msdos',
 ]
 
 DEFAULT_VIEWPORT = {'width': 1600, 'height': 1000}

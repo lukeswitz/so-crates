@@ -2,6 +2,7 @@
 import os
 import ipaddress
 import socket
+import time
 from urllib.parse import urlparse
 import config
 
@@ -177,6 +178,47 @@ def is_host_reachable(host, port, timeout=5):
         return True
     except OSError:
         return False
+
+
+def make_reachability_checker(host, port, timeout=5):
+    """Return a zero-arg callable that checks host:port reachability on
+    first call and caches the result for its own lifetime.
+
+    Lets several independent staleness checks made during the same
+    orchestration (e.g. socrates.py's startup checking YARA + both Sigma
+    rulesets) share one network probe instead of each blocking through its
+    own timeout if the host is slow/unreachable. Create a fresh checker per
+    orchestration rather than reusing one across a long-running process --
+    reachability can change over time, so this must not become a
+    process-lifetime cache.
+    """
+    cache = {}
+
+    def check():
+        if 'result' not in cache:
+            cache['result'] = is_host_reachable(host, port, timeout)
+        return cache['result']
+
+    return check
+
+
+def is_file_stale(path, max_age_hours):
+    """Check if a file's mtime is older than max_age_hours.
+
+    mtime reflects the right thing either way a rules file gets to disk:
+    shutil.copy2() preserves the source's mtime (age of the rules content
+    itself, for a baked-in-image copy), and a fresh download naturally gets
+    "now" as its mtime (age of the last successful check).
+
+    Returns True if the file is older than the threshold, False if it's
+    fresh or the file doesn't exist (missing isn't "stale" -- callers
+    already handle "doesn't exist" as its own case).
+    """
+    try:
+        age_seconds = time.time() - os.path.getmtime(path)
+    except OSError:
+        return False
+    return age_seconds > max_age_hours * 3600
 
 
 LOG_EXTENSIONS = ('.evtx', '.json', '.jsonl', '.csv', '.xml', '.log')

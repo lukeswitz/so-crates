@@ -16,7 +16,7 @@ import urllib.request
 
 import config
 from db import import_log_events
-from validators import is_host_reachable
+from validators import is_host_reachable, is_file_stale
 
 ZIRCOLITE_RULES_URLS = {
     'windows': 'https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_windows_merged.json',
@@ -60,13 +60,34 @@ def _zircolite_config():
     return None
 
 
-def setup_sigma_rules(data_dir=None):
+def _check_reachable(reachable_check):
+    """Resolve GitHub reachability, preferring an already-computed shared
+    checker (see validators.make_reachability_checker) over a fresh direct
+    call - lets setup_sigma_rules' per-ruleset checks (and a caller like
+    socrates.py's startup, alongside setup_yara_rules) share one
+    reachability probe instead of each blocking through its own timeout."""
+    if reachable_check is not None:
+        return reachable_check()
+    return is_host_reachable('github.com', 443, timeout=5)
+
+
+def setup_sigma_rules(data_dir=None, reachable_check=None):
     """Ensure Sigma (Zircolite JSON) rules are available.
 
     Priority:
-    1. Cached rules in ~/socrates-data/sigma-rules/
+    1. Cached rules in ~/socrates-data/sigma-rules/ -- each ruleset
+       refreshed in place if older than config.RULES_MAX_AGE_HOURS and
+       internet is reachable; falls back to the stale copy on any refresh
+       failure rather than leaving rules unavailable.
     2. Baked-in rules in /usr/share/sigma-rules (Docker)
     3. Download from Zircolite-Rules-v2 if internet is available
+
+    reachable_check: optional zero-arg callable (from
+    validators.make_reachability_checker), shared across both this
+    function's windows/linux checks and (if the caller passes the same
+    checker) setup_yara_rules, so all rule-source reachability probes in
+    one startup collapse into a single network check. Defaults to a fresh
+    direct check per ruleset.
 
     Returns dict mapping 'windows'/'linux' to file path, or None for each.
     """
@@ -81,6 +102,16 @@ def setup_sigma_rules(data_dir=None):
 
         # Already downloaded/cached
         if os.path.isfile(rules_file):
+            if is_file_stale(rules_file, config.RULES_MAX_AGE_HOURS):
+                if _check_reachable(reachable_check):
+                    print(f'Cached Sigma rules ({ruleset_name}) are stale — checking for updates...')
+                    try:
+                        _download_rule_file(url, rules_file)
+                        print(f'Sigma rules ({ruleset_name}) refreshed successfully')
+                    except (OSError, urllib.error.URLError) as e:
+                        print(f'Warning: could not refresh Sigma rules ({ruleset_name}), using cached copy: {e}')
+                else:
+                    print(f'Cached Sigma rules ({ruleset_name}) are stale but no internet access detected — using cached rules')
             result[ruleset_name] = rules_file
             continue
 
@@ -95,7 +126,7 @@ def setup_sigma_rules(data_dir=None):
                 print(f'Warning: could not copy baked-in Sigma rules: {e}')
 
         # Try to download
-        if is_host_reachable('github.com', 443, timeout=5):
+        if _check_reachable(reachable_check):
             try:
                 _download_rule_file(url, rules_file)
                 result[ruleset_name] = rules_file
@@ -109,12 +140,25 @@ def setup_sigma_rules(data_dir=None):
 
 
 def _download_rule_file(url, dest_file):
-    """Download a single rule file from URL to dest_file."""
+    """Download a single rule file from URL to dest_file.
+
+    Writes to a temp file and atomically renames into place, so a refresh
+    that overwrites an already-good cached copy (see setup_sigma_rules)
+    never leaves a truncated/partial file behind if the download fails
+    partway through - the prior cached copy stays intact until the new
+    one is fully written.
+    """
     os.makedirs(os.path.dirname(dest_file), exist_ok=True)
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=config.RULES_DOWNLOAD_TIMEOUT) as resp:
-        with open(dest_file, 'wb') as f:
-            f.write(resp.read())
+    tmp_dest = dest_file + '.new'
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=config.RULES_DOWNLOAD_TIMEOUT) as resp:
+            with open(tmp_dest, 'wb') as f:
+                f.write(resp.read())
+        os.replace(tmp_dest, dest_file)
+    finally:
+        if os.path.exists(tmp_dest):
+            os.unlink(tmp_dest)
 
 
 def _detect_log_type(log_path):

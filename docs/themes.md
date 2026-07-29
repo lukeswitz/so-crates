@@ -1,6 +1,6 @@
 # Themes
 
-SO-CRATES includes twenty-five UI themes in three groups — Dark Themes, Light Themes, and Fun Themes. Press the `t` key to cycle through themes or choose one from the gear icon menu in the upper-right corner. The currently applied theme is marked with a ✓ in the menu (it follows hover previews), and your choice is persisted in the browser's `localStorage` and restored on the next visit.
+SO-CRATES includes twenty-eight UI themes in three groups — Dark Themes, Light Themes, and Fun Themes. Press the `t` key to cycle through themes, or open Themes from the gear icon menu in the upper-right corner to browse them: hovering a theme shows a live preview without changing the rest of the app, and clicking applies it for real without closing the picker, so you can click through several in a row. The currently applied theme is marked with a ✓ in the grid. Your choice is persisted in the browser's `localStorage` and restored on the next visit.
 
 Click any screenshot below to zoom in.
 
@@ -54,13 +54,19 @@ Click any screenshot below to zoom in.
 
 Each Fun theme also has its own cheat code — type it anywhere outside a text field to switch instantly.
 
+- **Amber CRT** — monochrome amber phosphor on black, like a VT100/DEC-style business terminal, with a faint scanline overlay for the CRT effect. Cheat code: `amber`
+  <br><img src="../images/themes/amber.png" width="360" alt="Amber CRT theme">
 - **C64** — Commodore 64 blue-on-blue aesthetic, using the real Pepto/VICE C64 16-color palette (blue background, light-blue border/text/accent, cyan interactive highlight). Cheat code: `c64`
   <br><img src="../images/themes/c64.png" width="360" alt="C64 theme">
 - **CGA** — black background with the classic 4-color CGA Palette 1 High-Intensity hues (cyan, magenta, white). Cheat code: `cga`
   <br><img src="../images/themes/cga.png" width="360" alt="CGA theme">
 - **Hacker** — green-on-black terminal aesthetic with a subtle animated code-rain background. Cheat code: `31337`
   <br><img src="../images/themes/hacker.png" width="360" alt="Hacker theme">
+- **MS-DOS Blue** — the flat cobalt-blue background of classic DOS text-mode UIs (Norton Commander, EDIT.COM, QBasic), using the real 16-color EGA/VGA palette values, with Norton Commander's iconic yellow function-key-label accent and cyan box-drawing borders. Cheat code: `dos`
+  <br><img src="../images/themes/msdos.png" width="360" alt="MS-DOS Blue theme">
 - **Sguil** — light theme inspired by the classic Sguil NSM interface, with gray chrome and navy headers. Cheat code: `sguil`
   <br><img src="../images/themes/sguil.png" width="360" alt="Sguil theme">
 - **Vaporwave** — dark purple/navy theme with hot-pink accents and cyan/mint/pastel-yellow highlights, evoking the modern (2010s+) vaporwave internet aesthetic. Cheat code: `vapor`
   <br><img src="../images/themes/vaporwave.png" width="360" alt="Vaporwave theme">
+- **Windows XP** — the saturated royal blue of the classic "Luna Blue" taskbar and title bars as the dominant color, with the iconic Start-button green as the accent. Cheat code: `winxp`
+  <br><img src="../images/themes/winxp.png" width="360" alt="Windows XP theme">

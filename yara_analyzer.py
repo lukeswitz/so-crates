@@ -18,7 +18,7 @@ import urllib.request
 import zipfile
 
 from file_analyzer import analyze_file
-from validators import is_host_reachable
+from validators import is_host_reachable, is_file_stale
 
 YARA_FORGE_URL = (
     'https://github.com/YARAHQ/yara-forge/releases/latest/download/'
@@ -34,13 +34,33 @@ def check_yara_executable():
     return shutil.which('yara') is not None
 
 
-def setup_yara_rules(data_dir=None):
+def _check_reachable(reachable_check):
+    """Resolve GitHub reachability, preferring an already-computed shared
+    checker (see validators.make_reachability_checker) over a fresh direct
+    call - lets setup_yara_rules reuse a reachability probe a caller (e.g.
+    socrates.py's startup, alongside setup_sigma_rules) already made,
+    instead of blocking through its own separate timeout."""
+    if reachable_check is not None:
+        return reachable_check()
+    return is_host_reachable('github.com', 443, timeout=5)
+
+
+def setup_yara_rules(data_dir=None, reachable_check=None):
     """Ensure YARA Forge rules are available.
 
     Priority:
-    1. ~/socrates-data/yara-rules/yara-rules-full.yar (already downloaded)
+    1. ~/socrates-data/yara-rules/yara-rules-full.yar (already downloaded) --
+       refreshed in place if older than config.RULES_MAX_AGE_HOURS and
+       internet is reachable; falls back to the stale copy on any refresh
+       failure rather than leaving rules unavailable.
     2. Baked-in rules in /usr/share/yara-rules (Docker)
     3. Download latest YARA Forge release if internet is available
+
+    reachable_check: optional zero-arg callable (from
+    validators.make_reachability_checker) for callers that also check
+    other rule sources in the same breath and want to share one network
+    probe instead of each paying their own timeout. Defaults to a fresh
+    direct check.
 
     Returns the rules file path or None if no rules are available.
     """
@@ -50,7 +70,18 @@ def setup_yara_rules(data_dir=None):
 
     # Already downloaded/cached
     if os.path.isfile(rules_file):
-        print('YARA Forge rules already present — using cached rules')
+        if is_file_stale(rules_file, config.RULES_MAX_AGE_HOURS):
+            if _check_reachable(reachable_check):
+                print('Cached YARA Forge rules are stale — checking for updates...')
+                try:
+                    _download_yara_forge_rules(rules_file)
+                    print('YARA Forge rules refreshed successfully')
+                except (OSError, urllib.error.URLError) as e:
+                    print(f'Warning: could not refresh YARA Forge rules, using cached copy: {e}')
+            else:
+                print('Cached YARA Forge rules are stale but no internet access detected — using cached rules')
+        else:
+            print('YARA Forge rules already present — using cached rules')
         return rules_file
 
     # Baked-in rules (Docker image)
@@ -65,7 +96,7 @@ def setup_yara_rules(data_dir=None):
             print(f'Warning: could not copy baked-in rules: {e}')
 
     # Try to download
-    if is_host_reachable('github.com', 443, timeout=5):
+    if _check_reachable(reachable_check):
         print('Internet access detected — downloading YARA Forge rules...')
         try:
             _download_yara_forge_rules(rules_file)
@@ -80,21 +111,34 @@ def setup_yara_rules(data_dir=None):
 
 
 def _download_yara_forge_rules(dest_file):
-    """Download latest YARA Forge full rules ZIP and extract the .yar file."""
+    """Download latest YARA Forge full rules ZIP and extract the .yar file.
+
+    Writes to a temp file and atomically renames into place, so a refresh
+    that overwrites an already-good cached copy (see setup_yara_rules)
+    never leaves a truncated/partial file behind if the download fails
+    partway through - the prior cached copy stays intact until the new
+    one is fully written.
+    """
     os.makedirs(os.path.dirname(dest_file), exist_ok=True)
     tmp_zip = dest_file + '.zip'
+    tmp_dest = dest_file + '.new'
 
-    req = urllib.request.Request(YARA_FORGE_URL, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=config.RULES_DOWNLOAD_TIMEOUT) as resp:
-        with open(tmp_zip, 'wb') as f:
-            f.write(resp.read())
+    try:
+        req = urllib.request.Request(YARA_FORGE_URL, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=config.RULES_DOWNLOAD_TIMEOUT) as resp:
+            with open(tmp_zip, 'wb') as f:
+                f.write(resp.read())
 
-    with zipfile.ZipFile(tmp_zip, 'r') as zf:
-        member = 'packages/full/yara-rules-full.yar'
-        with zf.open(member) as src, open(dest_file, 'wb') as dst:
-            dst.write(src.read())
+        with zipfile.ZipFile(tmp_zip, 'r') as zf:
+            member = 'packages/full/yara-rules-full.yar'
+            with zf.open(member) as src, open(tmp_dest, 'wb') as dst:
+                dst.write(src.read())
 
-    os.unlink(tmp_zip)
+        os.replace(tmp_dest, dest_file)
+    finally:
+        for tmp in (tmp_zip, tmp_dest):
+            if os.path.exists(tmp):
+                os.unlink(tmp)
 
 
 def _run_yara_with_index(rules_file, list_path, filestore_dir=None):

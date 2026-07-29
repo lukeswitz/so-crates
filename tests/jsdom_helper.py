@@ -68,17 +68,43 @@ window.eval({json.dumps(d3_sankey)});
 
     # Build the Node.js script
     node_script = f'''
-const {{ JSDOM }} = require('jsdom');
+const {{ JSDOM, requestInterceptor }} = require('jsdom');
+const fs = require('fs');
+const path = require('path');
 
 const htmlContent = {json.dumps(html)};
 const jsContent = {json.dumps(js)};
 const cssContent = {json.dumps(css)};
 
+// Serves static/* from disk instead of over the network. Without this,
+// anything that triggers a real subresource fetch (e.g. an iframe
+// navigating via srcdoc with a <link rel=stylesheet href="static/...">,
+// as the theme preview iframe does) hangs the whole node process forever:
+// nothing is listening on the http://localhost:8000 base URL in this
+// offline test environment, so the pending request keeps the event loop
+// alive indefinitely and the script never exits on its own.
+const staticFileInterceptor = requestInterceptor(async (request) => {{
+    let pathname;
+    try {{
+        pathname = new URL(request.url).pathname;
+    }} catch (e) {{
+        return undefined;
+    }}
+    if (!pathname.startsWith('/static/')) return undefined;
+    const localPath = path.join(process.cwd(), pathname);
+    if (!fs.existsSync(localPath)) return undefined;
+    const contentType = pathname.endsWith('.css') ? 'text/css'
+        : pathname.endsWith('.js') ? 'application/javascript'
+        : 'application/octet-stream';
+    return new Response(fs.readFileSync(localPath), {{ headers: {{ 'Content-Type': contentType }} }});
+}});
+
 const dom = new JSDOM(htmlContent, {{
     runScripts: 'dangerously',
     url: 'http://localhost:8000',
     pretendToBeVisual: true,
-    resources: 'usable'
+    resources: 'usable',
+    interceptors: [staticFileInterceptor]
 }});
 
 const window = dom.window;
@@ -125,6 +151,16 @@ window.eval(jsContent);
     }} else {{
         console.log(JSON.stringify(__jsdom_result));
     }}
+
+    // Force exit once the result is captured, rather than waiting for
+    // Node's event loop to drain naturally. jsdom's "resources: usable"
+    // subresource loader (e.g. the theme preview iframe navigating via
+    // srcdoc with a real <link rel=stylesheet>) can leave a pending
+    // request in flight against http://localhost:8000 - nothing is
+    // listening there in this offline test environment, so without a
+    // forced exit the process hangs indefinitely even though the test
+    // itself already finished and produced its result above.
+    process.exit(0);
 }})();
 '''
 

@@ -313,5 +313,97 @@ class TestValidatorsLogDetection(unittest.TestCase):
         self.assertFalse(validators.is_log_file_by_extension('test.exe'))
 
 
+class TestSetupSigmaRulesFreshness(unittest.TestCase):
+    def _make_stale_rules(self, tmpdir):
+        import time
+        import config
+        rules_dir = os.path.join(tmpdir, config.SIGMA_RULES_SUBDIR)
+        os.makedirs(rules_dir, exist_ok=True)
+        for name in ('windows', 'linux'):
+            path = os.path.join(rules_dir, f'{name}.json')
+            with open(path, 'w') as f:
+                f.write('{"old": "rules"}')
+            old_time = time.time() - (25 * 3600)
+            os.utime(path, (old_time, old_time))
+        return rules_dir
+
+    @unittest.mock.patch('sigma_analyzer._download_rule_file')
+    @unittest.mock.patch('sigma_analyzer.is_host_reachable', return_value=True)
+    def test_stale_cached_rules_are_refreshed_when_online(self, mock_reachable, mock_download):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_stale_rules(tmpdir)
+            result = sigma_analyzer.setup_sigma_rules(tmpdir)
+        self.assertEqual(mock_download.call_count, 2, 'both rulesets should be refreshed')
+        self.assertIn('windows', result)
+        self.assertIn('linux', result)
+
+    @unittest.mock.patch('sigma_analyzer._download_rule_file')
+    @unittest.mock.patch('sigma_analyzer.is_host_reachable', return_value=False)
+    def test_stale_cached_rules_kept_when_offline(self, mock_reachable, mock_download):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = self._make_stale_rules(tmpdir)
+            result = sigma_analyzer.setup_sigma_rules(tmpdir)
+        mock_download.assert_not_called()
+        self.assertEqual(result['windows'], os.path.join(rules_dir, 'windows.json'))
+
+    @unittest.mock.patch('sigma_analyzer._download_rule_file')
+    @unittest.mock.patch('sigma_analyzer.is_host_reachable', return_value=True)
+    def test_fresh_cached_rules_are_not_refreshed(self, mock_reachable, mock_download):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            import config
+            rules_dir = os.path.join(tmpdir, config.SIGMA_RULES_SUBDIR)
+            os.makedirs(rules_dir, exist_ok=True)
+            with open(os.path.join(rules_dir, 'windows.json'), 'w') as f:
+                f.write('{"fresh": "rules"}')
+            with open(os.path.join(rules_dir, 'linux.json'), 'w') as f:
+                f.write('{"fresh": "rules"}')
+            sigma_analyzer.setup_sigma_rules(tmpdir)
+        mock_download.assert_not_called()
+
+    @unittest.mock.patch('sigma_analyzer._download_rule_file', side_effect=OSError('network error'))
+    @unittest.mock.patch('sigma_analyzer.is_host_reachable', return_value=True)
+    def test_refresh_failure_falls_back_to_stale_cached_rules(self, mock_reachable, mock_download):
+        """REGRESSION: a failed refresh attempt must not remove or break the
+        still-usable stale copy - setup must keep returning it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = self._make_stale_rules(tmpdir)
+            result = sigma_analyzer.setup_sigma_rules(tmpdir)
+            self.assertEqual(result['windows'], os.path.join(rules_dir, 'windows.json'))
+            with open(result['windows']) as f:
+                self.assertEqual(f.read(), '{"old": "rules"}')
+
+    @unittest.mock.patch('sigma_analyzer.urllib.request.urlopen')
+    def test_download_rule_file_writes_atomically(self, mock_urlopen):
+        """A partial/failed write must not corrupt an existing cached file
+        (_download_rule_file writes to a .new temp file and renames into
+        place instead of truncating dest_file directly)."""
+        mock_urlopen.side_effect = OSError('connection reset')
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dest = os.path.join(tmpdir, 'windows.json')
+            with open(dest, 'w') as f:
+                f.write('{"good": "cached rules"}')
+            with self.assertRaises(OSError):
+                sigma_analyzer._download_rule_file('http://example.com/rules.json', dest)
+            with open(dest) as f:
+                self.assertEqual(f.read(), '{"good": "cached rules"}')
+            self.assertFalse(os.path.exists(dest + '.new'), 'temp file must be cleaned up')
+
+    @unittest.mock.patch('validators.is_host_reachable', return_value=True)
+    @unittest.mock.patch('sigma_analyzer.is_host_reachable')
+    def test_shared_reachable_check_is_used_instead_of_direct_call(self, mock_reachable, mock_shared_reachable):
+        """When a caller passes a shared reachable_check (as socrates.py's
+        startup does), setup_sigma_rules must use it for both rulesets
+        rather than calling is_host_reachable itself - otherwise sharing
+        the checker across YARA + both Sigma rulesets wouldn't actually
+        save any probes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_stale_rules(tmpdir)
+            shared_check = validators.make_reachability_checker('github.com', 443, timeout=5)
+            with unittest.mock.patch('sigma_analyzer._download_rule_file'):
+                sigma_analyzer.setup_sigma_rules(tmpdir, reachable_check=shared_check)
+        mock_reachable.assert_not_called()
+        mock_shared_reachable.assert_called_once()
+
+
 if __name__ == '__main__':
     unittest.main()

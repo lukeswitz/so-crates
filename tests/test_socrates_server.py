@@ -15,6 +15,7 @@ import io
 import re
 import sqlite3
 import subprocess
+import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
@@ -23,6 +24,15 @@ import db
 import socrates as server
 import suricata_analyzer
 from validators import is_pcap_file
+
+# Captured before any test patches urllib.request.urlopen (e.g. to mock the
+# GitHub version-check call) - TestAPIEndpoints._get()/._post() use the same
+# global urlopen to reach the local test server, so a naive mock there would
+# also intercept the test's own HTTP client, not just the outbound call
+# being tested. Tests that need this select on the target URL and fall back
+# to this real reference for everything else (see e.g.
+# test_version_check_no_update_when_same_version).
+_REAL_URLOPEN = urllib.request.urlopen
 
 SERVER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'socrates.py')
 SURICATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'suricata_analyzer.py')
@@ -1168,6 +1178,172 @@ class TestAPIEndpoints(unittest.TestCase):
             'maxQueryLimit': config.MAX_QUERY_LIMIT,
             'maxUploadSize': config.MAX_UPLOAD_SIZE,
         })
+
+    def test_theme_endpoint_returns_none_when_unset(self):
+        original = server.OHMYDEBN_THEME_FILE
+        server.OHMYDEBN_THEME_FILE = None
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body), {'theme': None})
+        finally:
+            server.OHMYDEBN_THEME_FILE = original
+
+    def test_theme_endpoint_returns_none_when_file_missing(self):
+        original = server.OHMYDEBN_THEME_FILE
+        server.OHMYDEBN_THEME_FILE = os.path.join(self.tmpdir, 'does-not-exist')
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body), {'theme': None})
+        finally:
+            server.OHMYDEBN_THEME_FILE = original
+
+    def test_theme_endpoint_returns_theme_name_from_file(self):
+        theme_file = os.path.join(self.tmpdir, 'theme.name')
+        with open(theme_file, 'w') as f:
+            f.write('tokyo-night\n')
+        original = server.OHMYDEBN_THEME_FILE
+        server.OHMYDEBN_THEME_FILE = theme_file
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body), {'theme': 'tokyo-night'})
+        finally:
+            server.OHMYDEBN_THEME_FILE = original
+
+    def test_theme_endpoint_rejects_malformed_content(self):
+        theme_file = os.path.join(self.tmpdir, 'theme.name')
+        with open(theme_file, 'w') as f:
+            f.write('<script>alert(1)</script>')
+        original = server.OHMYDEBN_THEME_FILE
+        server.OHMYDEBN_THEME_FILE = theme_file
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body), {'theme': None})
+        finally:
+            server.OHMYDEBN_THEME_FILE = original
+
+    def test_theme_sync_available_false_when_unset(self):
+        original = server.OHMYDEBN_THEME_FILE
+        server.OHMYDEBN_THEME_FILE = None
+        try:
+            status, body = self._get('/api/theme-sync-available')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body), {'available': False})
+        finally:
+            server.OHMYDEBN_THEME_FILE = original
+
+    def test_theme_sync_available_false_when_file_missing(self):
+        original = server.OHMYDEBN_THEME_FILE
+        server.OHMYDEBN_THEME_FILE = os.path.join(self.tmpdir, 'does-not-exist')
+        try:
+            status, body = self._get('/api/theme-sync-available')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body), {'available': False})
+        finally:
+            server.OHMYDEBN_THEME_FILE = original
+
+    def test_theme_sync_available_true_when_file_readable(self):
+        """Available even if the file's current *contents* are stale/
+        malformed - this endpoint answers "can the frontend show a working
+        toggle", not "is there a valid theme right now" (that's /api/theme's
+        job)."""
+        theme_file = os.path.join(self.tmpdir, 'theme.name')
+        with open(theme_file, 'w') as f:
+            f.write('nord')
+        original = server.OHMYDEBN_THEME_FILE
+        server.OHMYDEBN_THEME_FILE = theme_file
+        try:
+            status, body = self._get('/api/theme-sync-available')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body), {'available': True})
+        finally:
+            server.OHMYDEBN_THEME_FILE = original
+
+    def _selective_urlopen(self, tag_name=None, error=None):
+        """side_effect for mocking urllib.request.urlopen that only
+        intercepts requests to the GitHub releases API - everything else
+        (notably _get()'s own call to the local test server, which uses
+        this exact same global function) passes through to the real
+        urlopen via the module-level _REAL_URLOPEN captured before any
+        patching happened."""
+        def fake_urlopen(req, *args, **kwargs):
+            url = req.full_url if hasattr(req, 'full_url') else str(req)
+            if 'api.github.com' not in url:
+                return _REAL_URLOPEN(req, *args, **kwargs)
+            if error:
+                raise error
+            mock_resp = unittest.mock.MagicMock()
+            mock_resp.read.return_value = json.dumps({'tag_name': tag_name}).encode()
+            mock_resp.__enter__.return_value = mock_resp
+            return mock_resp
+        return fake_urlopen
+
+    @unittest.mock.patch('socrates.urllib.request.urlopen')
+    def test_version_check_no_update_when_same_version(self, mock_urlopen):
+        mock_urlopen.side_effect = self._selective_urlopen(tag_name=f'v{server.VERSION}')
+        status, body = self._get('/api/version-check')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertFalse(result['updateAvailable'])
+        self.assertIsNone(result['latestVersion'])
+        self.assertEqual(result['currentVersion'], server.VERSION)
+
+    @unittest.mock.patch('socrates.urllib.request.urlopen')
+    def test_version_check_detects_newer_version(self, mock_urlopen):
+        mock_urlopen.side_effect = self._selective_urlopen(tag_name='v99.0.0')
+        status, body = self._get('/api/version-check')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertTrue(result['updateAvailable'])
+        self.assertEqual(result['latestVersion'], '99.0.0')
+
+    @unittest.mock.patch('socrates.urllib.request.urlopen')
+    def test_version_check_ignores_older_tag(self, mock_urlopen):
+        """A tag older than the running version (e.g. a pre-release branch
+        or a stale cached release) must never be reported as an update."""
+        mock_urlopen.side_effect = self._selective_urlopen(tag_name='v0.0.1')
+        status, body = self._get('/api/version-check')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertFalse(result['updateAvailable'])
+
+    @unittest.mock.patch('socrates.urllib.request.urlopen')
+    def test_version_check_handles_network_failure_gracefully(self, mock_urlopen):
+        """A network error (unreachable, DNS failure, etc.) must degrade to
+        'no update available' with a 200, not a 500 or a crash - this
+        endpoint is best-effort by design."""
+        mock_urlopen.side_effect = self._selective_urlopen(error=OSError('network unreachable'))
+        status, body = self._get('/api/version-check')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertFalse(result['updateAvailable'])
+        self.assertIsNone(result['latestVersion'])
+
+    @unittest.mock.patch('socrates.urllib.request.urlopen')
+    def test_version_check_handles_malformed_response_gracefully(self, mock_urlopen):
+        mock_urlopen.side_effect = self._selective_urlopen(tag_name='not-a-semver-tag')
+        status, body = self._get('/api/version-check')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertFalse(result['updateAvailable'])
+
+    def test_is_newer_version_detects_newer(self):
+        self.assertTrue(server._is_newer_version('3.2.0', '3.1.0'))
+        self.assertTrue(server._is_newer_version('4.0.0', '3.9.9'))
+        self.assertTrue(server._is_newer_version('3.1.1', '3.1.0'))
+
+    def test_is_newer_version_rejects_same_or_older(self):
+        self.assertFalse(server._is_newer_version('3.1.0', '3.1.0'))
+        self.assertFalse(server._is_newer_version('3.0.9', '3.1.0'))
+        self.assertFalse(server._is_newer_version('2.9.9', '3.1.0'))
+
+    def test_is_newer_version_fails_closed_on_malformed_input(self):
+        self.assertFalse(server._is_newer_version('not-a-version', '3.1.0'))
+        self.assertFalse(server._is_newer_version('', '3.1.0'))
+        self.assertFalse(server._is_newer_version(None, '3.1.0'))
 
     def test_events_limit_clamped_to_max_query_limit(self):
         md5 = 'b' * 32
@@ -3587,6 +3763,135 @@ class TestYaraScannerModule(unittest.TestCase):
         self.assertEqual(matches[0]['rule_name'], 'Delphi_Random')
         self.assertEqual(matches[0]['tags'], [])
         self.assertEqual(matches[0]['meta'], {'author': '_pusher_', 'date': '2015-08'})
+
+
+class TestSetupYaraRulesFreshness(unittest.TestCase):
+    def _make_stale_rules(self, tmpdir):
+        import yara_analyzer
+        rules_dir = os.path.join(tmpdir, yara_analyzer.YARA_RULES_SUBDIR)
+        os.makedirs(rules_dir, exist_ok=True)
+        path = os.path.join(rules_dir, yara_analyzer.YARA_FORGE_FILENAME)
+        with open(path, 'w') as f:
+            f.write('rule Old { condition: true }')
+        old_time = time.time() - (25 * 3600)
+        os.utime(path, (old_time, old_time))
+        return path
+
+    @unittest.mock.patch('yara_analyzer._download_yara_forge_rules')
+    @unittest.mock.patch('yara_analyzer.is_host_reachable', return_value=True)
+    def test_stale_cached_rules_are_refreshed_when_online(self, mock_reachable, mock_download):
+        import yara_analyzer
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_stale_rules(tmpdir)
+            result = yara_analyzer.setup_yara_rules(tmpdir)
+        mock_download.assert_called_once()
+        self.assertTrue(result.endswith(yara_analyzer.YARA_FORGE_FILENAME))
+
+    @unittest.mock.patch('yara_analyzer._download_yara_forge_rules')
+    @unittest.mock.patch('yara_analyzer.is_host_reachable', return_value=False)
+    def test_stale_cached_rules_kept_when_offline(self, mock_reachable, mock_download):
+        import yara_analyzer
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._make_stale_rules(tmpdir)
+            result = yara_analyzer.setup_yara_rules(tmpdir)
+        mock_download.assert_not_called()
+        self.assertEqual(result, path)
+
+    @unittest.mock.patch('yara_analyzer._download_yara_forge_rules')
+    @unittest.mock.patch('yara_analyzer.is_host_reachable', return_value=True)
+    def test_fresh_cached_rules_are_not_refreshed(self, mock_reachable, mock_download):
+        import yara_analyzer
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, yara_analyzer.YARA_RULES_SUBDIR)
+            os.makedirs(rules_dir, exist_ok=True)
+            with open(os.path.join(rules_dir, yara_analyzer.YARA_FORGE_FILENAME), 'w') as f:
+                f.write('rule Fresh { condition: true }')
+            yara_analyzer.setup_yara_rules(tmpdir)
+        mock_download.assert_not_called()
+
+    @unittest.mock.patch('yara_analyzer._download_yara_forge_rules', side_effect=OSError('network error'))
+    @unittest.mock.patch('yara_analyzer.is_host_reachable', return_value=True)
+    def test_refresh_failure_falls_back_to_stale_cached_rules(self, mock_reachable, mock_download):
+        """REGRESSION: a failed refresh attempt must not remove or break the
+        still-usable stale copy - setup must keep returning it."""
+        import yara_analyzer
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._make_stale_rules(tmpdir)
+            result = yara_analyzer.setup_yara_rules(tmpdir)
+            self.assertEqual(result, path)
+            with open(result) as f:
+                self.assertEqual(f.read(), 'rule Old { condition: true }')
+
+    @unittest.mock.patch('validators.is_host_reachable', return_value=True)
+    @unittest.mock.patch('yara_analyzer.is_host_reachable')
+    def test_shared_reachable_check_is_used_instead_of_direct_call(self, mock_reachable, mock_shared_reachable):
+        """When a caller passes a shared reachable_check (as socrates.py's
+        startup does), setup_yara_rules must use it rather than calling
+        is_host_reachable itself - otherwise sharing the checker across
+        YARA + both Sigma rulesets wouldn't actually save any probes."""
+        import yara_analyzer
+        import validators
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_stale_rules(tmpdir)
+            shared_check = validators.make_reachability_checker('github.com', 443, timeout=5)
+            with unittest.mock.patch('yara_analyzer._download_yara_forge_rules'):
+                yara_analyzer.setup_yara_rules(tmpdir, reachable_check=shared_check)
+        mock_reachable.assert_not_called()
+        mock_shared_reachable.assert_called_once()
+
+
+class TestSharedReachabilityCheckAcrossRuleSetup(unittest.TestCase):
+    """Verifies the actual point of reachable_check: when the caller passes
+    one shared checker to both setup_yara_rules and setup_sigma_rules (as
+    socrates.py's startup does), all three potentially-stale rule sources
+    (YARA + Sigma windows + Sigma linux) collapse into a single network
+    probe instead of each blocking through its own timeout."""
+
+    @unittest.mock.patch('sigma_analyzer._download_rule_file')
+    @unittest.mock.patch('yara_analyzer._download_yara_forge_rules')
+    @unittest.mock.patch('validators.is_host_reachable', return_value=True)
+    def test_one_shared_checker_yields_one_reachability_probe(
+        self, mock_reachable, mock_yara_download, mock_sigma_download
+    ):
+        import time
+        import yara_analyzer
+        import sigma_analyzer
+        import validators
+
+        with tempfile.TemporaryDirectory() as yara_tmp, tempfile.TemporaryDirectory() as sigma_tmp:
+            yara_dir = os.path.join(yara_tmp, yara_analyzer.YARA_RULES_SUBDIR)
+            os.makedirs(yara_dir, exist_ok=True)
+            yara_path = os.path.join(yara_dir, yara_analyzer.YARA_FORGE_FILENAME)
+            with open(yara_path, 'w') as f:
+                f.write('rule Old { condition: true }')
+
+            sigma_dir = os.path.join(sigma_tmp, 'sigma-rules')
+            os.makedirs(sigma_dir, exist_ok=True)
+            for name in ('windows', 'linux'):
+                p = os.path.join(sigma_dir, f'{name}.json')
+                with open(p, 'w') as f:
+                    f.write('{}')
+
+            old_time = time.time() - (25 * 3600)
+            for p in (yara_path,
+                      os.path.join(sigma_dir, 'windows.json'),
+                      os.path.join(sigma_dir, 'linux.json')):
+                os.utime(p, (old_time, old_time))
+
+            # Mirrors socrates.py's startup: one shared checker passed to
+            # both setup calls, for all three (YARA + windows + linux)
+            # stale-rule checks.
+            shared_check = validators.make_reachability_checker('github.com', 443, timeout=5)
+            yara_analyzer.setup_yara_rules(yara_tmp, reachable_check=shared_check)
+            sigma_analyzer.setup_sigma_rules(sigma_tmp, reachable_check=shared_check)
+
+        # Three stale rule sources, but only one real network probe -
+        # this is the actual point of reachable_check.
+        mock_reachable.assert_called_once_with('github.com', 443, 5)
+        # And the shared "reachable" answer actually propagated through to
+        # all three refresh attempts, not just skipped them.
+        mock_yara_download.assert_called_once()
+        self.assertEqual(mock_sigma_download.call_count, 2)
 
 
 class TestZipBombPrevention(unittest.TestCase):

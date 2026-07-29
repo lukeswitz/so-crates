@@ -4,6 +4,8 @@ import unittest.mock
 import socket
 import sys
 import os
+import tempfile
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
@@ -427,6 +429,71 @@ class TestResolveSafeIps(unittest.TestCase):
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('::127.0.0.1')):
             with self.assertRaises(ValueError):
                 validators.resolve_safe_ips('v6compat.example.com')
+
+
+class TestMakeReachabilityChecker(unittest.TestCase):
+    @unittest.mock.patch('validators.is_host_reachable')
+    def test_caches_result_across_calls(self, mock_reachable):
+        mock_reachable.return_value = True
+        check = validators.make_reachability_checker('github.com', 443, timeout=5)
+        self.assertTrue(check())
+        self.assertTrue(check())
+        self.assertTrue(check())
+        mock_reachable.assert_called_once_with('github.com', 443, 5)
+
+    @unittest.mock.patch('validators.is_host_reachable')
+    def test_caches_false_result_too(self, mock_reachable):
+        """A cached 'unreachable' answer must not re-trigger the network
+        probe either - only the first call's outcome, whatever it is,
+        should stick for this checker's lifetime."""
+        mock_reachable.return_value = False
+        check = validators.make_reachability_checker('github.com', 443, timeout=5)
+        self.assertFalse(check())
+        self.assertFalse(check())
+        mock_reachable.assert_called_once()
+
+    @unittest.mock.patch('validators.is_host_reachable')
+    def test_independent_checkers_probe_independently(self, mock_reachable):
+        """Two separate checker instances (e.g. from two separate
+        orchestration runs) must not share a cache with each other."""
+        mock_reachable.return_value = True
+        check_a = validators.make_reachability_checker('github.com', 443, timeout=5)
+        check_b = validators.make_reachability_checker('github.com', 443, timeout=5)
+        check_a()
+        check_b()
+        self.assertEqual(mock_reachable.call_count, 2)
+
+
+class TestIsFileStale(unittest.TestCase):
+    def test_fresh_file_is_not_stale(self):
+        with tempfile.NamedTemporaryFile() as f:
+            self.assertFalse(validators.is_file_stale(f.name, max_age_hours=24))
+
+    def test_old_file_is_stale(self):
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            path = f.name
+        try:
+            old_time = time.time() - (25 * 3600)
+            os.utime(path, (old_time, old_time))
+            self.assertTrue(validators.is_file_stale(path, max_age_hours=24))
+        finally:
+            os.unlink(path)
+
+    def test_missing_file_is_not_stale(self):
+        """Callers already handle 'doesn't exist' as its own case (e.g. fall
+        through to the baked-in-rules/download path) - is_file_stale must
+        not also treat a missing file as stale and trigger double-handling."""
+        self.assertFalse(validators.is_file_stale('/nonexistent/path/rules.yar', max_age_hours=24))
+
+    def test_boundary_just_under_threshold_is_not_stale(self):
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            path = f.name
+        try:
+            recent_time = time.time() - (23 * 3600)
+            os.utime(path, (recent_time, recent_time))
+            self.assertFalse(validators.is_file_stale(path, max_age_hours=24))
+        finally:
+            os.unlink(path)
 
 
 if __name__ == '__main__':

@@ -34,6 +34,9 @@ FAVICON_SGUIL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.
 FAVICON_CGA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-cga.svg')
 FAVICON_C64_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-c64.svg')
 FAVICON_VAPORWAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-vaporwave.svg')
+FAVICON_WINXP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-winxp.svg')
+FAVICON_AMBER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-amber.svg')
+FAVICON_MSDOS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-msdos.svg')
 
 with open(HTML_PATH, 'r') as f:
     HTML_CONTENT = f.read()
@@ -101,6 +104,18 @@ class TestHTMLStructure(unittest.TestCase):
     def test_favicon_vaporwave_file_exists(self):
         """static/favicon-vaporwave.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_VAPORWAVE_PATH), 'static/favicon-vaporwave.svg must exist')
+
+    def test_favicon_winxp_file_exists(self):
+        """static/favicon-winxp.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_WINXP_PATH), 'static/favicon-winxp.svg must exist')
+
+    def test_favicon_amber_file_exists(self):
+        """static/favicon-amber.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_AMBER_PATH), 'static/favicon-amber.svg must exist')
+
+    def test_favicon_msdos_file_exists(self):
+        """static/favicon-msdos.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_MSDOS_PATH), 'static/favicon-msdos.svg must exist')
 
     def test_favicon_matte_black_file_exists(self):
         """static/favicon-matte-black.svg must exist on disk."""
@@ -196,7 +211,7 @@ class TestHTMLStructure(unittest.TestCase):
         """updateFavicon() must point faviconLink at the per-theme SVG that
         exists in static/ (plain favicon.svg for the default dark theme)."""
         from tests.jsdom_helper import js_statements
-        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'winxp', 'amber', 'msdos']
         result = js_statements(f'''
             var link = document.getElementById('faviconLink');
             var out = {{}};
@@ -1127,24 +1142,233 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('id="appHeaderMenuDropdown"', HTML_CONTENT,
                       'Menu dropdown container must exist in HTML')
 
-    def test_theme_options_in_menu(self):
-        for theme in ('dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white'):
-            self.assertIn(f"commitTheme('{theme}')", HTML_CONTENT,
-                          f'{theme} theme option must commit on click')
-            self.assertIn(f"previewTheme('{theme}')", HTML_CONTENT,
-                          f'{theme} theme option must preview on hover')
-            self.assertIn(f'data-theme-option="{theme}"', HTML_CONTENT,
-                          f'{theme} theme option must carry data-theme-option in HTML')
-        self.assertIn('revertTheme()', HTML_CONTENT,
-                      'Theme options must revert on mouseleave')
+    def test_themes_menu_item_opens_modal(self):
+        """Gear menu holds a single 'Themes' entry that opens a dedicated
+        modal, instead of embedding the full (now 26-theme) list inline -
+        the inline dropdown list needed a scrollbar to fit on shorter
+        viewports, which a modal with a wrapping grid avoids."""
+        self.assertIn('onclick="showThemesModal(); closeMenu();"', HTML_CONTENT,
+                      'Themes menu item must open the themes modal, in the static HTML')
+        self.assertIn('>Themes</span>', HTML_CONTENT,
+                      'Themes menu item must be labeled in the static HTML')
+        self.assertIn('onclick="showThemesModal(); closeMenu();"', JS_CONTENT,
+                      'renderGearMenu must also include a Themes menu item')
 
-    def test_theme_options_in_rendered_gear_menu(self):
-        """renderGearMenu() must generate a button with preview/commit handlers
-        for every theme in the THEMES registry."""
+    def test_themes_modal_skeleton_in_html(self):
+        self.assertIn('id="themesModal"', HTML_CONTENT,
+                      'Themes modal container must exist in HTML')
+        self.assertIn('id="themesModalBody"', HTML_CONTENT,
+                      'Themes modal body container (populated by renderThemesModalGrid) must exist in HTML')
+        self.assertIn('onclick="handleThemesBackdropClick(event)"', HTML_CONTENT,
+                      'Themes modal must close on backdrop click')
+        self.assertIn('onclick="closeThemesModal()"', HTML_CONTENT,
+                      'Themes modal must have a close button')
+
+    def test_themes_modal_has_usage_instructions(self):
+        """The interaction model here (hover previews in a small pane,
+        click applies but does NOT close the modal, 't' cycles) is enough
+        of a departure from a typical picker that it needs a hint."""
+        themes_modal_block = HTML_CONTENT.split('id="themesModal"')[1].split('id="themesModalBody"')[0]
+        self.assertIn('preview', themes_modal_block.lower(),
+                      'Themes modal must explain that hovering previews a theme')
+        self.assertIn('click', themes_modal_block.lower(),
+                      'Themes modal must explain that clicking applies a theme')
+        self.assertIn('<strong>t</strong>', themes_modal_block,
+                      "Themes modal must mention the 't' cycle hotkey")
+
+    def test_sync_theme_with_os_moved_to_themes_modal(self):
+        """REGRESSION: this toggle used to live in the Settings modal, where
+        it needed a separate 'Save' click to take effect (easy to forget).
+        It now lives in the Themes modal, next to the feature it actually
+        controls, and applies immediately on change."""
+        themes_modal_block = HTML_CONTENT.split('id="themesModal"')[1].split('</div>\n\n        <header')[0]
+        self.assertIn('id="syncThemeWithOS"', themes_modal_block,
+                      'syncThemeWithOS checkbox must live inside the themes modal')
+        self.assertIn('onchange="handleSyncThemeWithOSChange(this)"', themes_modal_block,
+                      'syncThemeWithOS must apply immediately on change, not require a Save click')
+        settings_modal_block = HTML_CONTENT.split('id="settingsModal"')[1].split('id="themesModal"')[0]
+        self.assertNotIn('syncThemeWithOS', settings_modal_block,
+                         'syncThemeWithOS must no longer live in the Settings modal')
+
+    def test_show_themes_modal_initializes_sync_checkbox(self):
         from tests.jsdom_helper import js_statements
-        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white']
+        result = js_statements('''
+            localStorage.setItem('socrates_syncThemeWithOS', 'true');
+            showThemesModal();
+            window.__jsdom_result = document.getElementById('syncThemeWithOS').checked;
+        ''')
+        self.assertTrue(result, 'opening the themes modal must reflect the persisted sync-with-OS preference')
+
+    def test_sync_theme_with_os_applies_immediately_on_change(self):
+        """No 'Save' step exists in the themes modal (unlike Settings), so
+        toggling this checkbox must persist right away or it's a silent
+        no-op trap."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.removeItem('socrates_syncThemeWithOS');
+            showThemesModal();
+            var checkbox = document.getElementById('syncThemeWithOS');
+            checkbox.checked = true;
+            handleSyncThemeWithOSChange(checkbox);
+            window.__jsdom_result = localStorage.getItem('socrates_syncThemeWithOS');
+        ''')
+        self.assertEqual(result, 'true', 'checking the box must persist to localStorage immediately, without a Save click')
+
+    def test_settings_modal_no_longer_touches_sync_theme_with_os(self):
+        self.assertNotIn('syncThemeWithOS', JS_CONTENT.split('async function saveSettings()')[1].split('\n\n        function')[0],
+                         'saveSettings() must no longer read/persist syncThemeWithOS - it applies immediately in the themes modal now')
+
+    def test_sync_theme_with_os_container_hidden_by_default(self):
+        self.assertIn('id="syncThemeWithOSContainer" style="display: none;"', HTML_CONTENT,
+                      'the sync-with-OhMyDebn control must start hidden, before JS confirms it would actually work')
+
+    def test_sync_theme_with_os_shown_when_available(self):
+        """Opening the modal must reveal the toggle if /api/theme-sync-available
+        confirms OHMYDEBN_THEME_FILE is set and readable server-side - not
+        show a control that could never do anything."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url.indexOf('/api/theme-sync-available') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ available: true }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            showThemesModal();
+            await new Promise(function(resolve) { setTimeout(resolve, 0); });
+            window.__jsdom_result = document.getElementById('syncThemeWithOSContainer').style.display;
+        ''')
+        self.assertEqual(result, 'block', 'the sync-with-OhMyDebn control must be shown when the server confirms it is available')
+
+    def test_sync_theme_with_os_hidden_when_unavailable(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url.indexOf('/api/theme-sync-available') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ available: false }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            showThemesModal();
+            await new Promise(function(resolve) { setTimeout(resolve, 0); });
+            window.__jsdom_result = document.getElementById('syncThemeWithOSContainer').style.display;
+        ''')
+        self.assertEqual(result, 'none', 'the sync-with-OhMyDebn control must stay hidden when the server reports it is unavailable')
+
+    def test_sync_theme_with_os_hidden_on_fetch_failure(self):
+        """Fails closed - if the availability check itself fails (network
+        error, server not reachable), don't show a maybe-broken toggle."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url.indexOf('/api/theme-sync-available') >= 0) {
+                    return Promise.reject(new Error('network error'));
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            showThemesModal();
+            await new Promise(function(resolve) { setTimeout(resolve, 0); });
+            window.__jsdom_result = document.getElementById('syncThemeWithOSContainer').style.display;
+        ''')
+        self.assertEqual(result, 'none', 'a failed availability check must leave the control hidden, not visible')
+
+    def test_theme_preview_frame_skeleton_in_html(self):
+        self.assertIn('id="themePreviewFrame"', HTML_CONTENT,
+                      'Theme preview iframe must exist in HTML')
+        self.assertIn('<iframe class="theme-preview-frame" id="themePreviewFrame"', HTML_CONTENT,
+                      'Theme preview must be an iframe (isolated document), not a plain div')
+        self.assertIn('tabindex="-1"', HTML_CONTENT.split('id="themePreviewFrame"')[1].split('>')[0],
+                      'Preview iframe must not be keyboard-focusable (purely decorative)')
+
+    def test_theme_preview_srcdoc_uses_real_app_classes(self):
+        """The preview must render real app markup/classes reusing the real
+        stylesheet, not an abstract from-scratch mockup - so it can never
+        look or feel out of sync with the actual app's design."""
+        self.assertIn('THEME_PREVIEW_SRCDOC', JS_CONTENT,
+                      'THEME_PREVIEW_SRCDOC constant must exist')
+        srcdoc = JS_CONTENT.split('const THEME_PREVIEW_SRCDOC = `')[1].split('`;')[0]
+        self.assertIn('href="static/socrates.css"', srcdoc,
+                      'Preview document must link the real stylesheet, not duplicate styles')
+        self.assertIn('class="app-header"', srcdoc,
+                      'Preview must reuse the real .app-header class')
+        self.assertIn('class="stats-grid', srcdoc,
+                      'Preview must reuse the real .stats-grid class')
+        self.assertIn('class="stat-card"', srcdoc,
+                      'Preview must reuse the real .stat-card class')
+        self.assertIn('class="stat-number"', srcdoc,
+                      'Preview must reuse the real .stat-number class')
+
+    def test_theme_preview_frame_css_exists(self):
+        self.assertIn('.theme-preview-frame {', CSS_CONTENT,
+                      'CSS must define the preview iframe container styling')
+        frame_block = CSS_CONTENT.split('.theme-preview-frame {')[1].split('}')[0]
+        self.assertIn('position: sticky', frame_block,
+                      'Preview iframe must stay visible (position: sticky) while the grid below it scrolls')
+
+    def test_dark_theme_explicitly_selectable_for_preview(self):
+        """A nested element (inside the preview iframe's own document) can't
+        select 'dark' by omitting data-theme - it would fall back to
+        whatever :root/inherited defaults exist there instead of showing the
+        actual dark palette. A [data-theme="dark"] rule mirroring :root
+        makes 'dark' explicitly selectable like every other theme, so
+        previewTheme('dark') works regardless of what's really active on
+        the real page."""
+        self.assertIn('[data-theme="dark"] {', CSS_CONTENT,
+                      'CSS must define an explicit [data-theme="dark"] rule mirroring :root')
+        root_block = CSS_CONTENT.split(':root {')[1].split('}')[0]
+        dark_block = CSS_CONTENT.split('[data-theme="dark"] {')[1].split('}')[0]
+        self.assertEqual(root_block, dark_block,
+                         '[data-theme="dark"] must declare exactly the same variables as :root')
+
+    def test_show_themes_modal_initializes_preview_to_current_theme(self):
+        """Opening the modal must show the preview as the currently-active
+        theme by default (once the iframe has loaded), before any tile is
+        hovered. jsdom doesn't fire a real 'load' event for a srcdoc iframe
+        with an external stylesheet in this offline test environment, so
+        the load is simulated here to exercise the callback the same way a
+        real browser's load event would."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('nord');
+            showThemesModal();
+            var frame = document.getElementById('themePreviewFrame');
+            frame.dispatchEvent(new Event('load'));
+            window.__jsdom_result = frame.contentDocument.documentElement.getAttribute('data-theme');
+        ''')
+        self.assertEqual(result, 'nord',
+                         'the preview iframe must default to the currently-active theme once loaded')
+
+    def test_show_themes_modal_does_not_reload_frame_on_subsequent_opens(self):
+        """The iframe's srcdoc should only be (re)loaded once - reopening
+        the modal must reuse the already-loaded document and just update
+        its data-theme, not reassign srcdoc (and re-navigate) every time."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('nord');
+            showThemesModal();
+            var frame = document.getElementById('themePreviewFrame');
+            frame.dispatchEvent(new Event('load'));
+            var srcdocAfterFirstOpen = frame.srcdoc;
+            closeThemesModal();
+            setTheme('gruvbox');
+            showThemesModal();
+            window.__jsdom_result = {
+                srcdocUnchanged: frame.srcdoc === srcdocAfterFirstOpen,
+                dataTheme: frame.contentDocument.documentElement.getAttribute('data-theme')
+            };
+        ''')
+        self.assertTrue(result['srcdocUnchanged'],
+                        'srcdoc must not be reassigned on the second modal open')
+        self.assertEqual(result['dataTheme'], 'gruvbox',
+                         'the preview must still update to the new current theme without reloading')
+
+    def test_theme_options_in_rendered_themes_modal(self):
+        """renderThemesModalGrid() must generate a tile with preview/commit
+        handlers for every theme in the THEMES registry."""
+        from tests.jsdom_helper import js_statements
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'winxp', 'amber', 'msdos']
         result = js_statements(f'''
-            var html = renderGearMenu();
+            var html = renderThemesModalGrid();
             var missing = [];
             var themes = {json.dumps(themes)};
             themes.forEach(function(t) {{
@@ -1155,19 +1379,31 @@ class TestThemeAndMenu(unittest.TestCase):
             window.__jsdom_result = missing;
         ''')
         self.assertEqual(result, [],
-                         f'renderGearMenu output is missing theme entries: {result}')
+                         f'renderThemesModalGrid output is missing theme entries: {result}')
+
+    def test_theme_tile_grid_css_exists(self):
+        self.assertIn('.theme-tile-grid {', CSS_CONTENT,
+                      'CSS must define the wrapping grid layout for theme tiles')
+        grid_block = CSS_CONTENT.split('.theme-tile-grid {')[1].split('}')[0]
+        self.assertIn('display: grid', grid_block,
+                      'Theme tile grid must use CSS grid so tiles wrap instead of stacking in one column')
+        self.assertIn('.theme-tile {', CSS_CONTENT,
+                      'CSS must define individual theme tile styling')
 
     def test_theme_header_separate_class(self):
-        """Theme section headings must be distinct non-interactive headers."""
-        self.assertIn('class="app-header-menu-header"', HTML_CONTENT,
+        """Theme section headings must be distinct non-interactive headers,
+        rendered inside the themes modal grid."""
+        from tests.jsdom_helper import js_statements
+        grid_html = js_statements('window.__jsdom_result = renderThemesModalGrid();')
+        self.assertIn('class="app-header-menu-header"', grid_html,
                       'Theme heading must use app-header-menu-header class')
-        self.assertIn('>Dark Themes</div>', HTML_CONTENT,
-                      'Dark Themes heading must exist in menu')
-        self.assertIn('>Fun Themes</div>', HTML_CONTENT,
-                      'Fun Themes heading must exist in menu')
-        self.assertIn('>Light Themes</div>', HTML_CONTENT,
-                      'Light Themes heading must exist in menu')
-        self.assertNotIn('>Theme</div>', HTML_CONTENT,
+        self.assertIn('>Dark Themes</div>', grid_html,
+                      'Dark Themes heading must exist in the themes modal')
+        self.assertIn('>Fun Themes</div>', grid_html,
+                      'Fun Themes heading must exist in the themes modal')
+        self.assertIn('>Light Themes</div>', grid_html,
+                      'Light Themes heading must exist in the themes modal')
+        self.assertNotIn('>Theme</div>', grid_html,
                          'Old single Theme heading must be removed')
         self.assertIn('.app-header-menu-header {', CSS_CONTENT,
                       'CSS must define app-header-menu-header styling')
@@ -1189,21 +1425,24 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('onclick="showHelpModal(); closeMenu();"', HTML_CONTENT,
                       'Help button must be inside the menu dropdown')
 
-    def test_help_appears_before_theme_header(self):
-        """REGRESSION: Help must be at the top of the gear menu, followed by
-        the Dark Themes section."""
+    def test_help_appears_before_themes_item(self):
+        """REGRESSION: Help must be at the top of the gear menu, followed
+        (after Settings) by the Themes entry."""
         help_index = HTML_CONTENT.find('onclick="showHelpModal(); closeMenu();"')
-        dark_index = HTML_CONTENT.find('>Dark Themes</div>')
+        themes_index = HTML_CONTENT.find('onclick="showThemesModal(); closeMenu();"')
         self.assertGreater(help_index, -1, 'Help button must exist in menu')
-        self.assertGreater(dark_index, -1, 'Dark Themes header must exist in menu')
-        self.assertLess(help_index, dark_index,
-                        'Help button must appear before the Dark Themes header')
+        self.assertGreater(themes_index, -1, 'Themes menu item must exist in menu')
+        self.assertLess(help_index, themes_index,
+                        'Help button must appear before the Themes menu item')
 
     def test_dark_themes_before_light_themes(self):
-        """REGRESSION: Dark themes must be grouped before Light themes."""
-        dark_index = HTML_CONTENT.find('>Dark Themes</div>')
-        light_index = HTML_CONTENT.find('>Light Themes</div>')
-        light_btn_index = HTML_CONTENT.find('commitTheme(\'light\')')
+        """REGRESSION: Dark themes must be grouped before Light themes, in
+        the rendered themes modal grid."""
+        from tests.jsdom_helper import js_statements
+        grid_html = js_statements('window.__jsdom_result = renderThemesModalGrid();')
+        dark_index = grid_html.find('>Dark Themes</div>')
+        light_index = grid_html.find('>Light Themes</div>')
+        light_btn_index = grid_html.find("commitTheme('light')")
         self.assertGreater(dark_index, -1, 'Dark Themes header must exist')
         self.assertGreater(light_index, -1, 'Light Themes header must exist')
         self.assertGreater(light_btn_index, -1, 'Light theme button must exist')
@@ -1213,14 +1452,16 @@ class TestThemeAndMenu(unittest.TestCase):
                         'Light Themes header must appear before Light theme button')
 
     def test_fun_themes_after_light(self):
-        """Fun Themes section (C64, CGA, Hacker, Sguil, Vaporwave) sits after
-        the Light Themes section, matching THEME_GROUP_ORDER = ['dark',
-        'light', 'fun'] in static/socrates.js."""
-        fun_index = HTML_CONTENT.find('>Fun Themes</div>')
-        dark_index = HTML_CONTENT.find('>Dark Themes</div>')
-        light_index = HTML_CONTENT.find('>Light Themes</div>')
-        hacker_btn_index = HTML_CONTENT.find('commitTheme(\'hacker\')')
-        sguil_btn_index = HTML_CONTENT.find('commitTheme(\'sguil\')')
+        """Fun Themes section (C64, CGA, Hacker, Sguil, Vaporwave, Windows XP)
+        sits after the Light Themes section, matching THEME_GROUP_ORDER =
+        ['dark', 'light', 'fun'] in static/socrates.js."""
+        from tests.jsdom_helper import js_statements
+        grid_html = js_statements('window.__jsdom_result = renderThemesModalGrid();')
+        fun_index = grid_html.find('>Fun Themes</div>')
+        dark_index = grid_html.find('>Dark Themes</div>')
+        light_index = grid_html.find('>Light Themes</div>')
+        hacker_btn_index = grid_html.find("commitTheme('hacker')")
+        sguil_btn_index = grid_html.find("commitTheme('sguil')")
         self.assertGreater(fun_index, -1, 'Fun Themes header must exist')
         self.assertLess(dark_index, fun_index,
                         'Fun Themes header must appear after Dark Themes header')
@@ -1240,47 +1481,33 @@ class TestThemeAndMenu(unittest.TestCase):
                       'THEME_GROUP_ORDER must place Fun Themes after Light Themes')
 
     def test_dark_themes_alphabetical(self):
-        """Dark Themes section must list themes in alphabetical order by label,
-        and renderGearMenu() must match the static HTML menu order."""
-        dark_section = HTML_CONTENT.split('>Dark Themes</div>')[1].split('>Light Themes</div>')[0]
-        labels = re.findall(r'<span>([^<]+)</span>', dark_section)
+        """Dark Themes section must list themes in alphabetical order by label."""
+        labels = self._rendered_themes_modal_section_labels('Dark Themes', 'Light Themes')
         self.assertEqual(labels, sorted(labels),
-                         'Dark Themes in HTML menu must be in alphabetical order')
-        js_labels = self._rendered_gear_menu_section_labels('Dark Themes', 'Light Themes')
-        self.assertEqual(js_labels, labels,
-                         'renderGearMenu Dark Themes order must match the HTML menu')
+                         'Dark Themes in the themes modal must be in alphabetical order')
 
     def test_light_themes_alphabetical(self):
-        """Light Themes section must list themes in alphabetical order by label,
-        and renderGearMenu() must match the static HTML menu order."""
-        light_section = HTML_CONTENT.split('>Light Themes</div>')[1].split('>Fun Themes</div>')[0]
-        labels = re.findall(r'<span>([^<]+)</span>', light_section)
+        """Light Themes section must list themes in alphabetical order by label."""
+        labels = self._rendered_themes_modal_section_labels('Light Themes', 'Fun Themes')
         self.assertEqual(labels, sorted(labels),
-                         'Light Themes in HTML menu must be in alphabetical order')
-        js_labels = self._rendered_gear_menu_section_labels('Light Themes', 'Fun Themes')
-        self.assertEqual(js_labels, labels,
-                         'renderGearMenu Light Themes order must match the HTML menu')
+                         'Light Themes in the themes modal must be in alphabetical order')
 
     def test_fun_themes_alphabetical(self):
-        """Fun Themes section must list themes in alphabetical order by label,
-        and renderGearMenu() must match the static HTML menu order. Fun
-        Themes is the last section in the menu, so unlike Dark/Light there's
-        no following header to split on."""
-        fun_section = HTML_CONTENT.split('>Fun Themes</div>')[1].split('</div>')[0]
-        labels = re.findall(r'<span>([^<]+)</span>', fun_section)
+        """Fun Themes section must list themes in alphabetical order by
+        label. Fun Themes is the last section in the modal, so unlike
+        Dark/Light there's no following header to split on."""
+        labels = self._rendered_themes_modal_section_labels('Fun Themes', None)
         self.assertEqual(labels, sorted(labels),
-                         'Fun Themes in HTML menu must be in alphabetical order')
-        js_labels = self._rendered_gear_menu_section_labels('Fun Themes', None)
-        self.assertEqual(js_labels, labels,
-                         'renderGearMenu Fun Themes order must match the HTML menu')
+                         'Fun Themes in the themes modal must be in alphabetical order')
 
-    def _rendered_gear_menu_section_labels(self, start_header, end_header):
-        """Evaluate renderGearMenu() in JSDOM and extract the <span> labels of
-        the named theme section (up to the next section header, if any)."""
+    def _rendered_themes_modal_section_labels(self, start_header, end_header):
+        """Evaluate renderThemesModalGrid() in JSDOM and extract the <span>
+        labels of the named theme section (up to the next section header,
+        if any)."""
         from tests.jsdom_helper import js_statements
         end = f"'{end_header}'" if end_header else 'null'
         return js_statements(f'''
-            var html = renderGearMenu();
+            var html = renderThemesModalGrid();
             var section = html.split('>' + '{start_header}' + '</div>')[1];
             var endHeader = {end};
             if (endHeader) section = section.split('>' + endHeader + '</div>')[0];
@@ -1298,6 +1525,13 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertGreaterEqual(JS_CONTENT.count('renderGearMenu()'), 2,
                                 'showWelcomeUI and loadAnalysis must both call renderGearMenu()')
 
+    def test_renderThemesModalGrid_helper_exists(self):
+        """The themes modal's grid markup must live in a single shared
+        helper, separate from renderGearMenu() -- so a future theme only
+        needs to be added to THEMES, not hand-duplicated into HTML too."""
+        self.assertIn('function renderThemesModalGrid(', JS_CONTENT,
+                      'renderThemesModalGrid helper must exist for the themes modal grid markup')
+
     def test_preview_commit_revert_functions_exist(self):
         self.assertIn('function previewTheme(', JS_CONTENT,
                       'previewTheme function must exist for hover preview')
@@ -1306,35 +1540,162 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('function commitTheme(', JS_CONTENT,
                       'commitTheme function must exist for click persistence')
 
-    def test_theme_hover_previews_and_reverts(self):
+    def test_theme_hover_previews_frame_and_reverts(self):
+        """Hovering a theme tile must only ever change the preview iframe's
+        own (isolated) document, never document.documentElement - a
+        full-page recolor on every mouseenter across a packed ~26-tile
+        grid, with no debounce, is exactly the large-area rapid-flash
+        pattern WCAG 2.3.1 exists to prevent. This doesn't depend on the
+        iframe's srcdoc having actually finished loading - previewTheme()
+        sets contentDocument.documentElement's attribute directly, which is
+        accessible synchronously regardless of navigation state."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             setTheme('dark');
-            toggleMenu();
-            var buttons = document.querySelectorAll('.app-header-menu-item');
+            showThemesModal();
+            var realThemeBeforeHover = document.documentElement.getAttribute('data-theme');
+            var buttons = document.querySelectorAll('.theme-tile');
             var lightBtn = Array.from(buttons).find(function(b) {
                 return b.textContent.trim() === 'Daylight';
             });
+            var frame = document.getElementById('themePreviewFrame');
             lightBtn.onmouseenter();
-            var preview = document.documentElement.getAttribute('data-theme') || 'dark';
+            var previewFrameTheme = frame.contentDocument.documentElement.getAttribute('data-theme');
+            var realThemeDuringHover = document.documentElement.getAttribute('data-theme');
             lightBtn.onmouseleave();
-            var reverted = document.documentElement.getAttribute('data-theme') || 'dark';
-            window.__jsdom_result = { preview: preview, reverted: reverted };
+            var revertedFrameTheme = frame.contentDocument.documentElement.getAttribute('data-theme');
+            window.__jsdom_result = {
+                realThemeBeforeHover: realThemeBeforeHover,
+                previewFrameTheme: previewFrameTheme,
+                realThemeDuringHover: realThemeDuringHover,
+                revertedFrameTheme: revertedFrameTheme
+            };
         ''')
-        self.assertEqual(result['preview'], 'light',
-                         'hovering a theme should preview it')
-        self.assertEqual(result['reverted'], 'dark',
-                         'leaving a theme item should revert to the baseline')
+        self.assertEqual(result['previewFrameTheme'], 'light',
+                         'hovering a theme tile should preview it in the iframe')
+        self.assertEqual(result['revertedFrameTheme'], 'dark',
+                         'leaving a theme tile should revert the iframe preview to the baseline')
+        self.assertEqual(result['realThemeDuringHover'], result['realThemeBeforeHover'],
+                         'REGRESSION: hovering must never change the real document theme (epilepsy/flash risk)')
 
-    def test_update_theme_menu_marks_active_theme(self):
-        """The active theme checkmark must track setTheme and hover previews."""
+    def test_theme_cheat_code_hint_skeleton_in_html(self):
+        self.assertIn('id="themeCheatCodeHint"', HTML_CONTENT,
+                      'Preview hint container must exist in HTML')
+        hint_block = HTML_CONTENT.split('id="themeCheatCodeHint"')[1].split('</div>')[0]
+        self.assertIn('Previewing', hint_block,
+                      'Hint must always announce what is currently being previewed')
+        self.assertIn('id="themePreviewingLabel"', hint_block,
+                      'Hint must have a dedicated element for the previewed theme\'s label')
+        self.assertIn('id="themeCheatCodePart"', hint_block,
+                      'Hint must have a dedicated element for the optional cheat-code part')
+        self.assertIn('visibility: hidden', hint_block,
+                      'The cheat-code part must reserve its own space (visibility, not display) so the modal does not jump')
+        self.assertIn('<code', hint_block,
+                      'Cheat code part must have a <code> element for the code text')
+
+    def test_hovering_any_theme_shows_previewing_label(self):
+        """The 'Previewing X' text must always reflect whatever the preview
+        panel is currently showing, not just Fun themes."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
+            setTheme('dark');
+            showThemesModal();
+            var buttons = document.querySelectorAll('.theme-tile');
+            var nordBtn = Array.from(buttons).find(function(b) {
+                return b.textContent.trim() === 'Nord';
+            });
+            nordBtn.onmouseenter();
+            window.__jsdom_result = document.getElementById('themePreviewingLabel').textContent;
+        ''')
+        self.assertEqual(result, 'Nord', "hovering Nord must show 'Previewing Nord'")
+
+    def test_hovering_fun_theme_shows_its_cheat_code(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            showThemesModal();
+            var buttons = document.querySelectorAll('.theme-tile');
+            var cgaBtn = Array.from(buttons).find(function(b) {
+                return b.textContent.trim() === 'CGA';
+            });
+            cgaBtn.onmouseenter();
+            var codePart = document.getElementById('themeCheatCodePart');
+            window.__jsdom_result = {
+                label: document.getElementById('themePreviewingLabel').textContent,
+                visibility: codePart.style.visibility,
+                code: codePart.querySelector('code').textContent
+            };
+        ''')
+        self.assertEqual(result['label'], 'CGA', "hovering CGA must show 'Previewing CGA'")
+        self.assertEqual(result['visibility'], 'visible', 'hovering a Fun theme must reveal its cheat code')
+        self.assertEqual(result['code'], 'cga', "the hint must show CGA's actual cheat code")
+
+    def test_hovering_non_fun_theme_hides_cheat_code_part(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            showThemesModal();
+            var buttons = document.querySelectorAll('.theme-tile');
+            var nordBtn = Array.from(buttons).find(function(b) {
+                return b.textContent.trim() === 'Nord';
+            });
+            nordBtn.onmouseenter();
+            window.__jsdom_result = document.getElementById('themeCheatCodePart').style.visibility;
+        ''')
+        self.assertEqual(result, 'hidden', 'Dark/Light themes have no cheat code, so that part must stay hidden')
+
+    def test_leaving_fun_theme_hides_cheat_code_part(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            showThemesModal();
+            var buttons = document.querySelectorAll('.theme-tile');
+            var cgaBtn = Array.from(buttons).find(function(b) {
+                return b.textContent.trim() === 'CGA';
+            });
+            cgaBtn.onmouseenter();
+            cgaBtn.onmouseleave();
+            window.__jsdom_result = {
+                label: document.getElementById('themePreviewingLabel').textContent,
+                codeVisibility: document.getElementById('themeCheatCodePart').style.visibility
+            };
+        ''')
+        self.assertEqual(result['label'], 'Midnight', 'leaving the tile must revert the label to the dark baseline theme')
+        self.assertEqual(result['codeVisibility'], 'hidden', 'leaving a Fun theme tile must hide its cheat code part again')
+
+    def test_theme_cheat_codes_match_keydown_easter_eggs(self):
+        """REGRESSION: THEME_CHEAT_CODES is a separate mapping from the
+        keydown handler's literal string checks (kept separate so the
+        keydown handler's own well-tested source text doesn't change) - if
+        they ever drift apart, the hint would show a code that doesn't
+        actually work."""
+        pairs = {
+            'hacker': '31337',
+            'sguil': 'sguil',
+            'cga': 'cga',
+            'c64': 'c64',
+            'vaporwave': 'vapor',
+            'winxp': 'winxp',
+            'amber': 'amber',
+            'msdos': 'dos',
+        }
+        for theme, code in pairs.items():
+            self.assertIn(f"keyBuffer.endsWith('{code}')", JS_CONTENT,
+                          f'THEME_CHEAT_CODES says {theme} -> {code}, but no matching keydown check exists')
+
+    def test_update_theme_menu_marks_active_theme(self):
+        """The active theme checkmark must track setTheme (the real, committed
+        theme) but must NOT move during hover preview - the checkmark shows
+        what's actually applied, independent of whatever is currently being
+        previewed in the swatch."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showThemesModal();
             setTheme('nord');
-            var afterSet = document.querySelectorAll('.app-header-menu-item.theme-active');
+            var afterSet = document.querySelectorAll('.theme-tile.theme-active');
             var nordActive = document.querySelector('[data-theme-option="nord"]').classList.contains('theme-active');
             previewTheme('lumon');
-            var afterPreview = document.querySelectorAll('.app-header-menu-item.theme-active');
+            var afterPreview = document.querySelectorAll('.theme-tile.theme-active');
             var lumonActive = document.querySelector('[data-theme-option="lumon"]').classList.contains('theme-active');
             var nordStillActive = document.querySelector('[data-theme-option="nord"]').classList.contains('theme-active');
             window.__jsdom_result = {
@@ -1345,18 +1706,18 @@ class TestThemeAndMenu(unittest.TestCase):
                 nordStillActive: nordStillActive
             };
         ''')
-        self.assertEqual(result['setCount'], 1, 'exactly one menu item must be marked active')
-        self.assertTrue(result['nordActive'], 'setTheme(nord) must mark the Nord item active')
-        self.assertEqual(result['previewCount'], 1, 'exactly one menu item must be marked active after preview')
-        self.assertTrue(result['lumonActive'], 'previewTheme(lumon) must move the active mark to Lumon')
-        self.assertFalse(result['nordStillActive'], 'previewTheme must clear the previous active mark')
+        self.assertEqual(result['setCount'], 1, 'exactly one theme tile must be marked active')
+        self.assertTrue(result['nordActive'], 'setTheme(nord) must mark the Nord tile active')
+        self.assertEqual(result['previewCount'], 1, 'exactly one theme tile must still be marked active after preview')
+        self.assertFalse(result['lumonActive'], 'previewTheme(lumon) must NOT move the checkmark - only the swatch reflects a preview')
+        self.assertTrue(result['nordStillActive'], 'the checkmark must stay on the real committed theme (Nord) during preview')
 
     def test_active_theme_checkmark_css_exists(self):
-        self.assertIn('.app-header-menu-item[data-theme-option]::before', CSS_CONTENT,
-                      'CSS must reserve checkmark space on theme menu items only')
-        self.assertIn('.app-header-menu-item[data-theme-option].theme-active::before', CSS_CONTENT,
+        self.assertIn('.theme-tile[data-theme-option]::before', CSS_CONTENT,
+                      'CSS must reserve checkmark space on theme tiles only')
+        self.assertIn('.theme-tile[data-theme-option].theme-active::before', CSS_CONTENT,
                       'CSS must define the active-theme checkmark')
-        block = CSS_CONTENT.split('.app-header-menu-item[data-theme-option].theme-active::before')[1].split('}')[0]
+        block = CSS_CONTENT.split('.theme-tile[data-theme-option].theme-active::before')[1].split('}')[0]
         self.assertIn("content: '✓'", block,
                       'Active-theme checkmark content must be ✓')
         self.assertIn('var(--accent)', block,
@@ -1376,43 +1737,131 @@ class TestThemeAndMenu(unittest.TestCase):
         checkmark ::before was added without widening the dropdown)."""
         item_block = CSS_CONTENT.split('.app-header-menu-item {')[1].split('}')[0]
         self.assertIn('white-space: nowrap', item_block,
-                      'Menu items must use white-space: nowrap so long theme names stay on one line')
-        dropdown_block = CSS_CONTENT.split('.app-header-menu-dropdown {')[1].split('}')[0]
-        self.assertIn('min-width: 180px', dropdown_block,
-                      'Dropdown min-width must be at least 180px to fit the checkmark plus the longest theme name')
+                      'Menu items must use white-space: nowrap so long labels stay on one line')
 
     def test_update_theme_menu_implementation(self):
-        self.assertIn("querySelectorAll('.app-header-menu-item[data-theme-option]')", JS_CONTENT,
+        self.assertIn("querySelectorAll('[data-theme-option]')", JS_CONTENT,
                       'updateThemeMenu must query theme items by data-theme-option')
         self.assertIn("classList.toggle('theme-active'", JS_CONTENT,
                       'updateThemeMenu must toggle the theme-active class')
         self.assertIn('aria-current', JS_CONTENT,
                       'updateThemeMenu must set aria-current for accessibility')
 
-    def test_theme_click_commits_and_closes_menu(self):
+    def test_theme_click_commits_but_leaves_modal_open(self):
+        """Clicking a theme tile applies it for real (unlike hover, which
+        only touches the preview iframe) but must NOT close the modal -
+        lets someone click through several themes in a row and actually see
+        the real app repaint each time, without reopening the picker. This
+        is safe from the flash-risk angle each click is one deliberate,
+        user-initiated commit, not a rapid/incidental hover trigger."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             setTheme('dark');
-            toggleMenu();
-            var buttons = document.querySelectorAll('.app-header-menu-item');
+            showThemesModal();
+            var buttons = document.querySelectorAll('.theme-tile');
             var lightBtn = Array.from(buttons).find(function(b) {
                 return b.textContent.trim() === 'Daylight';
             });
             lightBtn.onclick();
             var committed = document.documentElement.getAttribute('data-theme') || 'dark';
             var stored = localStorage.getItem('socrates-theme');
-            var dropdown = document.getElementById('appHeaderMenuDropdown');
+            var modal = document.getElementById('themesModal');
             window.__jsdom_result = {
                 committed: committed,
                 stored: stored,
-                menuOpen: dropdown.classList.contains('active')
+                modalOpen: modal.classList.contains('active')
             };
         ''')
         self.assertEqual(result['committed'], 'light',
-                         'clicking a theme should commit it visually')
+                         'clicking a theme tile should commit it visually')
         self.assertEqual(result['stored'], 'light',
-                         'clicking a theme should persist it to localStorage')
-        self.assertFalse(result['menuOpen'], 'clicking a theme should close the menu')
+                         'clicking a theme tile should persist it to localStorage')
+        self.assertTrue(result['modalOpen'], 'clicking a theme tile must leave the themes modal open')
+
+    def test_theme_click_updates_revert_baseline_for_subsequent_hovers(self):
+        """After a click-stays-open commit, hovering a different tile and
+        then leaving must revert the preview to the theme that was just
+        committed - not to whatever was active before the modal was first
+        opened, which would be stale."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            showThemesModal();
+            var buttons = document.querySelectorAll('.theme-tile');
+            function findTile(label) {
+                return Array.from(buttons).find(function(b) { return b.textContent.trim() === label; });
+            }
+            findTile('Nord').onclick();
+            var lumonBtn = findTile('Lumon');
+            var frame = document.getElementById('themePreviewFrame');
+            lumonBtn.onmouseenter();
+            var previewedLumon = frame.contentDocument.documentElement.getAttribute('data-theme');
+            lumonBtn.onmouseleave();
+            window.__jsdom_result = {
+                previewedLumon: previewedLumon,
+                revertedAfterLeave: frame.contentDocument.documentElement.getAttribute('data-theme')
+            };
+        ''')
+        self.assertEqual(result['previewedLumon'], 'lumon', 'hovering Lumon should preview it')
+        self.assertEqual(result['revertedAfterLeave'], 'nord',
+                         'leaving the tile must revert to Nord (just committed), not the pre-modal baseline')
+
+    def test_hotkey_t_keeps_preview_in_sync_while_modal_open(self):
+        """Pressing 't' while the themes modal is open changes the real
+        theme via toggleTheme() -> setTheme(), not via a tile click - the
+        preview iframe must still update to match, or it goes stale while
+        the real app and the grid's checkmark have already moved on."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            showThemesModal();
+            toggleTheme();
+            var frame = document.getElementById('themePreviewFrame');
+            window.__jsdom_result = {
+                realTheme: document.documentElement.getAttribute('data-theme'),
+                previewTheme: frame.contentDocument.documentElement.getAttribute('data-theme')
+            };
+        ''')
+        self.assertEqual(result['previewTheme'], result['realTheme'],
+                         "the 't' hotkey must keep the preview iframe in sync with the real theme while the modal is open")
+
+    def test_escape_closes_themes_modal(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showThemesModal();
+            var openBefore = document.getElementById('themesModal').classList.contains('active');
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+            window.__jsdom_result = {
+                openBefore: openBefore,
+                openAfter: document.getElementById('themesModal').classList.contains('active')
+            };
+        ''')
+        self.assertTrue(result['openBefore'], 'Themes modal must actually be open before pressing Escape')
+        self.assertFalse(result['openAfter'], 'Escape must close the themes modal')
+
+    def test_escape_closes_settings_modal(self):
+        """REGRESSION: Settings never closed on Escape, unlike Help - now
+        that Themes also closes on Escape, Settings was the odd one out."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showSettingsModal();
+            var openBefore = document.getElementById('settingsModal').classList.contains('active');
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+            window.__jsdom_result = {
+                openBefore: openBefore,
+                openAfter: document.getElementById('settingsModal').classList.contains('active')
+            };
+        ''')
+        self.assertTrue(result['openBefore'], 'Settings modal must actually be open before pressing Escape')
+        self.assertFalse(result['openAfter'], 'Escape must close the settings modal')
+
+    def test_showThemesModal_and_closeThemesModal_exist(self):
+        self.assertIn('function showThemesModal(', JS_CONTENT,
+                      'showThemesModal function must exist')
+        self.assertIn('function closeThemesModal(', JS_CONTENT,
+                      'closeThemesModal function must exist')
+        self.assertIn('function handleThemesBackdropClick(', JS_CONTENT,
+                      'handleThemesBackdropClick function must exist')
 
     def test_css_theme_variables_exist(self):
         self.assertIn('--bg-primary:', CSS_CONTENT,
@@ -1812,8 +2261,8 @@ class TestThemeAndMenu(unittest.TestCase):
         near-black bg-secondary every other theme uses there, with both
         --text-bright and --text-muted overridden to the CGA magenta
         accent (rather than black/dark-teal, per explicit user preference)
-        for legibility against that bright background. The gear dropdown
-        menu (a visual child of the header, but rendered on its own dark
+        for legibility against that bright background. The themes modal (a
+        visual child of the header's menu, but rendered on its own dark
         bg-secondary panel) must reset those same two variables back to
         their normal CGA values so its own text doesn't inherit the
         header's override."""
@@ -1831,28 +2280,17 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('--text-muted: #ff55ff', body,
                      'CGA header/footer text-muted must also switch to the CGA magenta accent, per explicit user preference')
 
-        dropdown_match = re.search(
-            r'\[data-theme="cga"\] \.app-header-menu-dropdown\s*\{([^}]*)\}',
+        themes_modal_match = re.search(
+            r'\[data-theme="cga"\] \#themesModal\s*\{([^}]*)\}',
             CSS_CONTENT,
         )
-        self.assertIsNotNone(dropdown_match,
-                             'CGA must reset the dropdown menu text vars back from the header override')
-        dropdown_body = dropdown_match.group(1)
-        self.assertIn('--text-bright: #ffffff', dropdown_body,
-                     "Dropdown menu must reset --text-bright to CGA's normal (light) value")
-        self.assertIn('--text-muted: #55aaaa', dropdown_body,
-                     "Dropdown menu must reset --text-muted to CGA's normal (light) value")
-
-        # The real (non-CGA-scoped) dropdown rule must appear before these
-        # CGA overrides in the file, or test_theme_menu_items_do_not_wrap's
-        # naive '.app-header-menu-dropdown {'.split() would grab the wrong
-        # (CGA override) block instead of the real rule's min-width.
-        real_rule_pos = CSS_CONTENT.index('.app-header-menu-dropdown { display: none;')
-        cga_override_pos = CSS_CONTENT.index('[data-theme="cga"] .app-header-menu-dropdown')
-        self.assertLess(real_rule_pos, cga_override_pos,
-                        "The base .app-header-menu-dropdown rule must come before CGA's override "
-                        "in the file, so naive substring-based CSS extraction in other tests still "
-                        "finds the real rule first")
+        self.assertIsNotNone(themes_modal_match,
+                             'CGA must reset the themes modal text vars back from the header override')
+        themes_modal_body = themes_modal_match.group(1)
+        self.assertIn('--text-bright: #ffffff', themes_modal_body,
+                     "Themes modal must reset --text-bright to CGA's normal (light) value")
+        self.assertIn('--text-muted: #55aaaa', themes_modal_body,
+                     "Themes modal must reset --text-muted to CGA's normal (light) value")
 
     def test_c64_logo_text_uses_light_blue(self):
         """The 'SO-CRATES' header logo link is normally --text-bright (white
@@ -1935,13 +2373,13 @@ class TestThemeAndMenu(unittest.TestCase):
         result = js_statements('''
             var order = [];
             setTheme('dark');
-            for (var i = 0; i < 25; i++) {
+            for (var i = 0; i < 28; i++) {
                 toggleTheme();
                 order.push(document.documentElement.getAttribute('data-theme') || 'dark');
             }
             window.__jsdom_result = { order: order };
         ''')
-        self.assertEqual(result['order'], ['nord', 'osaka-jade', 'retro-82', 'ristretto', 'tokyo-night', 'vantablack', 'catppuccin-latte', 'light', 'rose-pine', 'white', 'c64', 'cga', 'hacker', 'sguil', 'vaporwave', 'catppuccin', 'ethereal', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'lumon', 'matte-black', 'miasma', 'dark'],
+        self.assertEqual(result['order'], ['nord', 'osaka-jade', 'retro-82', 'ristretto', 'tokyo-night', 'vantablack', 'catppuccin-latte', 'light', 'rose-pine', 'white', 'amber', 'c64', 'cga', 'hacker', 'msdos', 'sguil', 'vaporwave', 'winxp', 'catppuccin', 'ethereal', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'lumon', 'matte-black', 'miasma', 'dark'],
                          't hotkey cycle order must match menu order')
 
     def test_hacker_mode_easter_egg_exists(self):
@@ -2036,6 +2474,87 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertEqual(result['theme'], 'vaporwave',
                          'Typing vapor after other keystrokes must still activate Vaporwave theme')
 
+    def test_winxp_easter_egg_exists(self):
+        """Typing winxp outside of input fields must activate the Windows XP theme."""
+        self.assertIn("keyBuffer.endsWith('winxp')", JS_CONTENT,
+                      'JS must check for the winxp easter egg sequence')
+        self.assertIn("setTheme('winxp')", JS_CONTENT,
+                      'Easter egg must activate Windows XP')
+        self.assertIn('Switched to Windows XP theme', JS_CONTENT,
+                      'Easter egg activation message must reference Windows XP theme')
+
+    def test_winxp_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: same class of bug as the cga/c64/vapor easter eggs -
+        "winxp" is exactly 5 characters (the buffer's full capacity), so
+        this also verifies the buffer-fill edge case works via endsWith(),
+        not just codes shorter than 5 characters."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            function press(k) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
+            }
+            'xyz'.split('').forEach(press);
+            'winxp'.split('').forEach(press);
+            window.__jsdom_result = { theme: getCurrentTheme() };
+        ''')
+        self.assertEqual(result['theme'], 'winxp',
+                         'Typing winxp after other keystrokes must still activate Windows XP theme')
+
+    def test_amber_easter_egg_exists(self):
+        """Typing amber outside of input fields must activate the Amber CRT theme."""
+        self.assertIn("keyBuffer.endsWith('amber')", JS_CONTENT,
+                      'JS must check for the amber easter egg sequence')
+        self.assertIn("setTheme('amber')", JS_CONTENT,
+                      'Easter egg must activate Amber CRT')
+        self.assertIn('Switched to Amber CRT theme', JS_CONTENT,
+                      'Easter egg activation message must reference Amber CRT theme')
+
+    def test_amber_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: same class of bug as the cga/c64/vapor/winxp easter
+        eggs - "amber" is exactly 5 characters (the buffer's full
+        capacity), so this also verifies the buffer-fill edge case works
+        via endsWith(), not just codes shorter than 5 characters."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            function press(k) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
+            }
+            'xyz'.split('').forEach(press);
+            'amber'.split('').forEach(press);
+            window.__jsdom_result = { theme: getCurrentTheme() };
+        ''')
+        self.assertEqual(result['theme'], 'amber',
+                         'Typing amber after other keystrokes must still activate Amber CRT theme')
+
+    def test_msdos_easter_egg_exists(self):
+        """Typing dos outside of input fields must activate the MS-DOS Blue theme."""
+        self.assertIn("keyBuffer.endsWith('dos')", JS_CONTENT,
+                      'JS must check for the dos easter egg sequence')
+        self.assertIn("setTheme('msdos')", JS_CONTENT,
+                      'Easter egg must activate MS-DOS Blue')
+        self.assertIn('Switched to MS-DOS Blue theme', JS_CONTENT,
+                      'Easter egg activation message must reference MS-DOS Blue theme')
+
+    def test_msdos_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: same class of bug as the cga/c64 easter eggs - a code
+        shorter than the 5-char keyBuffer (like "dos") must actually trigger
+        after other keystrokes, not just in the first few keystrokes after
+        page load."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            function press(k) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
+            }
+            'xyz'.split('').forEach(press);
+            'dos'.split('').forEach(press);
+            window.__jsdom_result = { theme: getCurrentTheme() };
+        ''')
+        self.assertEqual(result['theme'], 'msdos',
+                         'Typing dos after other keystrokes must still activate MS-DOS Blue theme')
+
     def test_hacker_mode_easter_egg_ignores_input_fields(self):
         """Easter egg must not trigger while typing in form controls."""
         listener_match = re.search(r'document\.addEventListener\(\'keydown\',\s*function\(e\)\s*\{', JS_CONTENT)
@@ -2058,6 +2577,67 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Easter egg must ignore SELECT elements')
         self.assertIn('isContentEditable', listener_body,
                       'Easter egg must ignore contenteditable elements')
+
+    def test_opening_settings_closes_already_open_themes_modal(self):
+        """REGRESSION: Help/Settings/Themes are all full-viewport overlays
+        sharing the same .modal z-index. If Themes is already open and the
+        (still-reachable) gear menu is used to open Settings, Settings must
+        actually become visible - not render behind the still-active Themes
+        modal, which is what happened before showSettingsModal() started
+        closing other open menu modals first."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showThemesModal();
+            var themesOpenBefore = document.getElementById('themesModal').classList.contains('active');
+            showSettingsModal();
+            window.__jsdom_result = {
+                themesOpenBefore: themesOpenBefore,
+                themesOpenAfter: document.getElementById('themesModal').classList.contains('active'),
+                settingsOpenAfter: document.getElementById('settingsModal').classList.contains('active')
+            };
+        ''')
+        self.assertTrue(result['themesOpenBefore'], 'Themes modal must actually be open before the regression scenario starts')
+        self.assertFalse(result['themesOpenAfter'], 'opening Settings must close the still-open Themes modal')
+        self.assertTrue(result['settingsOpenAfter'], 'Settings modal must be open')
+
+    def test_opening_help_closes_already_open_themes_modal(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showThemesModal();
+            showHelpModal();
+            window.__jsdom_result = {
+                themesOpenAfter: document.getElementById('themesModal').classList.contains('active'),
+                helpOpenAfter: document.getElementById('helpModal').classList.contains('active')
+            };
+        ''')
+        self.assertFalse(result['themesOpenAfter'], 'opening Help must close the still-open Themes modal')
+        self.assertTrue(result['helpOpenAfter'], 'Help modal must be open')
+
+    def test_opening_themes_closes_already_open_settings_modal(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showSettingsModal();
+            showThemesModal();
+            window.__jsdom_result = {
+                settingsOpenAfter: document.getElementById('settingsModal').classList.contains('active'),
+                themesOpenAfter: document.getElementById('themesModal').classList.contains('active')
+            };
+        ''')
+        self.assertFalse(result['settingsOpenAfter'], 'opening Themes must close the still-open Settings modal')
+        self.assertTrue(result['themesOpenAfter'], 'Themes modal must be open')
+
+    def test_close_other_menu_modals_does_not_trigger_help_close_side_effects_when_help_was_never_open(self):
+        """REGRESSION: closeHelpModal() persists the 'show again' checkbox
+        preference to localStorage as a side effect of closing - opening
+        Settings or Themes must not spuriously trigger that persistence
+        when Help was never actually open."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.removeItem('socrates_hideHelp');
+            showSettingsModal();
+            window.__jsdom_result = localStorage.getItem('socrates_hideHelp');
+        ''')
+        self.assertIsNone(result, 'opening Settings must not touch the Help "show again" preference when Help was never open')
 
 
 class TestAggregationTables(unittest.TestCase):
@@ -2335,6 +2915,124 @@ class TestFiltering(unittest.TestCase):
     def test_has_footer_links(self):
         self.assertIn('github.com/dougburks', HTML_CONTENT)
         self.assertIn('securityonion.com', HTML_CONTENT)
+
+    def test_footer_update_badge_skeleton_in_html(self):
+        self.assertIn('id="footerUpdateBadge"', HTML_CONTENT,
+                      'Footer update badge container must exist in HTML')
+        badge_block = HTML_CONTENT.split('id="footerUpdateBadge"')[1].split('</span>')[0]
+        self.assertIn('display: none', badge_block,
+                      'Update badge must start hidden - only shown if an update is actually confirmed available')
+        self.assertIn('releases/latest', badge_block,
+                      'Update badge must link to the GitHub releases page')
+        self.assertIn('target="_blank"', badge_block)
+        self.assertIn('rel="noopener noreferrer"', badge_block,
+                      'External update-badge link must carry rel=noopener noreferrer')
+
+    def test_check_for_updates_checkbox_in_settings_modal(self):
+        settings_block = HTML_CONTENT.split('id="settingsModal"')[1].split('id="themesModal"')[0]
+        self.assertIn('id="checkForUpdates"', settings_block,
+                      'Check-for-updates checkbox must live in the Settings modal')
+        self.assertIn('onchange="handleCheckForUpdatesChange(this)"', settings_block,
+                      'Checkbox must apply immediately on change, matching the sync-with-OhMyDebn toggle - no Save-button trap')
+
+    def test_check_for_app_update_does_not_fetch_when_opted_out(self):
+        """Opt-in only, same pattern as pollOhmydebnTheme() - must not hit
+        the network at all unless the user has explicitly enabled it."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.removeItem('socrates_checkForUpdates');
+            var fetchCalled = false;
+            window.fetch = function(url) {
+                if (url.indexOf('/api/version-check') >= 0) fetchCalled = true;
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            await checkForAppUpdate();
+            window.__jsdom_result = fetchCalled;
+        ''')
+        self.assertFalse(result, 'checkForAppUpdate must not fetch /api/version-check when the user has not opted in')
+
+    def test_check_for_app_update_shows_badge_when_available(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_checkForUpdates', 'true');
+            window.fetch = function(url) {
+                if (url.indexOf('/api/version-check') >= 0) {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({ updateAvailable: true, latestVersion: '99.0.0', currentVersion: '3.1.0' }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            await checkForAppUpdate();
+            window.__jsdom_result = document.getElementById('footerUpdateBadge').style.display;
+        ''')
+        self.assertEqual(result, 'inline', 'the badge must become visible when the server confirms an update is available')
+
+    def test_check_for_app_update_hides_badge_when_not_available(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_checkForUpdates', 'true');
+            window.fetch = function(url) {
+                if (url.indexOf('/api/version-check') >= 0) {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({ updateAvailable: false, latestVersion: null, currentVersion: '3.1.0' }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            await checkForAppUpdate();
+            window.__jsdom_result = document.getElementById('footerUpdateBadge').style.display;
+        ''')
+        self.assertEqual(result, 'none', 'the badge must stay hidden when no update is available')
+
+    def test_check_for_app_update_handles_fetch_failure_gracefully(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_checkForUpdates', 'true');
+            window.fetch = function(url) {
+                if (url.indexOf('/api/version-check') >= 0) return Promise.reject(new Error('network error'));
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            var threw = false;
+            try {
+                await checkForAppUpdate();
+            } catch (e) {
+                threw = true;
+            }
+            window.__jsdom_result = { threw: threw, badgeDisplay: document.getElementById('footerUpdateBadge').style.display };
+        ''')
+        self.assertFalse(result['threw'], 'a failed version check must not throw/break init()')
+        self.assertEqual(result['badgeDisplay'], 'none', 'the badge must stay hidden on fetch failure')
+
+    def test_check_for_updates_checkbox_initializes_from_localstorage(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_checkForUpdates', 'true');
+            showSettingsModal();
+            window.__jsdom_result = document.getElementById('checkForUpdates').checked;
+        ''')
+        self.assertTrue(result, 'opening Settings must reflect the persisted check-for-updates preference')
+
+    def test_enabling_check_for_updates_triggers_immediate_check(self):
+        """No Save button involved - toggling the checkbox must apply (and
+        fire a check) right away, same lesson learned from the sync-with-
+        OhMyDebn toggle's original Save-button trap."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.removeItem('socrates_checkForUpdates');
+            var fetchCalled = false;
+            window.fetch = function(url) {
+                if (url.indexOf('/api/version-check') >= 0) fetchCalled = true;
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ updateAvailable: false }) });
+            };
+            showSettingsModal();
+            var checkbox = document.getElementById('checkForUpdates');
+            checkbox.checked = true;
+            handleCheckForUpdatesChange(checkbox);
+            await new Promise(function(resolve) { setTimeout(resolve, 0); });
+            window.__jsdom_result = {
+                persisted: localStorage.getItem('socrates_checkForUpdates'),
+                fetchCalled: fetchCalled
+            };
+        ''')
+        self.assertEqual(result['persisted'], 'true', 'checking the box must persist immediately, without a Save click')
+        self.assertTrue(result['fetchCalled'], 'checking the box must trigger an immediate check')
 
     def test_has_analysis_header(self):
         self.assertIn('id="mainHeader"', HTML_CONTENT)

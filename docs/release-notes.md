@@ -1,5 +1,37 @@
 # Release Notes
 
+## 3.1.0
+
+### OhMyDebn theme sync
+
+A new opt-in "Sync theme with OS" setting (off by default) lets SO-CRATES
+follow OhMyDebn desktop theme switches automatically. A new `GET
+/api/theme` endpoint reads a theme name from the `OHMYDEBN_THEME_FILE`
+environment variable (unset outside an OhMyDebn/podman launch, so this is
+a no-op for every other deployment) and the frontend polls it once a
+second while the tab is visible, applying the match through the same
+theme-name allowlist the manual theme switcher already uses.
+
+### YARA Forge / Sigma rule freshness
+
+`setup_yara_rules()`/`setup_sigma_rules()` previously used a cached rules
+file forever once downloaded or copied from the Docker image, with no
+freshness check — a long-lived install's rules could silently drift
+arbitrarily far behind YARA Forge's weekly and Zircolite-Rules-v2's daily
+upstream releases. Both now refresh a cached copy in place if it's older
+than 24 hours and the network is reachable, falling back to the
+still-usable stale copy on any refresh failure rather than losing rules
+entirely. The three potentially-stale sources (YARA, Sigma windows, Sigma
+linux) share a single reachability probe instead of each blocking through
+its own timeout, so a slow/unreachable network adds at most ~5s to
+startup instead of ~15s.
+
+Also fixed while touching the download path: `_download_yara_forge_rules`
+and `_download_rule_file` used to write straight into the destination
+file, which would have corrupted an already-good cached copy if a refresh
+failed partway through. Both now write to a temp file and rename
+atomically into place.
+
 ## 3.0.0
 
 ### Suricata upgraded to 8.0.6
