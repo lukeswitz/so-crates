@@ -288,10 +288,8 @@ def setup_suricata_config(data_dir=None, enable_arp=False, on_progress=print, ne
             else:
                 on_progress("Warning: suricata-update failed and no fallback rules are available")
     elif baked_in_rules_exist:
-        on_progress("No internet access detected — using baked-in Suricata rules")
         try:
             shutil.copytree(baked_in_rules_dir, suricata_rules_dir, dirs_exist_ok=True)
-            on_progress("Baked-in rules copied successfully")
         except OSError as e:
             on_progress(f'Warning: could not copy baked-in rules: {e}')
     elif rules_exist:

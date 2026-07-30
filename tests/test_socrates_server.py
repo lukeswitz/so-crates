@@ -3762,8 +3762,6 @@ class TestAirgapFallback(unittest.TestCase):
         """Verify log messages for air-gapped path exist"""
         with open(SURICATA_FILE, 'r') as f:
             content = f.read()
-        self.assertIn('No internet access detected', content,
-                      'Should log when falling back to baked-in rules')
         self.assertIn('Baked-in rules copied successfully', content,
                       'Should log when baked-in rules are copied')
         self.assertIn('no baked-in rules found and no internet access', content,
@@ -4823,7 +4821,8 @@ class TestDockerfile(unittest.TestCase):
         """Final stage must COPY the pre-built venv from the builder stage
         rather than building it itself."""
         final_stage = self._dockerfile_final_stage()
-        self.assertIn('COPY --from=zircolite-builder /usr/local/lib/zircolite-venv', final_stage,
+        self.assertIn('COPY --from=zircolite-builder', final_stage, 'Final stage must copy from the builder stage')
+        self.assertIn('/usr/local/lib/zircolite-venv /usr/local/lib/zircolite-venv', final_stage,
                       'Final stage must copy the built venv from the builder stage')
         self.assertIn('COPY --from=zircolite-builder /usr/local/lib/zircolite ', final_stage,
                       'Final stage must copy the zircolite script from the builder stage')
@@ -4857,11 +4856,15 @@ class TestDockerfile(unittest.TestCase):
         self.assertIn('libxslt1.1', final_stage, 'Final stage must install the libxslt1.1 runtime library')
 
     def test_dockerfile_venv_owned_by_app_user(self):
-        """Dockerfile must chown the Zircolite venv so the non-root user can use it."""
-        with open(DOCKERFILE, 'r') as f:
-            content = f.read()
-        self.assertIn('chown -R 1000:1000 /usr/local/lib/zircolite-venv', content,
-                      'Dockerfile must set venv ownership to the app user')
+        """Dockerfile must copy the Zircolite venv with --chown so the non-root
+        user can use it, without a separate chown -R RUN step (which would
+        force a full copy-up of the venv's contents into a new overlayfs
+        layer, doubling its footprint in the image)."""
+        final_stage = self._dockerfile_final_stage()
+        self.assertIn('COPY --from=zircolite-builder --chown=1000:1000 /usr/local/lib/zircolite-venv', final_stage,
+                      'Dockerfile must set venv ownership via COPY --chown, not a separate chown -R RUN')
+        self.assertNotIn('chown -R 1000:1000 /usr/local/lib/zircolite-venv', final_stage,
+                          'A separate chown -R on the venv would double its layer footprint')
 
     def test_dockerfile_exposes_port_8000(self):
         """Dockerfile must expose port 8000."""

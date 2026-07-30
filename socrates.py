@@ -1916,7 +1916,7 @@ def main():
     setup_yara_rules(DATA_DIR, network_allowed=False)
     setup_sigma_rules(DATA_DIR, network_allowed=False)
 
-    print("Rule updates are now managed from the web interface (gear menu > Rules) instead of at startup.")
+    print("Tip! If you want to check for rule updates, click the menu in the upper-corner and then select Rules.")
 
     if os.environ.get('DEMO'):
         msg = 'SO-CRATES is now running. Click the link on the left!'

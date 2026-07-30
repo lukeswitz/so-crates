@@ -22,7 +22,15 @@ RUN git clone --depth 1 --branch v3.7.1 \
     rm -rf /usr/local/lib/zircolite/.git && \
     python3 -m venv /usr/local/lib/zircolite-venv && \
     /usr/local/lib/zircolite-venv/bin/pip install --no-cache-dir \
-    -r /usr/local/lib/zircolite/requirements.txt
+    -r /usr/local/lib/zircolite/requirements.txt && \
+    rm -rf /usr/local/lib/zircolite/rules /usr/local/lib/zircolite/gui \
+    /usr/local/lib/zircolite/pics /usr/local/lib/zircolite/tests \
+    /usr/local/lib/zircolite/docs /usr/local/lib/zircolite/templates \
+    /usr/local/lib/zircolite/tools /usr/local/lib/zircolite/README.md \
+    /usr/local/lib/zircolite/LICENSE /usr/local/lib/zircolite/CODE_OF_CONDUCT.md \
+    /usr/local/lib/zircolite/SECURITY.md /usr/local/lib/zircolite/Zircolite.spec \
+    /usr/local/lib/zircolite/Taskfile.yml /usr/local/lib/zircolite/Dockerfile \
+    /usr/local/lib/zircolite/pytest.ini /usr/local/lib/zircolite/requirements.txt
 
 
 FROM debian:13-slim
@@ -47,7 +55,6 @@ RUN echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sou
     tshark \
     yara \
     curl \
-    unzip \
     file \
     libimage-exiftool-perl \
     libxml2 \
@@ -56,7 +63,7 @@ RUN echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sou
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=zircolite-builder /usr/local/lib/zircolite /usr/local/lib/zircolite
-COPY --from=zircolite-builder /usr/local/lib/zircolite-venv /usr/local/lib/zircolite-venv
+COPY --from=zircolite-builder --chown=1000:1000 /usr/local/lib/zircolite-venv /usr/local/lib/zircolite-venv
 RUN ln -s /usr/local/lib/zircolite/zircolite.py /usr/local/bin/zircolite.py
 
 ENV DATA_DIR=/data
@@ -92,9 +99,9 @@ RUN mkdir -p /usr/share/suricata/rules && \
 RUN mkdir -p /usr/share/yara-rules && \
     curl -fsSL -o /tmp/yara-forge-full.zip \
     "https://github.com/YARAHQ/yara-forge/releases/latest/download/yara-forge-rules-full.zip" && \
-    unzip -p /tmp/yara-forge-full.zip "packages/full/yara-rules-full.yar" \
-    > /usr/share/yara-rules/yara-rules-full.yar && \
-    rm /tmp/yara-forge-full.zip
+    python3 -c "import zipfile; zipfile.ZipFile('/tmp/yara-forge-full.zip').extract('packages/full/yara-rules-full.yar', '/tmp/yara-forge-extract')" && \
+    mv /tmp/yara-forge-extract/packages/full/yara-rules-full.yar /usr/share/yara-rules/yara-rules-full.yar && \
+    rm -rf /tmp/yara-forge-full.zip /tmp/yara-forge-extract
 
 # Bake Sigma rules (Zircolite JSON format) into image for air-gapped
 # deployments. Destination filenames must be windows.json/linux.json (not
@@ -108,8 +115,7 @@ RUN mkdir -p /usr/share/sigma-rules && \
     curl -fsSL -o /usr/share/sigma-rules/linux.json \
     "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_linux.json"
 
-RUN mkdir -p /data && chown -R 1000:1000 /data && \
-    chown -R 1000:1000 /usr/local/lib/zircolite-venv
+RUN mkdir -p /data && chown -R 1000:1000 /data
 
 USER 1000:1000
 
