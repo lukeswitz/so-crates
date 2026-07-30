@@ -4746,16 +4746,21 @@ class TestDockerfile(unittest.TestCase):
                       'Dockerfile must install Zircolite requirements.txt')
 
     def test_dockerfile_copies_socrates_files(self):
-        """Dockerfile must copy all SO-CRATES source files."""
+        """Dockerfile must copy every top-level .py module the app actually
+        needs at runtime - checked dynamically against the real repo
+        listing (not a hand-maintained filename list) so a newly added
+        module can't silently go missing from the image the way
+        ohmydebn_colors.py once did (added this session, imported by
+        socrates.py, but never added to the Dockerfile's COPY line - the
+        container failed at import time as a result)."""
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        py_files = sorted(f for f in os.listdir(repo_root) if f.endswith('.py'))
+        self.assertIn('ohmydebn_colors.py', py_files, 'sanity check: this test must actually see the repo root')
         with open(DOCKERFILE, 'r') as f:
             content = f.read()
-        self.assertIn('socrates.py', content, 'Dockerfile must copy socrates.py')
+        for py_file in py_files:
+            self.assertIn(py_file, content, f'Dockerfile must copy {py_file}')
         self.assertIn('socrates.html', content, 'Dockerfile must copy socrates.html')
-        self.assertIn('suricata_analyzer.py', content, 'Dockerfile must copy suricata_analyzer.py')
-        self.assertIn('yara_analyzer.py', content, 'Dockerfile must copy yara_analyzer.py')
-        self.assertIn('sigma_analyzer.py', content, 'Dockerfile must copy sigma_analyzer.py')
-        self.assertIn('file_analyzer.py', content, 'Dockerfile must copy file_analyzer.py')
-        self.assertIn('exif_analyzer.py', content, 'Dockerfile must copy exif_analyzer.py')
 
     def test_dockerfile_has_python_build_dependencies(self):
         """Dockerfile must install build tools for compiling Python packages."""
