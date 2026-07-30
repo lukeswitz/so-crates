@@ -44,3 +44,13 @@ Click any row in a data table to expand it, then:
 - **ASCII Transcript** — view decoded TCP/UDP payload as readable text
 - **Hexdump** — view per-packet hex dumps with collapsible packet headers
 - **Download PCAP** — carve that specific stream into a standalone `.pcap` file
+
+## Gear Menu
+
+The gear icon in the upper-right corner opens a menu with five entries:
+
+- **Help** — the welcome/help modal, including a link to this documentation site
+- **Settings** — upload size, query result limit, and other user-configurable preferences
+- **Themes** — browse and apply themes; see [Themes](themes.md)
+- **Rules** — check the current rule count and last-updated time for Suricata, YARA, and Sigma, and trigger an update for one ruleset (or all three) with live progress. Rule updates are not run automatically at startup — this modal is the only way to refresh them after the initial install
+- **About** — current version, links to this documentation site and the GitHub repo, and an opt-in "Check GitHub for newer releases" setting with a manual "Check Now" button

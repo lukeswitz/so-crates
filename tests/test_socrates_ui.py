@@ -18,7 +18,9 @@ FAVICON_RETRO_82_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 FAVICON_ETHEREAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-ethereal.svg')
 FAVICON_LUMON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-lumon.svg')
 FAVICON_CATPPUCCIN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-catppuccin.svg')
+FAVICON_OHMYDEBN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-ohmydebn.svg')
 FAVICON_CATPPUCCIN_LATTE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-catppuccin-latte.svg')
+FAVICON_FLEXOKI_LIGHT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-flexoki-light.svg')
 FAVICON_EVERFOREST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-everforest.svg')
 FAVICON_GRUVBOX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-gruvbox.svg')
 FAVICON_HACKERMAN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-hackerman.svg')
@@ -32,11 +34,11 @@ FAVICON_VANTABLACK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)
 FAVICON_WHITE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-white.svg')
 FAVICON_SGUIL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-sguil.svg')
 FAVICON_CGA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-cga.svg')
-FAVICON_C64_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-c64.svg')
+FAVICON_BREADBIN_BLUE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-breadbin-blue.svg')
 FAVICON_VAPORWAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-vaporwave.svg')
-FAVICON_WINXP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-winxp.svg')
+FAVICON_LUNA_BLUE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-luna-blue.svg')
 FAVICON_AMBER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-amber.svg')
-FAVICON_MSDOS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-msdos.svg')
+FAVICON_DOS_BLUE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-dos-blue.svg')
 
 with open(HTML_PATH, 'r') as f:
     HTML_CONTENT = f.read()
@@ -98,24 +100,24 @@ class TestHTMLStructure(unittest.TestCase):
         self.assertTrue(os.path.exists(FAVICON_CGA_PATH), 'static/favicon-cga.svg must exist')
 
     def test_favicon_c64_file_exists(self):
-        """static/favicon-c64.svg must exist on disk."""
-        self.assertTrue(os.path.exists(FAVICON_C64_PATH), 'static/favicon-c64.svg must exist')
+        """static/favicon-breadbin-blue.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_BREADBIN_BLUE_PATH), 'static/favicon-breadbin-blue.svg must exist')
 
     def test_favicon_vaporwave_file_exists(self):
         """static/favicon-vaporwave.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_VAPORWAVE_PATH), 'static/favicon-vaporwave.svg must exist')
 
     def test_favicon_winxp_file_exists(self):
-        """static/favicon-winxp.svg must exist on disk."""
-        self.assertTrue(os.path.exists(FAVICON_WINXP_PATH), 'static/favicon-winxp.svg must exist')
+        """static/favicon-luna-blue.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_LUNA_BLUE_PATH), 'static/favicon-luna-blue.svg must exist')
 
     def test_favicon_amber_file_exists(self):
         """static/favicon-amber.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_AMBER_PATH), 'static/favicon-amber.svg must exist')
 
     def test_favicon_msdos_file_exists(self):
-        """static/favicon-msdos.svg must exist on disk."""
-        self.assertTrue(os.path.exists(FAVICON_MSDOS_PATH), 'static/favicon-msdos.svg must exist')
+        """static/favicon-dos-blue.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_DOS_BLUE_PATH), 'static/favicon-dos-blue.svg must exist')
 
     def test_favicon_matte_black_file_exists(self):
         """static/favicon-matte-black.svg must exist on disk."""
@@ -141,9 +143,17 @@ class TestHTMLStructure(unittest.TestCase):
         """static/favicon-catppuccin.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_CATPPUCCIN_PATH), 'static/favicon-catppuccin.svg must exist')
 
+    def test_favicon_ohmydebn_file_exists(self):
+        """static/favicon-ohmydebn.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_OHMYDEBN_PATH), 'static/favicon-ohmydebn.svg must exist')
+
     def test_favicon_catppuccin_latte_file_exists(self):
         """static/favicon-catppuccin-latte.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_CATPPUCCIN_LATTE_PATH), 'static/favicon-catppuccin-latte.svg must exist')
+
+    def test_favicon_flexoki_light_file_exists(self):
+        """static/favicon-flexoki-light.svg must exist on disk."""
+        self.assertTrue(os.path.exists(FAVICON_FLEXOKI_LIGHT_PATH), 'static/favicon-flexoki-light.svg must exist')
 
     def test_favicon_everforest_file_exists(self):
         """static/favicon-everforest.svg must exist on disk."""
@@ -211,7 +221,7 @@ class TestHTMLStructure(unittest.TestCase):
         """updateFavicon() must point faviconLink at the per-theme SVG that
         exists in static/ (plain favicon.svg for the default dark theme)."""
         from tests.jsdom_helper import js_statements
-        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'winxp', 'amber', 'msdos']
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'breadbin-blue', 'vaporwave', 'digital-frontier', 'retro-handheld', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'ohmydebn', 'catppuccin-latte', 'flexoki-light', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'luna-blue', 'amber', 'dos-blue']
         result = js_statements(f'''
             var link = document.getElementById('faviconLink');
             var out = {{}};
@@ -1199,6 +1209,24 @@ class TestThemeAndMenu(unittest.TestCase):
         ''')
         self.assertTrue(result, 'opening the themes modal must reflect the persisted sync-with-OS preference')
 
+    def test_themes_modal_falls_back_to_dark_baseline_for_synthesized_theme(self):
+        """REGRESSION: if the OhMyDebn-synthesized custom theme is still
+        applied when the Themes modal is reopened (e.g. sync was turned
+        off after applying one), menuBaseTheme used to be set to the
+        synthetic marker itself - not a real THEMES key - which made
+        previewTheme()/revertTheme() silently no-op for every hover/revert
+        in the modal, since both gate on the theme being a real THEMES
+        entry."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            applyCustomTheme({ '--bg-primary': '#000617', '--accent': '#5c7a9d' });
+            showThemesModal();
+            revertTheme();
+            var frame = document.getElementById('themePreviewFrame');
+            window.__jsdom_result = frame.contentDocument.documentElement.getAttribute('data-theme');
+        ''')
+        self.assertEqual(result, 'dark', 'must fall back to previewing dark, not silently no-op on the synthetic marker')
+
     def test_sync_theme_with_os_applies_immediately_on_change(self):
         """No 'Save' step exists in the themes modal (unlike Settings), so
         toggling this checkbox must persist right away or it's a silent
@@ -1224,8 +1252,8 @@ class TestThemeAndMenu(unittest.TestCase):
 
     def test_sync_theme_with_os_shown_when_available(self):
         """Opening the modal must reveal the toggle if /api/theme-sync-available
-        confirms OHMYDEBN_THEME_FILE is set and readable server-side - not
-        show a control that could never do anything."""
+        confirms OHMYDEBN_THEME_DIR is set and its theme.name is readable
+        server-side - not show a control that could never do anything."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             window.fetch = function(url) {
@@ -1271,6 +1299,275 @@ class TestThemeAndMenu(unittest.TestCase):
             window.__jsdom_result = document.getElementById('syncThemeWithOSContainer').style.display;
         ''')
         self.assertEqual(result, 'none', 'a failed availability check must leave the control hidden, not visible')
+
+    def test_showToast_default_auto_dismisses(self):
+        """Routine toasts (theme-switch confirmations etc.) must keep their
+        existing quick auto-dismiss behavior - the sticky option is opt-in
+        per call, not a global behavior change."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showToast('hello');
+            var textRightAfter = document.querySelector('.socrates-toast').textContent;
+            document.querySelector('.socrates-toast').dispatchEvent(new MouseEvent('click'));
+            window.__jsdom_result = {
+                textRightAfter: textRightAfter,
+                stillPresentAfterClick: document.querySelector('.socrates-toast') !== null
+            };
+        ''')
+        self.assertEqual(result['textRightAfter'], 'hello')
+        self.assertTrue(result['stillPresentAfterClick'],
+                        'a non-sticky toast must not be dismissed by a click - only its own timeout removes it')
+
+    def test_showToast_sticky_dismisses_only_on_click(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showToast('important message', { sticky: true });
+            var toast = document.querySelector('.socrates-toast');
+            var presentBeforeClick = toast !== null;
+            toast.dispatchEvent(new MouseEvent('click'));
+            window.__jsdom_result = { presentBeforeClick: presentBeforeClick, opacityAfterClick: toast.style.opacity };
+        ''')
+        self.assertTrue(result['presentBeforeClick'])
+        self.assertEqual(result['opacityAfterClick'], '0', 'clicking a sticky toast must start its dismiss (fade-out)')
+
+    def test_showToast_action_link_dismisses_and_runs_callback(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__actionRan = false;
+            showToast('important message', {
+                sticky: true,
+                actionLabel: 'Open Themes',
+                onAction: function() { window.__actionRan = true; }
+            });
+            var link = document.querySelector('.socrates-toast a');
+            var linkText = link.textContent;
+            link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = { linkText: linkText, actionRan: window.__actionRan };
+        ''')
+        self.assertEqual(result['linkText'], 'Open Themes')
+        self.assertTrue(result['actionRan'], 'clicking the action link must run onAction')
+
+    def test_notifyIfFilesSkipped_shows_toast_when_files_were_dropped(self):
+        """REGRESSION: only the first file in a multi-file ZIP is ever
+        analyzed - every other extracted file used to be silently dropped
+        with no indication to the user."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            notifyIfFilesSkipped({ status: 'processing', md5: 'a'.repeat(32), filesSkipped: 3 });
+            var toast = document.querySelector('.socrates-toast');
+            window.__jsdom_result = { text: toast ? toast.textContent : null };
+        ''')
+        self.assertEqual(result['text'], '3 additional files were in the ZIP and not analyzed')
+
+    def test_notifyIfFilesSkipped_singular_wording(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            notifyIfFilesSkipped({ status: 'processing', md5: 'a'.repeat(32), filesSkipped: 1 });
+            var toast = document.querySelector('.socrates-toast');
+            window.__jsdom_result = { text: toast ? toast.textContent : null };
+        ''')
+        self.assertEqual(result['text'], '1 additional file was in the ZIP and not analyzed')
+
+    def test_notifyIfFilesSkipped_no_toast_when_absent(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            notifyIfFilesSkipped({ status: 'processing', md5: 'a'.repeat(32) });
+            window.__jsdom_result = { toastPresent: document.querySelector('.socrates-toast') !== null };
+        ''')
+        self.assertFalse(result['toastPresent'], 'no filesSkipped must mean no toast')
+
+    def test_ohmydebn_unknown_theme_toast_is_sticky_with_open_themes_action(self):
+        """REGRESSION: this toast reports an unprompted, important change
+        (sync got disabled because OhMyDebn named a theme so-crates doesn't
+        have) - a short fixed timeout isn't enough time to read it, and the
+        user may not even be looking at the screen when it fires."""
+        self.assertIn("sticky: true", JS_CONTENT)
+        self.assertIn("actionLabel: 'Open Themes'", JS_CONTENT)
+        pollfn = JS_CONTENT.split('async function pollOhmydebnTheme()')[1].split('\n        }\n')[0]
+        self.assertIn('showThemesModal()', pollfn,
+                      "the unknown-theme toast's action must open the Themes modal")
+
+    _SAMPLE_CUSTOM_COLORS = '''{
+        "--accent": "#5c7a9d", "--help-icon-color": "#5c7a9d", "--accent-hover": "#7992af",
+        "--bg-primary": "#000617", "--bg-secondary": "#0d111e", "--bg-tertiary": "#171a23",
+        "--bg-hover": "#23262a", "--bg-hover-light": "#373835", "--border-color": "#23262a",
+        "--bg-drop-active": "#171a23", "--badge-bg-neutral": "#171a23",
+        "--text-primary": "#FCE7A1", "--text-bright": "#fdecb4", "--text-muted": "#595d62",
+        "--tag-gray-text": "#595d62", "--tag-red-text": "#ff5851", "--badge-danger-text": "#ff5851",
+        "--tag-green-text": "#c3d7b1", "--badge-success-text": "#c3d7b1", "--badge-warning-text": "#f0eb90",
+        "--tag-blue-text": "#7d9dcb", "--tag-purple-text": "#be95b4", "--tag-orange-text": "#f8a270",
+        "--danger-bg": "#230e1c", "--modal-backdrop": "rgba(0,0,0,0.85)"
+    }'''
+
+    def test_customColors_applied_when_theme_name_unknown(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_syncThemeWithOS', 'true');
+            window.fetch = function(url) {
+                if (url.indexOf('/api/theme') >= 0) {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({
+                        theme: 'my-aether-theme', customColors: ''' + self._SAMPLE_CUSTOM_COLORS + '''
+                    }) });
+                }
+                return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+            };
+            await pollOhmydebnTheme();
+            window.__jsdom_result = {
+                dataTheme: document.documentElement.getAttribute('data-theme'),
+                bgPrimary: document.documentElement.style.getPropertyValue('--bg-primary'),
+                accent: document.documentElement.style.getPropertyValue('--accent'),
+                toastText: document.querySelector('.socrates-toast') ? document.querySelector('.socrates-toast').textContent : null
+            };
+        ''')
+        self.assertEqual(result['dataTheme'], 'ohmydebn-custom')
+        self.assertEqual(result['bgPrimary'], '#000617')
+        self.assertEqual(result['accent'], '#5c7a9d')
+        self.assertEqual(result['toastText'], 'Generated color palette from OhMyDebn theme my-aether-theme')
+
+    def test_customColors_toast_falls_back_when_theme_name_unavailable(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_syncThemeWithOS', 'true');
+            window.fetch = function(url) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({
+                    theme: null, customColors: ''' + self._SAMPLE_CUSTOM_COLORS + '''
+                }) });
+            };
+            await pollOhmydebnTheme();
+            window.__jsdom_result = document.querySelector('.socrates-toast').textContent;
+        ''')
+        self.assertEqual(result, 'Generated a color palette from OhMyDebn')
+
+    def test_customColors_not_reapplied_when_unchanged(self):
+        """REGRESSION: the synthetic marker's data-theme value never changes
+        between different custom palettes, so dedup must key off a
+        fingerprint of customColors itself, not off getCurrentTheme()."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_syncThemeWithOS', 'true');
+            window.fetch = function(url) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({
+                    theme: 'my-aether-theme', customColors: ''' + self._SAMPLE_CUSTOM_COLORS + '''
+                }) });
+            };
+            var toastCalls = 0;
+            var originalShowToast = window.showToast;
+            window.showToast = function() { toastCalls++; return originalShowToast.apply(this, arguments); };
+            await pollOhmydebnTheme();
+            await pollOhmydebnTheme();
+            window.__jsdom_result = { toastCalls: toastCalls };
+        ''')
+        self.assertEqual(result['toastCalls'], 1, 'polling the same customColors twice must not reapply/re-toast')
+
+    def test_customColors_reapplied_when_changed(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_syncThemeWithOS', 'true');
+            var callCount = 0;
+            window.fetch = function(url) {
+                callCount++;
+                var colors = ''' + self._SAMPLE_CUSTOM_COLORS + ''';
+                if (callCount > 1) { colors = Object.assign({}, colors, { '--bg-primary': '#111111' }); }
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ theme: 'my-aether-theme', customColors: colors }) });
+            };
+            var toastCalls = 0;
+            var originalShowToast = window.showToast;
+            window.showToast = function() { toastCalls++; return originalShowToast.apply(this, arguments); };
+            await pollOhmydebnTheme();
+            await pollOhmydebnTheme();
+            window.__jsdom_result = {
+                toastCalls: toastCalls,
+                bgPrimary: document.documentElement.style.getPropertyValue('--bg-primary')
+            };
+        ''')
+        self.assertEqual(result['toastCalls'], 2, 'a changed customColors dict must reapply/re-toast')
+        self.assertEqual(result['bgPrimary'], '#111111')
+
+    def test_known_theme_toast_wording(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_syncThemeWithOS', 'true');
+            window.fetch = function(url) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ theme: 'nord', customColors: null }) });
+            };
+            await pollOhmydebnTheme();
+            window.__jsdom_result = document.querySelector('.socrates-toast').textContent;
+        ''')
+        self.assertEqual(result, 'Changed SO-CRATES theme to Nord to match OhMyDebn')
+
+    def test_reenabling_sync_reasserts_theme_even_if_unchanged_upstream(self):
+        """REGRESSION: turning sync off, manually picking a different theme,
+        then turning sync back on (with OhMyDebn still reporting the exact
+        same theme it always was) used to silently no-op - the dedup
+        trackers were never reset on re-enable, so pollOhmydebnTheme() saw
+        "same theme as last time" and never called setTheme() again,
+        leaving the manually-picked theme in place even though sync was
+        nominally back in control."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ theme: 'nord', customColors: null }) });
+            };
+            localStorage.setItem('socrates_syncThemeWithOS', 'true');
+            await pollOhmydebnTheme();
+            var checkbox = document.getElementById('syncThemeWithOS') || document.createElement('input');
+            checkbox.checked = false;
+            handleSyncThemeWithOSChange(checkbox);
+            setTheme('gruvbox');
+            checkbox.checked = true;
+            handleSyncThemeWithOSChange(checkbox);
+            await new Promise(function(resolve) { setTimeout(resolve, 0); });
+            window.__jsdom_result = document.documentElement.getAttribute('data-theme');
+        ''')
+        self.assertEqual(result, 'nord', 're-enabling sync must reassert the OhMyDebn theme even if unchanged upstream')
+
+    def test_known_theme_takes_priority_over_customColors(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_syncThemeWithOS', 'true');
+            window.fetch = function(url) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({
+                    theme: 'nord', customColors: ''' + self._SAMPLE_CUSTOM_COLORS + '''
+                }) });
+            };
+            await pollOhmydebnTheme();
+            window.__jsdom_result = document.documentElement.getAttribute('data-theme');
+        ''')
+        self.assertEqual(result, 'nord', 'a known THEMES key must win over customColors even if both are present')
+
+    def test_unknown_theme_without_customColors_still_falls_back_to_sticky_toast(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_syncThemeWithOS', 'true');
+            window.fetch = function(url) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ theme: 'totally-unknown', customColors: null }) });
+            };
+            await pollOhmydebnTheme();
+            window.__jsdom_result = {
+                syncFlag: localStorage.getItem('socrates_syncThemeWithOS'),
+                dataTheme: document.documentElement.getAttribute('data-theme'),
+                toastSticky: document.querySelector('.socrates-toast a') !== null
+            };
+        ''')
+        self.assertEqual(result['syncFlag'], 'false', 'sync must be disabled when neither a known name nor customColors is usable')
+        self.assertIsNone(result['dataTheme'], 'must revert to Midnight (no data-theme attribute)')
+        self.assertTrue(result['toastSticky'], 'must still show the sticky unknown-theme toast with its action link')
+
+    def test_setTheme_clears_inline_customColors_properties(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            applyCustomTheme(''' + self._SAMPLE_CUSTOM_COLORS + ''');
+            var bgBefore = document.documentElement.style.getPropertyValue('--bg-primary');
+            setTheme('nord');
+            window.__jsdom_result = {
+                bgBefore: bgBefore,
+                dataThemeAfter: document.documentElement.getAttribute('data-theme'),
+                bgAfter: document.documentElement.style.getPropertyValue('--bg-primary')
+            };
+        ''')
+        self.assertEqual(result['bgBefore'], '#000617')
+        self.assertEqual(result['dataThemeAfter'], 'nord')
+        self.assertEqual(result['bgAfter'], '', 'switching to a real theme must clear the leftover inline custom property')
 
     def test_theme_preview_frame_skeleton_in_html(self):
         self.assertIn('id="themePreviewFrame"', HTML_CONTENT,
@@ -1366,7 +1663,7 @@ class TestThemeAndMenu(unittest.TestCase):
         """renderThemesModalGrid() must generate a tile with preview/commit
         handlers for every theme in the THEMES registry."""
         from tests.jsdom_helper import js_statements
-        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'winxp', 'amber', 'msdos']
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'breadbin-blue', 'vaporwave', 'digital-frontier', 'retro-handheld', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'ohmydebn', 'catppuccin-latte', 'flexoki-light', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'luna-blue', 'amber', 'dos-blue']
         result = js_statements(f'''
             var html = renderThemesModalGrid();
             var missing = [];
@@ -1481,23 +1778,34 @@ class TestThemeAndMenu(unittest.TestCase):
                       'THEME_GROUP_ORDER must place Fun Themes after Light Themes')
 
     def test_dark_themes_alphabetical(self):
-        """Dark Themes section must list themes in alphabetical order by label."""
+        """Dark Themes section must list themes in alphabetical order by
+        label. Sorted case-insensitively (str.casefold) to match the JS
+        side's localeCompare(), which sorts case-insensitively as its
+        primary comparison - Python's plain sorted() is case-sensitive
+        (codepoint order puts every uppercase letter before any lowercase
+        one), which can disagree with localeCompare() for labels that only
+        differ by case at the same position (e.g. "DOS Blue" vs "Digital
+        Frontier": plain sorted() puts "DOS" first since 'O' < 'i' in
+        codepoint order, but localeCompare() puts "Digital" first since it
+        compares 'o' vs 'i' case-insensitively)."""
         labels = self._rendered_themes_modal_section_labels('Dark Themes', 'Light Themes')
-        self.assertEqual(labels, sorted(labels),
+        self.assertEqual(labels, sorted(labels, key=str.casefold),
                          'Dark Themes in the themes modal must be in alphabetical order')
 
     def test_light_themes_alphabetical(self):
-        """Light Themes section must list themes in alphabetical order by label."""
+        """Light Themes section must list themes in alphabetical order by
+        label (case-insensitively - see test_dark_themes_alphabetical)."""
         labels = self._rendered_themes_modal_section_labels('Light Themes', 'Fun Themes')
-        self.assertEqual(labels, sorted(labels),
+        self.assertEqual(labels, sorted(labels, key=str.casefold),
                          'Light Themes in the themes modal must be in alphabetical order')
 
     def test_fun_themes_alphabetical(self):
         """Fun Themes section must list themes in alphabetical order by
-        label. Fun Themes is the last section in the modal, so unlike
-        Dark/Light there's no following header to split on."""
+        label (case-insensitively - see test_dark_themes_alphabetical).
+        Fun Themes is the last section in the modal, so unlike Dark/Light
+        there's no following header to split on."""
         labels = self._rendered_themes_modal_section_labels('Fun Themes', None)
-        self.assertEqual(labels, sorted(labels),
+        self.assertEqual(labels, sorted(labels, key=str.casefold),
                          'Fun Themes in the themes modal must be in alphabetical order')
 
     def _rendered_themes_modal_section_labels(self, start_header, end_header):
@@ -1673,11 +1981,13 @@ class TestThemeAndMenu(unittest.TestCase):
             'hacker': '31337',
             'sguil': 'sguil',
             'cga': 'cga',
-            'c64': 'c64',
+            'breadbin-blue': 'bread',
             'vaporwave': 'vapor',
-            'winxp': 'winxp',
+            'luna-blue': 'luna',
             'amber': 'amber',
-            'msdos': 'dos',
+            'dos-blue': 'dos',
+            'digital-frontier': 'digit',
+            'retro-handheld': 'retro',
         }
         for theme, code in pairs.items():
             self.assertIn(f"keyBuffer.endsWith('{code}')", JS_CONTENT,
@@ -1886,7 +2196,9 @@ class TestThemeAndMenu(unittest.TestCase):
         ethereal_block = CSS_CONTENT.split('[data-theme="ethereal"] {')[1].split('}')[0]
         lumon_block = CSS_CONTENT.split('[data-theme="lumon"] {')[1].split('}')[0]
         catppuccin_block = CSS_CONTENT.split('[data-theme="catppuccin"] {')[1].split('}')[0]
+        ohmydebn_block = CSS_CONTENT.split('[data-theme="ohmydebn"] {')[1].split('}')[0]
         catppuccin_latte_block = CSS_CONTENT.split('[data-theme="catppuccin-latte"] {')[1].split('}')[0]
+        flexoki_light_block = CSS_CONTENT.split('[data-theme="flexoki-light"] {')[1].split('}')[0]
         everforest_block = CSS_CONTENT.split('[data-theme="everforest"] {')[1].split('}')[0]
         gruvbox_block = CSS_CONTENT.split('[data-theme="gruvbox"] {')[1].split('}')[0]
         hackerman_block = CSS_CONTENT.split('[data-theme="hackerman"] {')[1].split('}')[0]
@@ -1918,8 +2230,12 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Lumon theme must define --help-icon-color')
         self.assertIn('--help-icon-color:', catppuccin_block,
                       'Catppuccin theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', ohmydebn_block,
+                      'OhMyDebn theme must define --help-icon-color')
         self.assertIn('--help-icon-color:', catppuccin_latte_block,
                       'Catppuccin Latte theme must define --help-icon-color')
+        self.assertIn('--help-icon-color:', flexoki_light_block,
+                      'Flexoki Light theme must define --help-icon-color')
         self.assertIn('--help-icon-color:', everforest_block,
                       'Everforest theme must define --help-icon-color')
         self.assertIn('--help-icon-color:', gruvbox_block,
@@ -2015,9 +2331,17 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('[data-theme="catppuccin"]', CSS_CONTENT,
                       'CSS must have a Catppuccin theme override block')
 
+    def test_ohmydebn_theme_override_exists(self):
+        self.assertIn('[data-theme="ohmydebn"]', CSS_CONTENT,
+                      'CSS must have an OhMyDebn theme override block')
+
     def test_catppuccin_latte_theme_override_exists(self):
         self.assertIn('[data-theme="catppuccin-latte"]', CSS_CONTENT,
                       'CSS must have a Catppuccin Latte theme override block')
+
+    def test_flexoki_light_theme_override_exists(self):
+        self.assertIn('[data-theme="flexoki-light"]', CSS_CONTENT,
+                      'CSS must have a Flexoki Light theme override block')
 
     def test_everforest_theme_override_exists(self):
         self.assertIn('[data-theme="everforest"]', CSS_CONTENT,
@@ -2133,9 +2457,17 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn("'catppuccin':", JS_CONTENT,
                       'THEMES registry must include the catppuccin theme')
 
+    def test_ohmydebn_theme_in_registry(self):
+        self.assertIn("'ohmydebn':", JS_CONTENT,
+                      'THEMES registry must include the ohmydebn theme')
+
     def test_catppuccin_latte_theme_in_registry(self):
         self.assertIn("'catppuccin-latte':", JS_CONTENT,
                       'THEMES registry must include the catppuccin-latte theme')
+
+    def test_flexoki_light_theme_in_registry(self):
+        self.assertIn("'flexoki-light':", JS_CONTENT,
+                      'THEMES registry must include the flexoki-light theme')
 
     def test_everforest_theme_in_registry(self):
         self.assertIn("'everforest':", JS_CONTENT,
@@ -2292,22 +2624,22 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('--text-muted: #55aaaa', themes_modal_body,
                      "Themes modal must reset --text-muted to CGA's normal (light) value")
 
-    def test_c64_logo_text_uses_light_blue(self):
+    def test_breadbin_blue_logo_text_uses_light_blue(self):
         """The 'SO-CRATES' header logo link is normally --text-bright (white
-        in every theme, including C64). C64 overrides it to --text-primary
-        (light blue) instead, to match the rest of its header text rather
-        than standing out in white."""
+        in every theme, including Breadbin Blue). Breadbin Blue overrides it
+        to --text-primary (light blue) instead, to match the rest of its
+        header text rather than standing out in white."""
         self.assertIn('class="app-logo-text"', HTML_CONTENT,
                       'The header logo link must carry the app-logo-text class')
         override_match = re.search(
-            r'\[data-theme="c64"\] \.app-logo-text\s*\{([^}]*)\}',
+            r'\[data-theme="breadbin-blue"\] \.app-logo-text\s*\{([^}]*)\}',
             CSS_CONTENT,
         )
         self.assertIsNotNone(override_match,
-                             'C64 must override .app-logo-text color')
+                             'Breadbin Blue must override .app-logo-text color')
         self.assertIn('color: var(--text-primary) !important', override_match.group(1),
-                      'C64 logo text must use --text-primary (light blue), overriding the '
-                      'default --text-bright (white) with !important since the inline '
+                      'Breadbin Blue logo text must use --text-primary (light blue), overriding '
+                      'the default --text-bright (white) with !important since the inline '
                       'style="color: var(--text-bright)" on the element itself outranks a '
                       'plain class selector')
 
@@ -2373,13 +2705,13 @@ class TestThemeAndMenu(unittest.TestCase):
         result = js_statements('''
             var order = [];
             setTheme('dark');
-            for (var i = 0; i < 28; i++) {
+            for (var i = 0; i < 32; i++) {
                 toggleTheme();
                 order.push(document.documentElement.getAttribute('data-theme') || 'dark');
             }
             window.__jsdom_result = { order: order };
         ''')
-        self.assertEqual(result['order'], ['nord', 'osaka-jade', 'retro-82', 'ristretto', 'tokyo-night', 'vantablack', 'catppuccin-latte', 'light', 'rose-pine', 'white', 'amber', 'c64', 'cga', 'hacker', 'msdos', 'sguil', 'vaporwave', 'winxp', 'catppuccin', 'ethereal', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'lumon', 'matte-black', 'miasma', 'dark'],
+        self.assertEqual(result['order'], ['nord', 'ohmydebn', 'osaka-jade', 'retro-82', 'ristretto', 'tokyo-night', 'vantablack', 'catppuccin-latte', 'light', 'flexoki-light', 'rose-pine', 'white', 'amber', 'breadbin-blue', 'cga', 'digital-frontier', 'dos-blue', 'hacker', 'luna-blue', 'retro-handheld', 'sguil', 'vaporwave', 'catppuccin', 'ethereal', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'lumon', 'matte-black', 'miasma', 'dark'],
                          't hotkey cycle order must match menu order')
 
     def test_hacker_mode_easter_egg_exists(self):
@@ -2420,20 +2752,20 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertEqual(result['theme'], 'cga',
                          'Typing cga after other keystrokes must still activate CGA theme')
 
-    def test_c64_easter_egg_exists(self):
-        """Typing c64 outside of input fields must activate the C64 theme."""
-        self.assertIn("keyBuffer.endsWith('c64')", JS_CONTENT,
-                      'JS must check for the c64 easter egg sequence')
-        self.assertIn("setTheme('c64')", JS_CONTENT,
-                      'Easter egg must activate C64')
-        self.assertIn('Switched to C64 theme', JS_CONTENT,
-                      'Easter egg activation message must reference C64 theme')
+    def test_breadbin_blue_easter_egg_exists(self):
+        """Typing bread outside of input fields must activate the Breadbin Blue theme."""
+        self.assertIn("keyBuffer.endsWith('bread')", JS_CONTENT,
+                      'JS must check for the bread easter egg sequence')
+        self.assertIn("setTheme('breadbin-blue')", JS_CONTENT,
+                      'Easter egg must activate Breadbin Blue')
+        self.assertIn('Switched to Breadbin Blue theme', JS_CONTENT,
+                      'Easter egg activation message must reference Breadbin Blue theme')
 
-    def test_c64_easter_egg_short_code_triggers_via_endswith(self):
+    def test_breadbin_blue_easter_egg_short_code_triggers_via_endswith(self):
         """REGRESSION: same class of bug as the cga easter egg - a code
-        shorter than the 5-char keyBuffer (like "c64") must actually trigger
-        after other keystrokes, not just in the first few keystrokes after
-        page load."""
+        shorter than the 5-char keyBuffer (like "bread") must actually
+        trigger after other keystrokes, not just in the first few
+        keystrokes after page load."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             setTheme('dark');
@@ -2441,11 +2773,11 @@ class TestThemeAndMenu(unittest.TestCase):
                 document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
             }
             'xyz'.split('').forEach(press);
-            'c64'.split('').forEach(press);
+            'bread'.split('').forEach(press);
             window.__jsdom_result = { theme: getCurrentTheme() };
         ''')
-        self.assertEqual(result['theme'], 'c64',
-                         'Typing c64 after other keystrokes must still activate C64 theme')
+        self.assertEqual(result['theme'], 'breadbin-blue',
+                         'Typing bread after other keystrokes must still activate Breadbin Blue theme')
 
     def test_vaporwave_easter_egg_exists(self):
         """Typing vapor outside of input fields must activate the Vaporwave theme."""
@@ -2457,7 +2789,7 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Easter egg activation message must reference Vaporwave theme')
 
     def test_vaporwave_easter_egg_short_code_triggers_via_endswith(self):
-        """REGRESSION: same class of bug as the cga/c64 easter eggs - "vapor"
+        """REGRESSION: same class of bug as the cga/bread easter eggs - "vapor"
         is exactly 5 characters (the buffer's full capacity), so this also
         verifies the buffer-fill edge case works via endsWith(), not just
         codes shorter than 5 characters."""
@@ -2474,20 +2806,20 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertEqual(result['theme'], 'vaporwave',
                          'Typing vapor after other keystrokes must still activate Vaporwave theme')
 
-    def test_winxp_easter_egg_exists(self):
-        """Typing winxp outside of input fields must activate the Windows XP theme."""
-        self.assertIn("keyBuffer.endsWith('winxp')", JS_CONTENT,
-                      'JS must check for the winxp easter egg sequence')
-        self.assertIn("setTheme('winxp')", JS_CONTENT,
-                      'Easter egg must activate Windows XP')
-        self.assertIn('Switched to Windows XP theme', JS_CONTENT,
-                      'Easter egg activation message must reference Windows XP theme')
+    def test_luna_blue_easter_egg_exists(self):
+        """Typing luna outside of input fields must activate the Luna Blue theme."""
+        self.assertIn("keyBuffer.endsWith('luna')", JS_CONTENT,
+                      'JS must check for the luna easter egg sequence')
+        self.assertIn("setTheme('luna-blue')", JS_CONTENT,
+                      'Easter egg must activate Luna Blue')
+        self.assertIn('Switched to Luna Blue theme', JS_CONTENT,
+                      'Easter egg activation message must reference Luna Blue theme')
 
-    def test_winxp_easter_egg_short_code_triggers_via_endswith(self):
-        """REGRESSION: same class of bug as the cga/c64/vapor easter eggs -
-        "winxp" is exactly 5 characters (the buffer's full capacity), so
-        this also verifies the buffer-fill edge case works via endsWith(),
-        not just codes shorter than 5 characters."""
+    def test_luna_blue_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: same class of bug as the cga/bread/vapor easter eggs -
+        a code shorter than the 5-char keyBuffer (like "luna") must actually
+        trigger after other keystrokes, not just in the first few
+        keystrokes after page load."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             setTheme('dark');
@@ -2495,11 +2827,11 @@ class TestThemeAndMenu(unittest.TestCase):
                 document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
             }
             'xyz'.split('').forEach(press);
-            'winxp'.split('').forEach(press);
+            'luna'.split('').forEach(press);
             window.__jsdom_result = { theme: getCurrentTheme() };
         ''')
-        self.assertEqual(result['theme'], 'winxp',
-                         'Typing winxp after other keystrokes must still activate Windows XP theme')
+        self.assertEqual(result['theme'], 'luna-blue',
+                         'Typing luna after other keystrokes must still activate Luna Blue theme')
 
     def test_amber_easter_egg_exists(self):
         """Typing amber outside of input fields must activate the Amber CRT theme."""
@@ -2511,7 +2843,7 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Easter egg activation message must reference Amber CRT theme')
 
     def test_amber_easter_egg_short_code_triggers_via_endswith(self):
-        """REGRESSION: same class of bug as the cga/c64/vapor/winxp easter
+        """REGRESSION: same class of bug as the cga/bread/vapor/luna easter
         eggs - "amber" is exactly 5 characters (the buffer's full
         capacity), so this also verifies the buffer-fill edge case works
         via endsWith(), not just codes shorter than 5 characters."""
@@ -2528,20 +2860,20 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertEqual(result['theme'], 'amber',
                          'Typing amber after other keystrokes must still activate Amber CRT theme')
 
-    def test_msdos_easter_egg_exists(self):
-        """Typing dos outside of input fields must activate the MS-DOS Blue theme."""
+    def test_dos_blue_easter_egg_exists(self):
+        """Typing dos outside of input fields must activate the DOS Blue theme."""
         self.assertIn("keyBuffer.endsWith('dos')", JS_CONTENT,
                       'JS must check for the dos easter egg sequence')
-        self.assertIn("setTheme('msdos')", JS_CONTENT,
-                      'Easter egg must activate MS-DOS Blue')
-        self.assertIn('Switched to MS-DOS Blue theme', JS_CONTENT,
-                      'Easter egg activation message must reference MS-DOS Blue theme')
+        self.assertIn("setTheme('dos-blue')", JS_CONTENT,
+                      'Easter egg must activate DOS Blue')
+        self.assertIn('Switched to DOS Blue theme', JS_CONTENT,
+                      'Easter egg activation message must reference DOS Blue theme')
 
-    def test_msdos_easter_egg_short_code_triggers_via_endswith(self):
-        """REGRESSION: same class of bug as the cga/c64 easter eggs - a code
-        shorter than the 5-char keyBuffer (like "dos") must actually trigger
-        after other keystrokes, not just in the first few keystrokes after
-        page load."""
+    def test_dos_blue_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: same class of bug as the cga/bread easter eggs - a
+        code shorter than the 5-char keyBuffer (like "dos") must actually
+        trigger after other keystrokes, not just in the first few
+        keystrokes after page load."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             setTheme('dark');
@@ -2552,8 +2884,62 @@ class TestThemeAndMenu(unittest.TestCase):
             'dos'.split('').forEach(press);
             window.__jsdom_result = { theme: getCurrentTheme() };
         ''')
-        self.assertEqual(result['theme'], 'msdos',
-                         'Typing dos after other keystrokes must still activate MS-DOS Blue theme')
+        self.assertEqual(result['theme'], 'dos-blue',
+                         'Typing dos after other keystrokes must still activate DOS Blue theme')
+
+    def test_digital_frontier_easter_egg_exists(self):
+        """Typing digit outside of input fields must activate the Digital Frontier theme."""
+        self.assertIn("keyBuffer.endsWith('digit')", JS_CONTENT,
+                      'JS must check for the digit easter egg sequence')
+        self.assertIn("setTheme('digital-frontier')", JS_CONTENT,
+                      'Easter egg must activate Digital Frontier')
+        self.assertIn('Switched to Digital Frontier theme', JS_CONTENT,
+                      'Easter egg activation message must reference Digital Frontier theme')
+
+    def test_digital_frontier_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: same class of bug as the cga/bread/dos easter eggs -
+        a code shorter than the 5-char keyBuffer (like "digit") must
+        actually trigger after other keystrokes, not just in the first few
+        keystrokes after page load."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            function press(k) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
+            }
+            'xyz'.split('').forEach(press);
+            'digit'.split('').forEach(press);
+            window.__jsdom_result = { theme: getCurrentTheme() };
+        ''')
+        self.assertEqual(result['theme'], 'digital-frontier',
+                         'Typing digit after other keystrokes must still activate Digital Frontier theme')
+
+    def test_retro_handheld_easter_egg_exists(self):
+        """Typing retro outside of input fields must activate the Retro Handheld theme."""
+        self.assertIn("keyBuffer.endsWith('retro')", JS_CONTENT,
+                      'JS must check for the retro easter egg sequence')
+        self.assertIn("setTheme('retro-handheld')", JS_CONTENT,
+                      'Easter egg must activate Retro Handheld')
+        self.assertIn('Switched to Retro Handheld theme', JS_CONTENT,
+                      'Easter egg activation message must reference Retro Handheld theme')
+
+    def test_retro_handheld_easter_egg_short_code_triggers_via_endswith(self):
+        """REGRESSION: same class of bug as the cga/bread/dos/digit easter
+        eggs - a code shorter than the 5-char keyBuffer (like "retro") must
+        actually trigger after other keystrokes, not just in the first few
+        keystrokes after page load."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            setTheme('dark');
+            function press(k) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
+            }
+            'xyz'.split('').forEach(press);
+            'retro'.split('').forEach(press);
+            window.__jsdom_result = { theme: getCurrentTheme() };
+        ''')
+        self.assertEqual(result['theme'], 'retro-handheld',
+                         'Typing retro after other keystrokes must still activate Retro Handheld theme')
 
     def test_hacker_mode_easter_egg_ignores_input_fields(self):
         """Easter egg must not trigger while typing in form controls."""
@@ -2928,12 +3314,20 @@ class TestFiltering(unittest.TestCase):
         self.assertIn('rel="noopener noreferrer"', badge_block,
                       'External update-badge link must carry rel=noopener noreferrer')
 
-    def test_check_for_updates_checkbox_in_settings_modal(self):
-        settings_block = HTML_CONTENT.split('id="settingsModal"')[1].split('id="themesModal"')[0]
-        self.assertIn('id="checkForUpdates"', settings_block,
-                      'Check-for-updates checkbox must live in the Settings modal')
-        self.assertIn('onchange="handleCheckForUpdatesChange(this)"', settings_block,
+    def test_check_for_updates_checkbox_in_about_modal(self):
+        """The auto-check checkbox and its manual Check Now button both
+        live in the About modal, not Settings - version/update info is an
+        About concern, not a user preference dialog."""
+        about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
+        self.assertIn('id="checkForUpdates"', about_block,
+                      'Check-for-updates checkbox must live in the About modal')
+        self.assertIn('onchange="handleCheckForUpdatesChange(this)"', about_block,
                       'Checkbox must apply immediately on change, matching the sync-with-OhMyDebn toggle - no Save-button trap')
+
+    def test_check_for_updates_checkbox_not_in_settings_modal(self):
+        settings_block = HTML_CONTENT.split('id="settingsModal"')[1].split('id="aboutModal"')[0]
+        self.assertNotIn('id="checkForUpdates"', settings_block,
+                         'the checkbox must have been moved out of Settings, not just duplicated')
 
     def test_check_for_app_update_does_not_fetch_when_opted_out(self):
         """Opt-in only, same pattern as pollOhmydebnTheme() - must not hit
@@ -3000,14 +3394,77 @@ class TestFiltering(unittest.TestCase):
         self.assertFalse(result['threw'], 'a failed version check must not throw/break init()')
         self.assertEqual(result['badgeDisplay'], 'none', 'the badge must stay hidden on fetch failure')
 
+    def test_check_now_button_exists_in_about_modal(self):
+        about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
+        self.assertIn('onclick="checkForAppUpdateNow()"', about_block,
+                      'About must have a manual Check Now button alongside the auto-check checkbox')
+
+    def test_check_for_app_update_now_bypasses_opt_in_gate(self):
+        """The manual button IS the consent - it must fetch even when the
+        automatic-check setting is off, unlike checkForAppUpdate()."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.removeItem('socrates_checkForUpdates');
+            var fetchCalled = false;
+            window.fetch = function(url) {
+                if (url.indexOf('/api/version-check') >= 0) fetchCalled = true;
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ updateAvailable: false, latestVersion: null, currentVersion: '3.1.0' }) });
+            };
+            await checkForAppUpdateNow();
+            window.__jsdom_result = fetchCalled;
+        ''')
+        self.assertTrue(result, 'checkForAppUpdateNow must fetch /api/version-check regardless of the opt-in setting')
+
+    def test_check_for_app_update_now_toasts_up_to_date(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ updateAvailable: false, latestVersion: null, currentVersion: '3.1.0' }) });
+            };
+            await checkForAppUpdateNow();
+            window.__jsdom_result = document.querySelector('.socrates-toast')?.textContent || null;
+        ''')
+        self.assertIn('latest version', result or '')
+
+    def test_check_for_app_update_now_toasts_update_available(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ updateAvailable: true, latestVersion: '99.0.0', currentVersion: '3.1.0' }) });
+            };
+            await checkForAppUpdateNow();
+            window.__jsdom_result = {
+                toast: document.querySelector('.socrates-toast')?.textContent || null,
+                badgeDisplay: document.getElementById('footerUpdateBadge').style.display
+            };
+        ''')
+        self.assertIn('99.0.0', result['toast'] or '')
+        self.assertEqual(result['badgeDisplay'], 'inline', 'the footer badge must also update from the manual check')
+
+    def test_check_for_app_update_now_toasts_on_failure(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) { return Promise.reject(new Error('network error')); };
+            var threw = false;
+            try {
+                await checkForAppUpdateNow();
+            } catch (e) {
+                threw = true;
+            }
+            window.__jsdom_result = { threw: threw, toast: document.querySelector('.socrates-toast')?.textContent || null };
+        ''')
+        self.assertFalse(result['threw'], 'a failed manual check must not throw')
+        self.assertIsNotNone(result['toast'], 'the user must be told the check failed, not left with silence')
+
     def test_check_for_updates_checkbox_initializes_from_localstorage(self):
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             localStorage.setItem('socrates_checkForUpdates', 'true');
-            showSettingsModal();
+            window.fetch = function() { return Promise.resolve({ json: () => Promise.resolve({}) }); };
+            showAboutModal();
             window.__jsdom_result = document.getElementById('checkForUpdates').checked;
         ''')
-        self.assertTrue(result, 'opening Settings must reflect the persisted check-for-updates preference')
+        self.assertTrue(result, 'opening About must reflect the persisted check-for-updates preference')
 
     def test_enabling_check_for_updates_triggers_immediate_check(self):
         """No Save button involved - toggling the checkbox must apply (and
@@ -3021,7 +3478,7 @@ class TestFiltering(unittest.TestCase):
                 if (url.indexOf('/api/version-check') >= 0) fetchCalled = true;
                 return Promise.resolve({ ok: true, json: () => Promise.resolve({ updateAvailable: false }) });
             };
-            showSettingsModal();
+            showAboutModal();
             var checkbox = document.getElementById('checkForUpdates');
             checkbox.checked = true;
             handleCheckForUpdatesChange(checkbox);
@@ -3033,6 +3490,175 @@ class TestFiltering(unittest.TestCase):
         ''')
         self.assertEqual(result['persisted'], 'true', 'checking the box must persist immediately, without a Save click')
         self.assertTrue(result['fetchCalled'], 'checking the box must trigger an immediate check')
+
+    def test_gear_menu_markup_is_identical_in_both_copies(self):
+        """The gear menu's ~30 lines of markup are hand-duplicated between
+        socrates.html's static first-paint copy and renderGearMenu()'s
+        template string in socrates.js (re-rendered by showWelcomeUI()/
+        loadAnalysis() during init() to reflect menu-item/active-theme
+        state) - true elimination isn't safe here, since init() only
+        reaches that re-render after several awaited steps (a version
+        fetch, theme-sync-available fetch, etc.), so making the static
+        copy inert (e.g. via an HTML <template>) would introduce a real,
+        network-dependent delay before the menu becomes visible at all,
+        not just a cosmetic cleanup. Instead, this test makes the two
+        copies impossible to silently drift apart: it normalizes away the
+        one intentional difference (the gear-icon SVG is inlined in the
+        static copy, but a GEAR_ICON_SVG constant reference in the JS
+        template) and asserts everything else matches byte-for-byte."""
+        html_match = re.search(
+            r'<div class="app-header-menu">.*?</div>\s*</div>',
+            HTML_CONTENT, re.DOTALL)
+        self.assertIsNotNone(html_match, 'static gear menu block must exist in socrates.html')
+        html_block = html_match.group(0)
+
+        js_match = re.search(r'function renderGearMenu\(\) \{\s*return `(.*?)`;\s*\}', JS_CONTENT, re.DOTALL)
+        self.assertIsNotNone(js_match, 'renderGearMenu must exist')
+        js_block = js_match.group(1)
+
+        gear_icon_svg_match = re.search(r"const GEAR_ICON_SVG = `(.*?)`;", JS_CONTENT, re.DOTALL)
+        self.assertIsNotNone(gear_icon_svg_match, 'GEAR_ICON_SVG constant must exist')
+        js_block_resolved = js_block.replace('${GEAR_ICON_SVG}', gear_icon_svg_match.group(1))
+
+        def normalize(markup):
+            return re.sub(r'>\s+<', '><', re.sub(r'\s+', ' ', markup)).strip()
+
+        self.assertEqual(normalize(html_block), normalize(js_block_resolved),
+                          'the static gear menu in socrates.html and renderGearMenu()\'s output '
+                          'must stay byte-identical (aside from the GEAR_ICON_SVG substitution) - '
+                          'update both together whenever a menu item changes')
+
+    def test_gear_menu_has_about_item_in_both_copies(self):
+        self.assertIn('showAboutModal()', HTML_CONTENT,
+                      'the static gear menu in socrates.html must have an About item')
+        gear_menu_match = re.search(r'function renderGearMenu\(\) \{\s*return `(.*?)`;\s*\}', JS_CONTENT, re.DOTALL)
+        self.assertIsNotNone(gear_menu_match, 'renderGearMenu must exist')
+        self.assertIn('showAboutModal()', gear_menu_match.group(1),
+                      'renderGearMenu() output must also have an About item')
+
+    def test_about_modal_skeleton_has_github_link(self):
+        self.assertIn('id="aboutModal" onclick="handleAboutBackdropClick(event)"', HTML_CONTENT,
+                      'aboutModal must exist with a backdrop-click handler wired up')
+        about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
+        self.assertIn('href="https://github.com/dougburks/so-crates"', about_block,
+                      'About modal must link to the GitHub repo')
+        self.assertIn('href="https://so-crates.org"', about_block,
+                      'About modal must link to the documentation site')
+        self.assertIn('id="aboutVersion"', about_block,
+                      'About modal must have a place to render the fetched version number')
+
+    def test_about_modal_link_labels_and_order(self):
+        about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
+        self.assertIn('>GitHub repo</a>', about_block,
+                      'GitHub link label must be "GitHub repo", matching "Documentation" as a parallel noun label')
+        self.assertNotIn('View on GitHub', about_block)
+        docs_pos = about_block.index('href="https://so-crates.org"')
+        github_pos = about_block.index('href="https://github.com/dougburks/so-crates"')
+        self.assertLess(docs_pos, github_pos, 'Documentation must come before the GitHub repo link')
+
+    def test_about_modal_has_made_with_heart_line(self):
+        about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
+        self.assertIn('Made with', about_block)
+        self.assertIn('by defenders for defenders', about_block)
+        self.assertIn('<svg', about_block.split('Made with')[1].split('by defenders')[0],
+                      'the heart must be an inline SVG icon (matching the app\'s icon style), not an emoji')
+
+    def test_about_modal_has_sponsor_line(self):
+        about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
+        self.assertIn('Sponsored by', about_block)
+        sponsor_link = about_block.split('Sponsored by')[1].split('</div>')[0]
+        self.assertIn('href="https://securityonion.com"', sponsor_link)
+        self.assertIn('>Security Onion Solutions, LLC</a>', sponsor_link)
+        made_with_pos = about_block.index('Made with')
+        sponsor_pos = about_block.index('Sponsored by')
+        self.assertLess(made_with_pos, sponsor_pos, 'the sponsor line must come after the "Made with" line')
+
+    def test_about_modal_made_with_and_sponsor_share_one_line(self):
+        """REGRESSION: these were originally two separate lines; measured
+        against the modal's actual width there was enough room to combine
+        them into one, hyphen-separated line - must not regress back to
+        two separate <div> blocks."""
+        about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
+        made_with_block = about_block.split('Made with')[1].split('</div>')[0]
+        self.assertIn('by defenders for defenders - Sponsored by', made_with_block)
+        self.assertIn('href="https://securityonion.com"', made_with_block)
+        self.assertIn('white-space: nowrap', about_block.split('Made with')[0].rsplit('<div', 1)[-1])
+
+    def test_about_modal_wide_enough_for_tagline_to_not_wrap(self):
+        """REGRESSION: at the original 450px max-width, 'Security Onion
+        Containerized Rapid Analysis of Threats, Evil, and Sus' wrapped."""
+        about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
+        max_width_match = re.search(r'max-width:\s*(\d+)px', about_block)
+        self.assertIsNotNone(max_width_match, 'aboutModal .modal-content must set an explicit max-width')
+        self.assertGreaterEqual(int(max_width_match.group(1)), 650,
+                                'modal must be wide enough for the full tagline to fit on one line')
+
+    def test_footer_link_opens_about_modal_instead_of_navigating(self):
+        """REGRESSION: the footer 'SO-CRATES' link used to navigate straight
+        to GitHub - it must now open the About modal instead (the Update
+        badge link right next to it still goes straight to GitHub's
+        releases page, unchanged - see test_footer_update_badge_skeleton_in_html)."""
+        footer = HTML_CONTENT.split('class="footer"')[1]
+        version_link = footer.split('id="footerVersionLink"')[0].split('<a ')[-1]
+        self.assertIn('onclick="showAboutModal(); return false;"', version_link)
+        self.assertNotIn('href="https://github.com', version_link,
+                         'the footer version link must no longer navigate directly to GitHub')
+
+    def test_showAboutModal_opens_and_renders_version(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/version') {
+                    return Promise.resolve({ json: () => Promise.resolve({ version: '3.1.0' }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve({}) });
+            };
+            showAboutModal();
+            var modalOpen = document.getElementById('aboutModal').classList.contains('active');
+            // showAboutModal() doesn't block modal-open on the version
+            // fetch (same "never block the modal on this" pattern as
+            // showSettingsModal's /api/limits fetch) - wait a tick for the
+            // fetch's .then() to actually run.
+            await new Promise(function(resolve) { setTimeout(resolve, 0); });
+            window.__jsdom_result = {
+                modalOpen: modalOpen,
+                versionText: document.getElementById('aboutVersion').textContent
+            };
+        ''')
+        self.assertTrue(result['modalOpen'], 'showAboutModal must open the modal')
+        self.assertEqual(result['versionText'], '3.1.0')
+
+    def test_escape_closes_about_modal(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            document.getElementById('aboutModal').classList.add('active');
+            var openBefore = document.getElementById('aboutModal').classList.contains('active');
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+            window.__jsdom_result = {
+                openBefore: openBefore,
+                openAfter: document.getElementById('aboutModal').classList.contains('active')
+            };
+        ''')
+        self.assertTrue(result['openBefore'])
+        self.assertFalse(result['openAfter'], 'Escape must close the About modal')
+
+    def test_handleAboutBackdropClick_closes_only_on_backdrop(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var modal = document.getElementById('aboutModal');
+            modal.classList.add('active');
+            handleAboutBackdropClick({ target: modal });
+            var closedOnBackdrop = !modal.classList.contains('active');
+
+            modal.classList.add('active');
+            var inner = document.querySelector('#aboutModal .modal-content');
+            handleAboutBackdropClick({ target: inner });
+            var stayedOpenOnContent = modal.classList.contains('active');
+
+            window.__jsdom_result = { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: stayedOpenOnContent };
+        ''')
+        self.assertTrue(result['closedOnBackdrop'])
+        self.assertTrue(result['stayedOpenOnContent'])
 
     def test_has_analysis_header(self):
         self.assertIn('id="mainHeader"', HTML_CONTENT)
@@ -3800,6 +4426,30 @@ class TestInlineHtmlEscaping(unittest.TestCase):
         self.assertIn('${escapeHtml(dateDisplay)}', load_analysis,
                       'dateDisplay must be escaped in appHeaderMeta.innerHTML')
 
+    def test_loadAnalysis_encodes_md5_in_fetch_url(self):
+        """REGRESSION: loadAnalysis (and several other fetch call sites)
+        used to interpolate the md5/currentMd5 value straight into a query
+        string with no encodeURIComponent - a crafted ?file= link
+        containing extra '&'-delimited characters could inject additional
+        query parameters into the app's own API calls made by the
+        victim's browser. Not an XSS risk (values are separately escaped
+        for display), but still worth closing."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchedUrls = [];
+            window.fetch = function(url) {
+                fetchedUrls.push(url);
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ error: 'not found' }) });
+            };
+            try { await loadAnalysis('a'.repeat(32) + '&injected=1'); } catch (e) {}
+            window.__jsdom_result = fetchedUrls;
+        ''')
+        self.assertTrue(any('load-analysis?md5=' in u for u in result), result)
+        load_analysis_url = next(u for u in result if 'load-analysis?md5=' in u)
+        self.assertNotIn('&injected=1', load_analysis_url,
+                          'the injected query param must be encoded, not passed through raw')
+        self.assertIn('%26injected%3D1', load_analysis_url)
+
     def test_document_title_does_not_html_escape_filename(self):
         """document.title is a plain-text DOM property, not HTML -- escapeHtml() would
         make literal entities (e.g. &amp;) show up in the browser tab instead of the
@@ -3898,7 +4548,7 @@ class TestSearchUI(unittest.TestCase):
                       'Search button CSS must exist')
 
     def test_search_fetches_stats_with_q(self):
-        self.assertIn("'/api/stats?md5=' + currentMd5 + qParam", JS_CONTENT,
+        self.assertIn("'/api/stats?md5=' + encodeURIComponent(currentMd5) + qParam", JS_CONTENT,
                       'refreshAnalysisData must fetch stats with q parameter')
 
     def test_search_fetches_events_with_q(self):
@@ -7811,6 +8461,225 @@ class TestAllTabServerSideSortAndAggregation(unittest.TestCase):
         ''')
         self.assertIn('WrMultCoils', result['modbusRow'])
         self.assertIn('unsolicited_response', result['dnp3Row'])
+
+
+RULES_INFO_RESPONSE = {
+    'suricata': {'count': 51552, 'updated': 1000.0},
+    'yara': {'count': 12364, 'updated': 2000.0},
+    'sigma': {'windows': {'count': 4308, 'updated': 3000.0}, 'linux': {'count': 182, 'updated': 4000.0}},
+}
+RULE_UPDATE_STATUS_IDLE = {
+    'suricata': {'running': False, 'lines': [], 'done': True, 'error': None},
+    'yara': {'running': False, 'lines': [], 'done': True, 'error': None},
+    'sigma': {'running': False, 'lines': [], 'done': True, 'error': None},
+}
+
+
+class TestRulesModal(unittest.TestCase):
+    def test_welcome_help_content_has_no_rule_update_button(self):
+        """Rule updates now live in the Rules modal (gear menu), reachable
+        at all times - the Welcome-only 'Check for rule updates' button and
+        its startRuleUpdate() flow must be gone entirely."""
+        self.assertNotIn('startRuleUpdate', JS_CONTENT,
+                         'startRuleUpdate() and its button must be fully removed')
+        self.assertNotIn('Check for rule updates', JS_CONTENT)
+
+    def test_old_rule_update_modal_removed(self):
+        self.assertNotIn('ruleUpdateModal', HTML_CONTENT)
+        self.assertNotIn('ruleUpdateModal', JS_CONTENT)
+
+    def test_gear_menu_has_rules_item_in_both_copies(self):
+        """The gear menu is duplicated (static HTML for first paint, plus
+        renderGearMenu() in JS for re-renders) - both must offer Rules."""
+        self.assertIn('showRulesModal()', HTML_CONTENT,
+                      'the static gear menu in socrates.html must have a Rules item')
+        gear_menu_match = re.search(r'function renderGearMenu\(\) \{\s*return `(.*?)`;\s*\}', JS_CONTENT, re.DOTALL)
+        self.assertIsNotNone(gear_menu_match, 'renderGearMenu must exist')
+        self.assertIn('showRulesModal()', gear_menu_match.group(1),
+                      'renderGearMenu() output must also have a Rules item')
+
+    def test_rules_modal_skeleton_exists(self):
+        self.assertIn('id="rulesModal" onclick="handleRulesBackdropClick(event)"', HTML_CONTENT,
+                      'rulesModal must exist with a backdrop-click handler wired up')
+        self.assertIn('id="rulesModalBody"', HTML_CONTENT,
+                      'rulesModal must have a body element to render per-ruleset status into')
+        self.assertIn('id="updateAllRulesBtn" onclick="triggerRulesetUpdate(\'all\')"', HTML_CONTENT,
+                      'rulesModal must have an Update All button')
+
+    def test_showRulesModal_fetches_info_and_status_and_renders(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            // Prevents the page's own auto-init (showWelcome(), still in
+            // flight from page load with its own pending fetch) from
+            // racing this test and closing rulesModal via its own
+            // closeOtherMenuModals('helpModal') call during one of
+            // showRulesModal's await points below.
+            localStorage.setItem('socrates_hideHelp', 'true');
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            window.__jsdom_result = {
+                modalOpen: document.getElementById('rulesModal').classList.contains('active'),
+                bodyText: document.getElementById('rulesModalBody').textContent
+            };
+        ''')
+        self.assertTrue(result['modalOpen'], 'showRulesModal must open the modal')
+        self.assertIn('51,552', result['bodyText'].replace(' ', ' '))
+        self.assertIn('Suricata', result['bodyText'])
+        self.assertIn('YARA', result['bodyText'])
+        self.assertIn('Sigma', result['bodyText'])
+
+    def test_sigma_count_date_format_matches_suricata_and_yara(self):
+        """REGRESSION: Sigma used to render its windows/linux counts as
+        '<count> (updated <date>)' while Suricata/YARA used
+        '<count> — updated <date>' - all three must use the same format."""
+        render_fn = JS_CONTENT.split('function renderRulesModalBody(info, status) {')[1].split('\n        }')[0]
+        self.assertNotIn('(updated', render_fn,
+                         'Sigma must not use a different (parentheses) format than Suricata/YARA')
+        self.assertEqual(render_fn.count('— updated'), 4,
+                         'Suricata, YARA, and Sigma windows + linux must all use the em-dash format (4 total)')
+
+    def test_triggerRulesetUpdate_posts_ruleset_body(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var fetchCalls = [];
+            window.fetch = function(url, opts) {
+                fetchCalls.push({ url: url, method: opts && opts.method, body: opts && opts.body });
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await triggerRulesetUpdate('suricata');
+            window.__jsdom_result = {
+                posted: fetchCalls.some(c => c.url === '/api/update-rules' && c.method === 'POST' && c.body === JSON.stringify({ ruleset: 'suricata' }))
+            };
+        ''')
+        self.assertTrue(result['posted'], "triggerRulesetUpdate('suricata') must POST {ruleset: 'suricata'}")
+
+    def test_triggerRulesetUpdate_does_not_restart_polling_after_modal_closed_mid_flight(self):
+        """REGRESSION: closing the Rules modal (Escape/backdrop/close
+        button) while a triggerRulesetUpdate() POST+refresh was still in
+        flight used to unconditionally restart the 2s poll interval once
+        that promise resolved, regardless of the modal's now-closed state -
+        leaking an indefinite background poll of a hidden modal."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var setIntervalCalls = 0;
+            window.setInterval = function(fn, ms) { setIntervalCalls++; return 12345; };
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            document.getElementById('rulesModal').classList.add('active');
+            var updatePromise = triggerRulesetUpdate('suricata');
+            // Close the modal before triggerRulesetUpdate's own awaits resolve.
+            closeRulesModal();
+            await updatePromise;
+            window.__jsdom_result = { setIntervalCalls: setIntervalCalls };
+        ''')
+        self.assertEqual(result['setIntervalCalls'], 0,
+                          'must not start/restart polling once the modal has been closed')
+
+    def test_refresh_renders_running_state_and_toasts_on_completion(self):
+        """Simulates a ruleset transitioning from running to done across two
+        polls - must show a disabled/'Updating…' state while running, then
+        fire a toast once the transition to done is observed."""
+        from tests.jsdom_helper import js_statements
+        running_status = json.loads(json.dumps(RULE_UPDATE_STATUS_IDLE))
+        running_status['suricata'] = {'running': True, 'lines': ['Checking for internet access...'], 'done': False, 'error': None}
+        done_status = json.loads(json.dumps(RULE_UPDATE_STATUS_IDLE))
+        done_status['suricata'] = {'running': False, 'lines': ['Checking for internet access...', 'Suricata rules updated successfully'], 'done': True, 'error': None}
+        result = js_statements('''
+            var callCount = 0;
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                callCount++;
+                var status = callCount === 1 ? ''' + json.dumps(running_status) + ''' : ''' + json.dumps(done_status) + ''';
+                return Promise.resolve({ json: () => Promise.resolve(status) });
+            };
+            await refreshRulesModal();
+            var bodyWhileRunning = document.getElementById('rulesModalBody').innerHTML;
+            await refreshRulesModal();
+            window.__jsdom_result = {
+                showedUpdatingWhileRunning: bodyWhileRunning.indexOf('Updating') >= 0,
+                bodyAfterDone: document.getElementById('rulesModalBody').textContent,
+                toastShown: document.querySelector('.socrates-toast') !== null
+            };
+        ''')
+        self.assertTrue(result['showedUpdatingWhileRunning'], 'the running ruleset must show an in-progress indicator')
+        self.assertIn('Suricata rules updated successfully', result['bodyAfterDone'])
+        self.assertTrue(result['toastShown'], 'a toast must fire once a running->done transition is observed')
+
+    def test_refresh_preserves_log_scroll_position_across_re_renders(self):
+        """REGRESSION: refreshRulesModal() replaces #rulesModalBody's
+        innerHTML wholesale on every poll tick (indefinitely, while the
+        modal is open) - without restoring scroll position afterward, a
+        user reading a long log by scrolling down would get yanked back to
+        the top on the very next poll. Scroll position must be preserved,
+        keyed by ruleset (via data-ruleset), across repeated refreshes."""
+        from tests.jsdom_helper import js_statements
+        running_status = json.loads(json.dumps(RULE_UPDATE_STATUS_IDLE))
+        running_status['suricata'] = {'running': True, 'lines': ['line 1', 'line 2'], 'done': False, 'error': None}
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(running_status) + ''') });
+            };
+            await refreshRulesModal();
+            var logBox = document.querySelector('.rule-update-log[data-ruleset="suricata"]');
+            logBox.scrollTop = 42;
+            await refreshRulesModal();
+            var logBoxAfter = document.querySelector('.rule-update-log[data-ruleset="suricata"]');
+            window.__jsdom_result = {
+                sameElementReplaced: logBoxAfter !== logBox,
+                scrollTopAfter: logBoxAfter.scrollTop
+            };
+        ''')
+        self.assertTrue(result['sameElementReplaced'], 'the log box element must actually be a fresh DOM node each poll (innerHTML replace)')
+        self.assertEqual(result['scrollTopAfter'], 42, 'scroll position must survive the innerHTML replace')
+
+    def test_escape_closes_rules_modal(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            document.getElementById('rulesModal').classList.add('active');
+            var openBefore = document.getElementById('rulesModal').classList.contains('active');
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+            window.__jsdom_result = {
+                openBefore: openBefore,
+                openAfter: document.getElementById('rulesModal').classList.contains('active')
+            };
+        ''')
+        self.assertTrue(result['openBefore'], 'rules modal must actually be open before pressing Escape')
+        self.assertFalse(result['openAfter'], 'Escape must close the rules modal')
+
+    def test_handleRulesBackdropClick_closes_only_on_backdrop(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var modal = document.getElementById('rulesModal');
+            modal.classList.add('active');
+            handleRulesBackdropClick({ target: modal });
+            var closedOnBackdrop = !modal.classList.contains('active');
+
+            modal.classList.add('active');
+            var inner = document.querySelector('#rulesModal .modal-content');
+            handleRulesBackdropClick({ target: inner });
+            var stayedOpenOnContent = modal.classList.contains('active');
+
+            window.__jsdom_result = { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: stayedOpenOnContent };
+        ''')
+        self.assertTrue(result['closedOnBackdrop'])
+        self.assertTrue(result['stayedOpenOnContent'])
 
 
 if __name__ == '__main__':

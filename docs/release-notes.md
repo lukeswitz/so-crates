@@ -4,13 +4,77 @@
 
 ### OhMyDebn theme sync
 
-A new opt-in "Sync theme with OS" setting (off by default) lets SO-CRATES
-follow OhMyDebn desktop theme switches automatically. A new `GET
-/api/theme` endpoint reads a theme name from the `OHMYDEBN_THEME_FILE`
-environment variable (unset outside an OhMyDebn/podman launch, so this is
-a no-op for every other deployment) and the frontend polls it once a
-second while the tab is visible, applying the match through the same
-theme-name allowlist the manual theme switcher already uses.
+A new opt-in "Sync theme with OS" setting (off by default, in the Themes
+modal) lets SO-CRATES follow OhMyDebn desktop theme switches automatically.
+A `GET /api/theme` endpoint reads the active theme's name and color
+palette from a single `OHMYDEBN_THEME_DIR` environment variable (unset
+outside an OhMyDebn/podman launch, so this is a no-op for every other
+deployment), by convention at `<OHMYDEBN_THEME_DIR>/current/theme.name`
+and `<OHMYDEBN_THEME_DIR>/current/theme/`, and the frontend polls it once
+a second while the tab is visible.
+
+- A theme name that matches one of SO-CRATES's built-in themes is applied
+  directly, with a toast: "Changed SO-CRATES theme to `<name>` to match
+  OhMyDebn".
+- For a custom or Aether-generated theme with no built-in match, a full
+  theme (~25 CSS custom properties) is instead synthesized at runtime from
+  the theme's raw color palette, with a toast: "Generated color palette
+  from OhMyDebn theme `<name>`". Three source formats are supported, tried
+  in order against real installed themes until one works: the native
+  `colors.toml`'s numbered `color0`-`color15` ANSI-slot scheme; the same
+  file's alternate semantic-named scheme (`red`/`blue`/`bright_red`/
+  `muted`/..., used by at least one of OhMyDebn's own bundled themes); and
+  `alacritty.toml` (standard `[colors.primary]`/`[colors.normal]`/
+  `[colors.bright]` tables), including its `0xrrggbb` hex variant and
+  themes that omit `[colors.bright]` entirely (falls back to `[colors.normal]`
+  per color). Every derived text/accent color (`--text-muted`,
+  `--tag-*-text`, `--badge-*-text`, `--accent`) is nudged as needed to meet
+  a real WCAG 3:1 contrast ratio against the derived background, so a
+  low-contrast source palette can't make labels/headings unreadable.
+  Verified against all themes bundled with a real OhMyDebn installation.
+- If neither a known theme nor a usable palette is available, sync
+  disables itself and SO-CRATES reverts to Midnight, with a sticky toast
+  explaining why (click, or its "Open Themes" link, to dismiss).
+
+### Rule updates moved to an on-demand Rules modal
+
+Suricata/YARA/Sigma rule updates no longer block server startup. A new
+"Rules" entry in the gear menu opens a modal showing each ruleset's current
+rule count and last-updated time, with an independent "Update" button per
+ruleset plus "Update All", streaming live progress. Startup now only does
+the fast local bootstrap (no network) and prints a message pointing users
+at the new Rules modal instead of the old startup rule-check.
+
+### About modal and manual update checks
+
+A new "About" entry in the gear menu opens a modal with the current
+version, tagline, a "Made with ♥ by defenders for defenders - Sponsored by
+Security Onion Solutions, LLC" line, and Documentation/GitHub links. The
+"Check GitHub for newer releases" checkbox and its manual "Check Now"
+button (added alongside the existing opt-in automatic check, not
+replacing it) moved here from Settings. The footer's "SO-CRATES" link now
+opens this modal instead of navigating to GitHub (the "Update available"
+badge still links directly to the GitHub release).
+
+### Theme renames and additions
+
+- **C64 → Breadbin Blue**, **MS-DOS Blue → DOS Blue**, **Windows XP → Luna
+  Blue** — both the display label and the underlying registry key/cheat
+  code changed (`c64`→`breadbin-blue`/`bread`, `msdos`→`dos-blue`/`dos`,
+  `winxp`→`luna-blue`/`luna`), to move away from specific product/console
+  branding.
+- Two new Fun themes: **Digital Frontier** (a Tron-inspired look, cheat
+  code `digit`) and **Retro Handheld** (a Game Boy-inspired 4-shade green
+  look, cheat code `retro`) — named generically for the same reason.
+
+### Other UI fixes
+
+- All modals now dismiss via Escape or a backdrop click, not just their
+  close button.
+- The Help modal links to https://so-crates.org.
+- The Themes modal's "Sync theme with OS" toggle moves to the top and
+  hides the manual picker while enabled, since OhMyDebn owns the theme
+  while sync is on.
 
 ### YARA Forge / Sigma rule freshness
 

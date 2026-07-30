@@ -1179,88 +1179,278 @@ class TestAPIEndpoints(unittest.TestCase):
             'maxUploadSize': config.MAX_UPLOAD_SIZE,
         })
 
+    _VALID_PALETTE_TOML = '''
+accent = "#5c7a9d"
+foreground = "#FCE7A1"
+background = "#000617"
+color1 = "#eb3836"
+color8 = "#595d62"
+color9 = "#ff5851"
+color10 = "#c3d7b1"
+color11 = "#f0eb90"
+color12 = "#7d9dcb"
+color13 = "#be95b4"
+'''
+
+    _VALID_ALACRITTY_TOML = '''
+[colors.primary]
+background = "#282a36"
+foreground = "#f8f8f2"
+[colors.normal]
+black = "#21222c"
+red = "#ff5555"
+green = "#50fa7b"
+yellow = "#f1fa8c"
+blue = "#bd93f9"
+magenta = "#ff79c6"
+cyan = "#8be9fd"
+white = "#f8f8f2"
+[colors.bright]
+black = "#6272a4"
+red = "#ff6e6e"
+green = "#69ff94"
+yellow = "#ffffa5"
+blue = "#d6acff"
+magenta = "#ff92df"
+cyan = "#a4ffff"
+white = "#ffffff"
+'''
+
+    def _write_theme_dir(self, name=None, colors_toml=None, alacritty_toml=None):
+        """Builds a fresh temp directory tree following OHMYDEBN_THEME_DIR's
+        convention (current/theme.name, current/theme/{colors,alacritty}.toml)
+        and returns its base path, ready to assign to server.OHMYDEBN_THEME_DIR."""
+        base = tempfile.mkdtemp(dir=self.tmpdir)
+        current = os.path.join(base, 'current')
+        theme_dir = os.path.join(current, 'theme')
+        os.makedirs(theme_dir, exist_ok=True)
+        if name is not None:
+            with open(os.path.join(current, 'theme.name'), 'w') as f:
+                f.write(name)
+        if colors_toml is not None:
+            with open(os.path.join(theme_dir, 'colors.toml'), 'w') as f:
+                f.write(colors_toml)
+        if alacritty_toml is not None:
+            with open(os.path.join(theme_dir, 'alacritty.toml'), 'w') as f:
+                f.write(alacritty_toml)
+        return base
+
     def test_theme_endpoint_returns_none_when_unset(self):
-        original = server.OHMYDEBN_THEME_FILE
-        server.OHMYDEBN_THEME_FILE = None
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = None
         try:
             status, body = self._get('/api/theme')
             self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body), {'theme': None})
+            self.assertEqual(json.loads(body), {'theme': None, 'customColors': None})
         finally:
-            server.OHMYDEBN_THEME_FILE = original
+            server.OHMYDEBN_THEME_DIR = original
 
-    def test_theme_endpoint_returns_none_when_file_missing(self):
-        original = server.OHMYDEBN_THEME_FILE
-        server.OHMYDEBN_THEME_FILE = os.path.join(self.tmpdir, 'does-not-exist')
+    def test_theme_endpoint_returns_none_when_dir_missing(self):
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = os.path.join(self.tmpdir, 'does-not-exist')
         try:
             status, body = self._get('/api/theme')
             self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body), {'theme': None})
+            self.assertEqual(json.loads(body), {'theme': None, 'customColors': None})
         finally:
-            server.OHMYDEBN_THEME_FILE = original
+            server.OHMYDEBN_THEME_DIR = original
 
-    def test_theme_endpoint_returns_theme_name_from_file(self):
-        theme_file = os.path.join(self.tmpdir, 'theme.name')
-        with open(theme_file, 'w') as f:
-            f.write('tokyo-night\n')
-        original = server.OHMYDEBN_THEME_FILE
-        server.OHMYDEBN_THEME_FILE = theme_file
+    def test_theme_endpoint_returns_theme_name_from_dir(self):
+        base = self._write_theme_dir(name='tokyo-night\n')
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = base
         try:
             status, body = self._get('/api/theme')
             self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body), {'theme': 'tokyo-night'})
+            self.assertEqual(json.loads(body), {'theme': 'tokyo-night', 'customColors': None})
         finally:
-            server.OHMYDEBN_THEME_FILE = original
+            server.OHMYDEBN_THEME_DIR = original
+
+    def test_theme_endpoint_accepts_underscores_in_theme_name(self):
+        """REGRESSION: real installed OhMyDebn themes (e.g. 'black_arch',
+        'snow_black') use underscores in their names - THEME_NAME_RE used
+        to only allow hyphens, so these silently came back as theme:
+        None, losing the name (and the toast's 'from OhMyDebn theme X'
+        suffix) even when a valid customColors palette was available."""
+        base = self._write_theme_dir(name='black_arch')
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = base
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)['theme'], 'black_arch')
+        finally:
+            server.OHMYDEBN_THEME_DIR = original
 
     def test_theme_endpoint_rejects_malformed_content(self):
-        theme_file = os.path.join(self.tmpdir, 'theme.name')
-        with open(theme_file, 'w') as f:
-            f.write('<script>alert(1)</script>')
-        original = server.OHMYDEBN_THEME_FILE
-        server.OHMYDEBN_THEME_FILE = theme_file
+        base = self._write_theme_dir(name='<script>alert(1)</script>')
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = base
         try:
             status, body = self._get('/api/theme')
             self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body), {'theme': None})
+            self.assertEqual(json.loads(body), {'theme': None, 'customColors': None})
         finally:
-            server.OHMYDEBN_THEME_FILE = original
+            server.OHMYDEBN_THEME_DIR = original
 
     def test_theme_sync_available_false_when_unset(self):
-        original = server.OHMYDEBN_THEME_FILE
-        server.OHMYDEBN_THEME_FILE = None
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = None
         try:
             status, body = self._get('/api/theme-sync-available')
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body), {'available': False})
         finally:
-            server.OHMYDEBN_THEME_FILE = original
+            server.OHMYDEBN_THEME_DIR = original
 
-    def test_theme_sync_available_false_when_file_missing(self):
-        original = server.OHMYDEBN_THEME_FILE
-        server.OHMYDEBN_THEME_FILE = os.path.join(self.tmpdir, 'does-not-exist')
+    def test_theme_sync_available_false_when_dir_missing(self):
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = os.path.join(self.tmpdir, 'does-not-exist')
         try:
             status, body = self._get('/api/theme-sync-available')
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body), {'available': False})
         finally:
-            server.OHMYDEBN_THEME_FILE = original
+            server.OHMYDEBN_THEME_DIR = original
 
-    def test_theme_sync_available_true_when_file_readable(self):
-        """Available even if the file's current *contents* are stale/
+    def test_theme_sync_available_true_when_name_readable(self):
+        """Available even if the name's current *contents* are stale/
         malformed - this endpoint answers "can the frontend show a working
         toggle", not "is there a valid theme right now" (that's /api/theme's
         job)."""
-        theme_file = os.path.join(self.tmpdir, 'theme.name')
-        with open(theme_file, 'w') as f:
-            f.write('nord')
-        original = server.OHMYDEBN_THEME_FILE
-        server.OHMYDEBN_THEME_FILE = theme_file
+        base = self._write_theme_dir(name='nord')
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = base
         try:
             status, body = self._get('/api/theme-sync-available')
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body), {'available': True})
         finally:
-            server.OHMYDEBN_THEME_FILE = original
+            server.OHMYDEBN_THEME_DIR = original
+
+    def test_theme_endpoint_returns_custom_colors_from_native_colors_toml(self):
+        base = self._write_theme_dir(colors_toml=self._VALID_PALETTE_TOML)
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = base
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertIsNone(data['theme'])
+            self.assertIsNotNone(data['customColors'])
+            self.assertEqual(data['customColors']['--accent'], '#5c7a9d')
+            self.assertEqual(data['customColors']['--bg-primary'], '#000617')
+            self.assertEqual(data['customColors']['--text-primary'], '#FCE7A1')
+        finally:
+            server.OHMYDEBN_THEME_DIR = original
+
+    def test_theme_endpoint_falls_back_to_alacritty_when_no_colors_toml(self):
+        base = self._write_theme_dir(alacritty_toml=self._VALID_ALACRITTY_TOML)
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = base
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertIsNotNone(data['customColors'])
+            self.assertEqual(data['customColors']['--bg-primary'], '#282a36')
+            self.assertEqual(data['customColors']['--accent'], '#bd93f9')
+        finally:
+            server.OHMYDEBN_THEME_DIR = original
+
+    def test_theme_endpoint_native_colors_toml_takes_precedence_over_alacritty(self):
+        base = self._write_theme_dir(colors_toml=self._VALID_PALETTE_TOML, alacritty_toml=self._VALID_ALACRITTY_TOML)
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = base
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data['customColors']['--bg-primary'], '#000617',
+                              'a valid native colors.toml must win over alacritty.toml when both are present')
+        finally:
+            server.OHMYDEBN_THEME_DIR = original
+
+    def test_theme_endpoint_falls_back_to_alacritty_when_native_colors_toml_invalid(self):
+        base = self._write_theme_dir(
+            colors_toml='accent = "#5c7a9d"\nforeground = "#FCE7A1"\n',  # missing required keys
+            alacritty_toml=self._VALID_ALACRITTY_TOML,
+        )
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = base
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data['customColors']['--bg-primary'], '#282a36',
+                              'an invalid native colors.toml must fall through to a valid alacritty.toml')
+        finally:
+            server.OHMYDEBN_THEME_DIR = original
+
+    def test_theme_endpoint_uses_named_palette_when_ansi_slots_absent(self):
+        """REGRESSION: OhMyDebn's own 'midnight' theme's colors.toml uses
+        semantic names (red/blue/bright_red/muted) instead of color0-15 -
+        this used to fall through both the native and alacritty paths
+        entirely and disable sync."""
+        named_palette_toml = '''
+accent = "#407e70"
+background = "#000000"
+foreground = "#EFEFEF"
+muted = "#1e1e1e"
+red = "#D35F5F"
+bright_red = "#B91C1C"
+bright_green = "#A5B799"
+bright_yellow = "#F59E0B"
+bright_blue = "#A4BBDD"
+bright_magenta = "#D9B9D9"
+'''
+        base = self._write_theme_dir(colors_toml=named_palette_toml)
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = base
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertIsNotNone(data['customColors'])
+            self.assertEqual(data['customColors']['--accent'], '#407e70')
+            # 'muted' (#1e1e1e) sits too close to background (#000000) to
+            # read as text on its own - gets nudged for WCAG contrast
+            # rather than used verbatim (see tests.test_ohmydebn_colors).
+            self.assertNotEqual(data['customColors']['--text-muted'], '#1e1e1e')
+        finally:
+            server.OHMYDEBN_THEME_DIR = original
+
+    def test_theme_endpoint_custom_colors_none_when_dir_unset(self):
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = None
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            self.assertIsNone(json.loads(body)['customColors'])
+        finally:
+            server.OHMYDEBN_THEME_DIR = original
+
+    def test_theme_endpoint_custom_colors_none_when_colors_toml_malformed(self):
+        base = self._write_theme_dir(colors_toml='this is not [valid toml')
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = base
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            self.assertIsNone(json.loads(body)['customColors'])
+        finally:
+            server.OHMYDEBN_THEME_DIR = original
+
+    def test_theme_endpoint_custom_colors_none_when_alacritty_missing_required_field(self):
+        base = self._write_theme_dir(alacritty_toml='[colors.primary]\nforeground = "#f8f8f2"\n')
+        original = server.OHMYDEBN_THEME_DIR
+        server.OHMYDEBN_THEME_DIR = base
+        try:
+            status, body = self._get('/api/theme')
+            self.assertEqual(status, 200)
+            self.assertIsNone(json.loads(body)['customColors'])
+        finally:
+            server.OHMYDEBN_THEME_DIR = original
 
     def _selective_urlopen(self, tag_name=None, error=None):
         """side_effect for mocking urllib.request.urlopen that only
@@ -1572,6 +1762,21 @@ class TestAPIEndpoints(unittest.TestCase):
     def test_hexdump_stream_missing_params(self):
         status, _ = self._get('/api/hexdump-stream?src=1.2.3.4&md5=' + 'a' * 32)
         self.assertEqual(status, 400)
+
+    def test_download_stream_returns_404_when_no_pcap_in_valid_analysis_dir(self):
+        """REGRESSION: _validate_stream_params used to return a single error
+        string, and callers guessed the status code by substring-matching
+        it ('required'/'Invalid' -> 400, else 404) - fragile against any
+        future wording change. Valid IP/port/md5 but no actual pcap file in
+        that analysis directory must still get a clean 404, not 400."""
+        md5 = 'b' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            status, _ = self._get(f'/api/download-stream?src=1.2.3.4&sport=80&dst=5.6.7.8&dport=443&md5={md5}')
+            self.assertEqual(status, 404)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
 
     def test_stream_filter_uses_and_not_or(self):
         """download-stream and hexdump-stream must use 'and port' not 'or port'
@@ -2193,6 +2398,43 @@ class TestAPIEndpoints(unittest.TestCase):
         # Verify directory was created using PCAP MD5
         self.assertTrue(os.path.exists(os.path.join(self.tmpdir, expected_md5, 'test.pcap')))
 
+    def test_upload_zip_with_extra_files_reports_files_skipped(self):
+        """REGRESSION: only the first PCAP in a multi-file ZIP is ever
+        analyzed - every other file extracted alongside it used to be
+        silently discarded with no indication to the user. filesSkipped
+        must reflect how many were dropped."""
+        import io
+        import zipfile as zf
+        import hashlib
+        pcap_data = b'\xd4\xc3\xb2\xa1' + b'\x11' * 100
+        expected_md5 = hashlib.md5(pcap_data).hexdigest()
+        zip_buffer = io.BytesIO()
+        with zf.ZipFile(zip_buffer, 'w') as zf_obj:
+            zf_obj.writestr('test.pcap', pcap_data)
+            zf_obj.writestr('readme.txt', b'not analyzed')
+            zf_obj.writestr('notes.md', b'also not analyzed')
+        zip_data = zip_buffer.getvalue()
+        status, body = self._post_multipart('/api/upload', 'multi.zip', zip_data)
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['md5'], expected_md5)
+        self.assertEqual(data.get('filesSkipped'), 2, '2 of the 3 extracted files were not analyzed')
+
+    def test_upload_single_file_zip_has_no_files_skipped(self):
+        """A ZIP containing exactly one file must not report filesSkipped
+        at all (nothing was actually dropped)."""
+        import io
+        import zipfile as zf
+        pcap_data = b'\xd4\xc3\xb2\xa1' + b'\x22' * 100
+        zip_buffer = io.BytesIO()
+        with zf.ZipFile(zip_buffer, 'w') as zf_obj:
+            zf_obj.writestr('solo.pcap', pcap_data)
+        zip_data = zip_buffer.getvalue()
+        status, body = self._post_multipart('/api/upload', 'solo.zip', zip_data)
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertNotIn('filesSkipped', data)
+
     def test_upload_tries_password_protected_zips(self):
         """Upload handler code must attempt common passwords before rejecting protected ZIPs."""
         with open(SERVER_FILE, 'r') as f:
@@ -2549,6 +2791,46 @@ class TestAPIEndpoints(unittest.TestCase):
         result = json.loads(body)
         self.assertIn('already in progress', result.get('error', '').lower())
 
+    def test_reanalyze_reports_real_error_when_suricata_fails_to_start(self):
+        """REGRESSION: spawn_suricata() returns False both when analysis is
+        already in progress and when Suricata itself failed to start
+        (missing binary, permissions, etc) - these used to be conflated
+        into the same generic 409 'Analysis already in progress', hiding
+        the real cause of a genuine startup failure."""
+        import io, zipfile as zf
+
+        def fake_spawn_suricata_ok(dir_path, pcap_path, suricata_config_path=None, data_dir=None):
+            return True
+
+        pcap_data = b'\xd4\xc3\xb2\xa1' + b'\x33' * 100
+        zip_buffer = io.BytesIO()
+        with zf.ZipFile(zip_buffer, 'w') as zf_obj:
+            zf_obj.writestr('capture.pcap', pcap_data)
+        zip_data = zip_buffer.getvalue()
+        # Mock the upload's own background spawn_suricata too, so it never
+        # leaves a real .phase lock behind that would make the reanalyze
+        # call below hit reanalyze's *earlier* "already in progress" check
+        # before ever reaching the spawn_suricata call under test.
+        with unittest.mock.patch('socrates.spawn_suricata', side_effect=fake_spawn_suricata_ok):
+            status, body = self._post_multipart('/api/upload', 'capture.zip', zip_data)
+        self.assertEqual(status, 200)
+        md5 = json.loads(body)['md5']
+        dir_path = os.path.join(self.tmpdir, md5)
+
+        import time
+        time.sleep(0.2)
+
+        def fake_spawn_suricata_fails(dir_path, pcap_path, suricata_config_path=None, data_dir=None):
+            with open(os.path.join(dir_path, '.error'), 'w') as f:
+                f.write('Suricata failed to start: [Errno 2] No such file or directory')
+            return False
+
+        with unittest.mock.patch('socrates.spawn_suricata', side_effect=fake_spawn_suricata_fails):
+            status, body = self._post('/api/reanalyze', {'md5': md5})
+        self.assertEqual(status, 500, 'a genuine startup failure must not be reported as 409')
+        result = json.loads(body)
+        self.assertIn('No such file or directory', result.get('error', ''))
+
     def test_reanalyze_malformed_json_returns_400(self):
         """REGRESSION: a malformed JSON body must get a clean 400, not a
         dropped connection from an uncaught json.JSONDecodeError."""
@@ -2741,6 +3023,207 @@ class TestAPIEndpoints(unittest.TestCase):
 
         self.assertEqual(result_get['status'], result_post['status'])
 
+    @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
+    @unittest.mock.patch('socrates.setup_suricata_config')
+    def test_update_rules_single_ruleset_returns_started_and_status_reflects_progress(self, mock_suricata):
+        """POST /api/update-rules with a single ruleset must return
+        immediately with a 'started' status and spawn a job for only that
+        ruleset; GET /api/rule-update-status must then reflect the
+        on_progress() lines under that ruleset's key, and mark it done.
+        SyncThread makes the spawned thread run inline, so by the time the
+        POST response is sent the (mocked, instant) job has already
+        finished - no polling needed here."""
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True):
+            on_progress('suricata rules updated (fake)')
+        mock_suricata.side_effect = fake_suricata
+
+        status, body = self._post('/api/update-rules', {'ruleset': 'suricata'})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {'status': 'started'})
+
+        status2, body2 = self._get('/api/rule-update-status')
+        self.assertEqual(status2, 200)
+        result = json.loads(body2)
+        self.assertTrue(result['suricata']['done'])
+        self.assertFalse(result['suricata']['running'])
+        self.assertIn('suricata rules updated (fake)', result['suricata']['lines'])
+
+        # Triggering suricata alone must not touch setup_suricata_config's
+        # (nonexistent) 'force' kwarg or pass network_allowed - this is the
+        # on-demand refresh path, unlike main()'s startup calls which pass
+        # network_allowed=False.
+        mock_suricata.assert_called_once()
+        self.assertNotIn('network_allowed', mock_suricata.call_args.kwargs)
+        self.assertNotIn('force', mock_suricata.call_args.kwargs)
+
+    @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
+    @unittest.mock.patch('socrates.setup_yara_rules')
+    def test_update_rules_single_ruleset_forces_refresh(self, mock_yara):
+        """YARA/Sigma must be forced to actually check for updates rather
+        than silently reporting the cached copy as fine just because the
+        24h staleness window hasn't expired yet - that would defeat the
+        point of a user explicitly clicking a ruleset's Update button."""
+        def fake_yara(data_dir, on_progress=print, network_allowed=True, force=False):
+            on_progress('yara rules updated (fake)')
+            return '/fake/yara-rules-full.yar'
+        mock_yara.side_effect = fake_yara
+
+        status, body = self._post('/api/update-rules', {'ruleset': 'yara'})
+        self.assertEqual(status, 200)
+        mock_yara.assert_called_once()
+        self.assertTrue(mock_yara.call_args.kwargs.get('force'))
+
+        status2, body2 = self._get('/api/rule-update-status')
+        result = json.loads(body2)
+        self.assertIn('yara rules updated (fake)', result['yara']['lines'])
+
+    @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
+    @unittest.mock.patch('socrates.setup_sigma_rules')
+    @unittest.mock.patch('socrates.setup_yara_rules')
+    @unittest.mock.patch('socrates.setup_suricata_config')
+    def test_update_rules_all_triggers_all_three(self, mock_suricata, mock_yara, mock_sigma):
+        """POST /api/update-rules with ruleset='all' must trigger all three
+        rulesets (spawned as separate threads - SyncThread just makes each
+        one run inline here for a deterministic assertion)."""
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True):
+            on_progress('suricata done (fake)')
+        def fake_yara(data_dir, on_progress=print, network_allowed=True, force=False):
+            on_progress('yara done (fake)')
+        def fake_sigma(data_dir, on_progress=print, network_allowed=True, force=False):
+            on_progress('sigma done (fake)')
+        mock_suricata.side_effect = fake_suricata
+        mock_yara.side_effect = fake_yara
+        mock_sigma.side_effect = fake_sigma
+
+        status, body = self._post('/api/update-rules', {'ruleset': 'all'})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {'status': 'started'})
+
+        status2, body2 = self._get('/api/rule-update-status')
+        result = json.loads(body2)
+        for name, marker in (('suricata', 'suricata done (fake)'), ('yara', 'yara done (fake)'), ('sigma', 'sigma done (fake)')):
+            self.assertTrue(result[name]['done'], f'{name} must be done')
+            self.assertFalse(result[name]['running'], f'{name} must not still be running')
+            self.assertIn(marker, result[name]['lines'])
+
+    def test_update_rules_invalid_ruleset_returns_400(self):
+        status, body = self._post('/api/update-rules', {'ruleset': 'not-a-real-ruleset'})
+        self.assertEqual(status, 400)
+
+    def test_update_rules_blocked_when_same_ruleset_already_running(self):
+        """A second POST for the SAME ruleset while it's already running
+        must get 409, not start a concurrent second job - guards the
+        check-and-set race between handle_post_update_rules calls from two
+        clients."""
+        release = threading.Event()
+        entered = threading.Event()
+
+        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True):
+            entered.set()
+            release.wait(timeout=5)
+
+        with unittest.mock.patch('socrates.setup_suricata_config', side_effect=blocking_suricata):
+            status, body = self._post('/api/update-rules', {'ruleset': 'suricata'})
+            self.assertEqual(status, 200)
+            self.assertTrue(entered.wait(timeout=5), 'first job must have started')
+
+            status2, body2 = self._post('/api/update-rules', {'ruleset': 'suricata'})
+            self.assertEqual(status2, 409)
+            self.assertIn('already in progress', json.loads(body2).get('error', '').lower())
+
+            release.set()
+
+            for _ in range(50):
+                _, status_body = self._get('/api/rule-update-status')
+                if json.loads(status_body)['suricata']['done']:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail('suricata update job did not finish after release')
+
+    def test_update_rules_different_rulesets_run_concurrently(self):
+        """Triggering one ruleset must NOT block a different ruleset from
+        being triggered at the same time - independence between rulesets is
+        the whole point of per-ruleset buttons."""
+        release = threading.Event()
+        entered = threading.Event()
+
+        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True):
+            entered.set()
+            release.wait(timeout=5)
+
+        def fast_yara(data_dir, on_progress=print, network_allowed=True, force=False):
+            on_progress('yara done (fake)')
+
+        with unittest.mock.patch('socrates.setup_suricata_config', side_effect=blocking_suricata), \
+             unittest.mock.patch('socrates.setup_yara_rules', side_effect=fast_yara):
+            status, body = self._post('/api/update-rules', {'ruleset': 'suricata'})
+            self.assertEqual(status, 200)
+            self.assertTrue(entered.wait(timeout=5), 'suricata job must have started')
+
+            # yara must be triggerable while suricata is still running.
+            status2, body2 = self._post('/api/update-rules', {'ruleset': 'yara'})
+            self.assertEqual(status2, 200, 'a different ruleset must not be blocked by an unrelated in-progress job')
+
+            for _ in range(50):
+                _, status_body = self._get('/api/rule-update-status')
+                if json.loads(status_body)['yara']['done']:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail('yara update job did not finish')
+
+            release.set()
+            for _ in range(50):
+                _, status_body = self._get('/api/rule-update-status')
+                if json.loads(status_body)['suricata']['done']:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail('suricata update job did not finish after release')
+
+    def test_update_rules_all_blocked_when_any_ruleset_running(self):
+        """POST ruleset='all' must 409 if even one of the three rulesets is
+        already running - it's an atomic all-or-nothing trigger, not a
+        'top up whichever isn't already running' operation."""
+        release = threading.Event()
+        entered = threading.Event()
+
+        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True):
+            entered.set()
+            release.wait(timeout=5)
+
+        with unittest.mock.patch('socrates.setup_suricata_config', side_effect=blocking_suricata):
+            status, body = self._post('/api/update-rules', {'ruleset': 'suricata'})
+            self.assertEqual(status, 200)
+            self.assertTrue(entered.wait(timeout=5), 'suricata job must have started')
+
+            status2, body2 = self._post('/api/update-rules', {'ruleset': 'all'})
+            self.assertEqual(status2, 409)
+
+            release.set()
+            for _ in range(50):
+                _, status_body = self._get('/api/rule-update-status')
+                if json.loads(status_body)['suricata']['done']:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail('suricata update job did not finish after release')
+
+    def test_rules_info_returns_per_ruleset_data(self):
+        """GET /api/rules-info must combine all three get_*_rules_info()
+        results into one response shaped for the Rules modal."""
+        with unittest.mock.patch('socrates.get_suricata_rules_info', return_value={'count': 111, 'updated': 1000.0}), \
+             unittest.mock.patch('socrates.get_yara_rules_info', return_value={'count': 222, 'updated': 2000.0}), \
+             unittest.mock.patch('socrates.get_sigma_rules_info', return_value={'windows': {'count': 10, 'updated': 3000.0}, 'linux': {'count': 5, 'updated': 4000.0}}):
+            status, body = self._get('/api/rules-info')
+            self.assertEqual(status, 200)
+            result = json.loads(body)
+            self.assertEqual(result['suricata'], {'count': 111, 'updated': 1000.0})
+            self.assertEqual(result['yara'], {'count': 222, 'updated': 2000.0})
+            self.assertEqual(result['sigma']['windows']['count'], 10)
+            self.assertEqual(result['sigma']['linux']['count'], 5)
+
 
 class TestSpawnSuricataErrorHandling(unittest.TestCase):
     def test_spawn_suricata_writes_error_on_failure(self):
@@ -2827,9 +3310,9 @@ class TestSizeLimitMessages(unittest.TestCase):
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
         error_count = content.count('max {MAX_EVE_SIZE // (1024*1024)}MB')
-        error_text_count = content.count('Eve.json')
+        error_text_count = content.count('eve.json too large')
         self.assertGreaterEqual(error_count, 1, 'Error message appears at least once')
-        self.assertGreaterEqual(error_text_count, 1, 'Eve.json text appears at least once')
+        self.assertGreaterEqual(error_text_count, 1, 'eve.json too large text appears at least once')
 
 
 class TestHTMLNoDuplicateFunctions(unittest.TestCase):
@@ -2954,8 +3437,8 @@ class TestSetupSuricataConfigLogging(unittest.TestCase):
     def test_copy_warnings_logged(self):
         with open(SURICATA_FILE, 'r') as f:
             content = f.read()
-        self.assertIn("print(f'Warning: could not copy", content)
-        self.assertIn("print(f'Warning: could not copy directory", content)
+        self.assertIn("on_progress(f'Warning: could not copy", content)
+        self.assertIn("on_progress(f'Warning: could not copy directory", content)
 
 
 class TestSuricataProcessingLock(unittest.TestCase):
@@ -3288,9 +3771,8 @@ class TestAirgapFallback(unittest.TestCase):
 
 
 class TestSuricataExistingRulesNoInternetMessage(unittest.TestCase):
-    @unittest.mock.patch('suricata_analyzer.subprocess.run')
     @unittest.mock.patch('suricata_analyzer.has_internet_access')
-    def test_uses_existing_rules_message_when_offline_with_prior_rules(self, mock_internet, mock_run):
+    def test_uses_existing_rules_message_when_offline_with_prior_rules(self, mock_internet):
         """REGRESSION: a re-run with no internet and no baked-in rules dir
         (e.g. a subsequent offline startup on a non-Docker install) must not
         print the scary 'may not have rules to use' warning if rules from a
@@ -3313,24 +3795,141 @@ class TestSuricataExistingRulesNoInternetMessage(unittest.TestCase):
                          'Must not print the no-rules warning when rules already exist')
 
 
+class _FakeStdout:
+    """Empty, closeable stdout stand-in for a Popen mock - a plain
+    iter([]) has no .close(), which _stream_suricata_update() calls
+    unconditionally after its read loop."""
+    def __iter__(self):
+        return iter([])
+
+    def close(self):
+        pass
+
+
+class _FakeTimedOutProc:
+    """Simulates suricata-update hanging past the deadline: the watchdog
+    thread's proc.wait(timeout=...) call raises TimeoutExpired (as a real
+    Popen would), and the subsequent no-timeout proc.wait() call from the
+    main read loop (after the kill) resolves normally."""
+    def __init__(self):
+        self.stdout = _FakeStdout()
+        self.returncode = None
+
+    def wait(self, timeout=None):
+        if timeout is not None:
+            raise subprocess.TimeoutExpired('suricata-update', timeout)
+        self.returncode = -9
+        return self.returncode
+
+    def kill(self):
+        pass
+
+
 class TestSuricataUpdateTimeout(unittest.TestCase):
-    @unittest.mock.patch('suricata_analyzer.subprocess.run')
+    @unittest.mock.patch('suricata_analyzer.subprocess.Popen')
     @unittest.mock.patch('suricata_analyzer.has_internet_access')
-    def test_suricata_update_timeout_does_not_crash(self, mock_internet, mock_run):
+    def test_suricata_update_timeout_does_not_crash(self, mock_internet, mock_popen):
         """TimeoutExpired from suricata-update must be caught, not crash setup."""
         mock_internet.return_value = True
-        mock_run.side_effect = subprocess.TimeoutExpired('suricata-update', 60)
+        mock_popen.return_value = _FakeTimedOutProc()
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
                 suricata_analyzer.setup_suricata_config(tmpdir)
             except subprocess.TimeoutExpired:
                 self.fail('setup_suricata_config raised TimeoutExpired')
 
+    @unittest.mock.patch('suricata_analyzer.subprocess.Popen')
+    @unittest.mock.patch('suricata_analyzer.has_internet_access')
+    def test_suricata_update_timeout_reports_clear_message(self, mock_internet, mock_popen):
+        """REGRESSION: a watchdog-killed process used to report
+        'exited with code -9', reading like an arbitrary crash rather than
+        the enforced timeout it actually was."""
+        mock_internet.return_value = True
+        mock_popen.return_value = _FakeTimedOutProc()
+        messages = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            suricata_analyzer.setup_suricata_config(tmpdir, on_progress=messages.append)
+        self.assertTrue(any('timed out after' in m for m in messages), messages)
+        self.assertFalse(any('exited with code' in m for m in messages), messages)
+
+
+class _FakeFailedProc:
+    """Simulates suricata-update exiting non-zero (not a timeout) -
+    e.g. a proxy blocking the real rule mirrors, a cert error, or bad
+    --data-dir permissions despite the reachability probe passing."""
+    def __init__(self):
+        self.stdout = _FakeStdout()
+        self.returncode = 1
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def kill(self):
+        pass
+
+
+class TestSuricataUpdateFailureFallsBack(unittest.TestCase):
+    """REGRESSION: a reachable network doesn't guarantee suricata-update
+    itself succeeds. setup_suricata_config used to only fall back to
+    baked-in/cached rules when the reachability probe failed - if the
+    probe passed but the update command itself then failed, Suricata was
+    left with no rules at all even when a perfectly good fallback was
+    sitting right there, unlike setup_yara_rules/setup_sigma_rules."""
+
+    @unittest.mock.patch('suricata_analyzer.subprocess.Popen')
+    @unittest.mock.patch('suricata_analyzer.has_internet_access')
+    def test_falls_back_to_existing_rules_when_update_fails(self, mock_internet, mock_popen):
+        mock_internet.return_value = True
+        mock_popen.return_value = _FakeFailedProc()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, 'suricata', 'rules')
+            os.makedirs(rules_dir, exist_ok=True)
+            rules_file = os.path.join(rules_dir, 'suricata.rules')
+            with open(rules_file, 'w') as f:
+                f.write('alert tcp any any -> any any (msg:"pre-existing"; sid:1;)\n')
+
+            messages = []
+            suricata_analyzer.setup_suricata_config(tmpdir, on_progress=messages.append)
+
+            with open(rules_file) as f:
+                self.assertIn('pre-existing', f.read(), 'existing rules must survive a failed update attempt')
+            self.assertTrue(any('despite the failed update' in m for m in messages), messages)
+
+    @unittest.mock.patch('suricata_analyzer.subprocess.Popen')
+    @unittest.mock.patch('suricata_analyzer.has_internet_access')
+    def test_falls_back_to_baked_in_rules_when_update_fails_and_none_exist(self, mock_internet, mock_popen):
+        mock_internet.return_value = True
+        mock_popen.return_value = _FakeFailedProc()
+        real_isdir = os.path.isdir
+        real_exists = os.path.exists
+        baked_in_dir = '/usr/share/suricata/rules'
+
+        def fake_isdir(path):
+            if path == baked_in_dir:
+                return True
+            return real_isdir(path)
+
+        def fake_exists(path):
+            if path == os.path.join(baked_in_dir, 'suricata.rules'):
+                return True
+            return real_exists(path)
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                unittest.mock.patch('os.path.isdir', side_effect=fake_isdir), \
+                unittest.mock.patch('os.path.exists', side_effect=fake_exists), \
+                unittest.mock.patch('suricata_analyzer.shutil.copytree') as mock_copytree:
+            messages = []
+            suricata_analyzer.setup_suricata_config(tmpdir, on_progress=messages.append)
+        # /etc/suricata (a real dir on this dev box) also gets copied into
+        # the fresh tmp data_dir as part of the initial config bootstrap -
+        # only assert our specific baked-in-rules fallback call happened.
+        mock_copytree.assert_any_call(baked_in_dir, os.path.join(tmpdir, 'suricata', 'rules'), dirs_exist_ok=True)
+        self.assertTrue(any('Falling back to baked-in Suricata rules' in m for m in messages), messages)
+
 
 class TestSuricataArpStaysDisabledByDefault(unittest.TestCase):
-    @unittest.mock.patch('suricata_analyzer.subprocess.run')
     @unittest.mock.patch('suricata_analyzer.has_internet_access')
-    def test_setup_suricata_config_does_not_enable_arp_by_default(self, mock_internet, mock_run):
+    def test_setup_suricata_config_does_not_enable_arp_by_default(self, mock_internet):
         """REGRESSION GUARD: arp is deliberately opt-in (see
         _enable_eve_log_arp's docstring) - a real volume/signal tradeoff on
         a live network that must stay a deliberate choice, not something
@@ -3346,9 +3945,8 @@ class TestSuricataArpStaysDisabledByDefault(unittest.TestCase):
         self.assertIn('        - arp:\n            enabled: no', content,
                        'arp must stay disabled unless explicitly opted in via enable_arp')
 
-    @unittest.mock.patch('suricata_analyzer.subprocess.run')
     @unittest.mock.patch('suricata_analyzer.has_internet_access')
-    def test_setup_suricata_config_enables_arp_when_opted_in(self, mock_internet, mock_run):
+    def test_setup_suricata_config_enables_arp_when_opted_in(self, mock_internet):
         """setup_suricata_config(enable_arp=True) - wired to the
         ENABLE_ARP_LOGGING env var in socrates.py's main() - must actually
         flip arp on end-to-end, not just leave the opt-in mechanism dead."""
@@ -3822,78 +4420,6 @@ class TestSetupYaraRulesFreshness(unittest.TestCase):
             with open(result) as f:
                 self.assertEqual(f.read(), 'rule Old { condition: true }')
 
-    @unittest.mock.patch('validators.is_host_reachable', return_value=True)
-    @unittest.mock.patch('yara_analyzer.is_host_reachable')
-    def test_shared_reachable_check_is_used_instead_of_direct_call(self, mock_reachable, mock_shared_reachable):
-        """When a caller passes a shared reachable_check (as socrates.py's
-        startup does), setup_yara_rules must use it rather than calling
-        is_host_reachable itself - otherwise sharing the checker across
-        YARA + both Sigma rulesets wouldn't actually save any probes."""
-        import yara_analyzer
-        import validators
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self._make_stale_rules(tmpdir)
-            shared_check = validators.make_reachability_checker('github.com', 443, timeout=5)
-            with unittest.mock.patch('yara_analyzer._download_yara_forge_rules'):
-                yara_analyzer.setup_yara_rules(tmpdir, reachable_check=shared_check)
-        mock_reachable.assert_not_called()
-        mock_shared_reachable.assert_called_once()
-
-
-class TestSharedReachabilityCheckAcrossRuleSetup(unittest.TestCase):
-    """Verifies the actual point of reachable_check: when the caller passes
-    one shared checker to both setup_yara_rules and setup_sigma_rules (as
-    socrates.py's startup does), all three potentially-stale rule sources
-    (YARA + Sigma windows + Sigma linux) collapse into a single network
-    probe instead of each blocking through its own timeout."""
-
-    @unittest.mock.patch('sigma_analyzer._download_rule_file')
-    @unittest.mock.patch('yara_analyzer._download_yara_forge_rules')
-    @unittest.mock.patch('validators.is_host_reachable', return_value=True)
-    def test_one_shared_checker_yields_one_reachability_probe(
-        self, mock_reachable, mock_yara_download, mock_sigma_download
-    ):
-        import time
-        import yara_analyzer
-        import sigma_analyzer
-        import validators
-
-        with tempfile.TemporaryDirectory() as yara_tmp, tempfile.TemporaryDirectory() as sigma_tmp:
-            yara_dir = os.path.join(yara_tmp, yara_analyzer.YARA_RULES_SUBDIR)
-            os.makedirs(yara_dir, exist_ok=True)
-            yara_path = os.path.join(yara_dir, yara_analyzer.YARA_FORGE_FILENAME)
-            with open(yara_path, 'w') as f:
-                f.write('rule Old { condition: true }')
-
-            sigma_dir = os.path.join(sigma_tmp, 'sigma-rules')
-            os.makedirs(sigma_dir, exist_ok=True)
-            for name in ('windows', 'linux'):
-                p = os.path.join(sigma_dir, f'{name}.json')
-                with open(p, 'w') as f:
-                    f.write('{}')
-
-            old_time = time.time() - (25 * 3600)
-            for p in (yara_path,
-                      os.path.join(sigma_dir, 'windows.json'),
-                      os.path.join(sigma_dir, 'linux.json')):
-                os.utime(p, (old_time, old_time))
-
-            # Mirrors socrates.py's startup: one shared checker passed to
-            # both setup calls, for all three (YARA + windows + linux)
-            # stale-rule checks.
-            shared_check = validators.make_reachability_checker('github.com', 443, timeout=5)
-            yara_analyzer.setup_yara_rules(yara_tmp, reachable_check=shared_check)
-            sigma_analyzer.setup_sigma_rules(sigma_tmp, reachable_check=shared_check)
-
-        # Three stale rule sources, but only one real network probe -
-        # this is the actual point of reachable_check.
-        mock_reachable.assert_called_once_with('github.com', 443, 5)
-        # And the shared "reachable" answer actually propagated through to
-        # all three refresh attempts, not just skipped them.
-        mock_yara_download.assert_called_once()
-        self.assertEqual(mock_sigma_download.call_count, 2)
-
-
 class TestZipBombPrevention(unittest.TestCase):
     def test_oversized_zip_member_rejected(self):
         """ZIP with a member whose uncompressed size exceeds MAX_UPLOAD_SIZE must be rejected."""
@@ -4344,6 +4870,32 @@ class TestDockerfile(unittest.TestCase):
             content = f.read()
         self.assertIn('ENV DATA_DIR=/data', content, 'Dockerfile must set DATA_DIR')
 
+    def test_dockerfile_bakes_rules_at_paths_the_app_actually_checks(self):
+        """REGRESSION: the Dockerfile previously baked Sigma rules as
+        rules_windows_merged.json/rules_linux.json (the upstream source
+        filenames), but sigma_analyzer.setup_sigma_rules() looks for
+        '<ruleset>.json' (windows.json/linux.json) under BAKED_IN_SIGMA_DIR -
+        a silent mismatch that meant air-gapped deployments never actually
+        found the baked-in Sigma rules, despite the app believing it
+        supported air-gapped Sigma. Suricata/YARA's baked-in paths already
+        matched; this locks in all three so the mismatch can't reappear
+        unnoticed for any of them."""
+        import yara_analyzer
+        import sigma_analyzer
+        with open(DOCKERFILE, 'r') as f:
+            content = f.read()
+        # baked_in_rules_dir is a local inside setup_suricata_config(), not a
+        # module constant like YARA/Sigma's, so this is hardcoded to match it.
+        self.assertIn('/usr/share/suricata/rules', content,
+                      'Dockerfile must bake Suricata rules at the directory setup_suricata_config() checks')
+        self.assertIn(yara_analyzer.BAKED_IN_YARA_FILE, content,
+                      'Dockerfile must write the baked-in YARA file at the exact path BAKED_IN_YARA_FILE points to')
+        for ruleset_name in sigma_analyzer.ZIRCOLITE_RULES_URLS:
+            expected_path = os.path.join(sigma_analyzer.BAKED_IN_SIGMA_DIR, f'{ruleset_name}.json')
+            self.assertIn(expected_path, content,
+                          f'Dockerfile must write the baked-in Sigma {ruleset_name} rules at {expected_path}, '
+                          'matching setup_sigma_rules()\'s BAKED_IN_SIGMA_DIR + \'<ruleset>.json\' lookup')
+
     def test_docker_compose_uses_so_crates_image(self):
         """docker-compose.yml must reference the SO-CRATES image."""
         with open(DOCKER_COMPOSE, 'r') as f:
@@ -4514,6 +5066,40 @@ class TestMultipartParsing(unittest.TestCase):
         data, name = self._parse(body, ct, reader=reader)
         self.assertEqual(name, 'test.pcap')
         self.assertEqual(data, b'PCAPDATA')
+
+
+class TestNonArtifactFiles(unittest.TestCase):
+    """REGRESSION: zircolite.log (a real pipeline artifact for log/Sigma
+    analyses) used to slip through _non_artifact_files's suffix-based
+    exclusion list entirely, so it could transiently win a directory-listing
+    race against the real uploaded file as the display-name fallback (before
+    name.txt is written). Fixed by excluding exact known artifact filenames
+    in addition to the suffix list - critically, without excluding the bare
+    '.log' suffix itself, since a user-uploaded log file legitimately ends in
+    .log too and must still be found here."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.handler = server.Handler.__new__(server.Handler)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_zircolite_log_artifact_excluded(self):
+        open(os.path.join(self.tmpdir, 'zircolite.log'), 'w').close()
+        open(os.path.join(self.tmpdir, 'suspicious.log'), 'w').close()
+        result = self.handler._non_artifact_files(self.tmpdir)
+        self.assertEqual(result, ['suspicious.log'],
+                          'zircolite.log must be excluded but a user-uploaded .log file must not be')
+
+    def test_zircolite_events_db_artifact_excluded(self):
+        open(os.path.join(self.tmpdir, '.zircolite_events.db'), 'w').close()
+        result = self.handler._non_artifact_files(self.tmpdir)
+        self.assertEqual(result, [], 'dotfile is already excluded, but confirm the exact-name set does not error on it')
+
+    def test_missing_dir_returns_empty_list(self):
+        result = self.handler._non_artifact_files(os.path.join(self.tmpdir, 'does-not-exist'))
+        self.assertEqual(result, [])
 
 
 if __name__ == '__main__':

@@ -270,7 +270,7 @@
             --help-icon-color: #ffffff;
         }
 
-        [data-theme="c64"] {
+        [data-theme="breadbin-blue"] {
             --bg-primary: #40318D;
             --bg-secondary: #362873;
             --bg-tertiary: #2c2060;
@@ -325,6 +325,62 @@
             --tag-gray-text: #a78bc8;
             --tag-green-text: #05FFA1;
             --help-icon-color: #ffffff;
+        }
+
+        [data-theme="digital-frontier"] {
+            --bg-primary: #000000;
+            --bg-secondary: #050a10;
+            --bg-tertiary: #0a1420;
+            --bg-hover: #102030;
+            --bg-hover-light: #183048;
+            --border-color: #1a4560;
+            --text-primary: #cdf0ff;
+            --text-bright: #ffffff;
+            --text-muted: #5a8fa8;
+            --accent: #00d9ff;
+            --accent-hover: #5ce8ff;
+            --bg-drop-active: #0f2f42;
+            --modal-backdrop: rgba(0, 0, 0, 0.9);
+            --badge-danger-text: #ff6b35;
+            --danger-bg: #1a0f0a;
+            --badge-bg-neutral: #030507;
+            --badge-warning-text: #ff9d4d;
+            --badge-success-text: #00ffcc;
+            --tag-red-text: #ff6b35;
+            --tag-purple-text: #b96bff;
+            --tag-orange-text: #ff9d4d;
+            --tag-blue-text: #00d9ff;
+            --tag-gray-text: #5a8fa8;
+            --tag-green-text: #00ffcc;
+            --help-icon-color: #00d9ff;
+        }
+
+        [data-theme="retro-handheld"] {
+            --bg-primary: #9bbc0f;
+            --bg-secondary: #8bac0f;
+            --bg-tertiary: #7a9c0c;
+            --bg-hover: #6a8c0a;
+            --bg-hover-light: #558009;
+            --border-color: #4a7209;
+            --text-primary: #0f380f;
+            --text-bright: #0f380f;
+            --text-muted: #306230;
+            --accent: #1f5c1f;
+            --accent-hover: #0f380f;
+            --bg-drop-active: #7a9c0c;
+            --modal-backdrop: rgba(15, 56, 15, 0.6);
+            --badge-danger-text: #7a2a0f;
+            --danger-bg: #8bac0f;
+            --badge-bg-neutral: #a8c81f;
+            --badge-warning-text: #5c4a0f;
+            --badge-success-text: #0f380f;
+            --tag-red-text: #7a2a0f;
+            --tag-purple-text: #3a2a5c;
+            --tag-orange-text: #5c4a0f;
+            --tag-blue-text: #0f3a4a;
+            --tag-gray-text: #306230;
+            --tag-green-text: #0f380f;
+            --help-icon-color: #5c4a0f;
         }
 
         [data-theme="matte-black"] {
@@ -495,6 +551,38 @@
             --help-icon-color: #89b4fa;
         }
 
+        /* Same palette as Catppuccin - a distinct theme key/label purely so
+           it can be selected on its own from the picker (e.g. as a match
+           for an OhMyDebn desktop theme of the same name), not a visual
+           variant. */
+        [data-theme="ohmydebn"] {
+            --bg-primary: #1e1e2e;
+            --bg-secondary: #272838;
+            --bg-tertiary: #313244;
+            --bg-hover: #45475a;
+            --bg-hover-light: #585b70;
+            --border-color: #45475a;
+            --text-primary: #cdd6f4;
+            --text-bright: #f5e0dc;
+            --text-muted: #a6adc8;
+            --accent: #89b4fa;
+            --accent-hover: #b4befe;
+            --bg-drop-active: #313244;
+            --modal-backdrop: rgba(0, 0, 0, 0.85);
+            --badge-danger-text: #f38ba8;
+            --danger-bg: #2d2e3a;
+            --badge-bg-neutral: #1b1c27;
+            --badge-warning-text: #f9e2af;
+            --badge-success-text: #a6e3a1;
+            --tag-red-text: #f38ba8;
+            --tag-purple-text: #f5c2e7;
+            --tag-orange-text: #fab387;
+            --tag-blue-text: #89b4fa;
+            --tag-gray-text: #a6adc8;
+            --tag-green-text: #a6e3a1;
+            --help-icon-color: #89b4fa;
+        }
+
         [data-theme="catppuccin-latte"] {
             --bg-primary: #eff1f5;
             --bg-secondary: #e6e9ef;
@@ -521,6 +609,34 @@
             --tag-gray-text: #6c6f85;
             --tag-green-text: #40a02b;
             --help-icon-color: #1e66f5;
+        }
+
+        [data-theme="flexoki-light"] {
+            --bg-primary: #fffcf0;
+            --bg-secondary: #f2f0e5;
+            --bg-tertiary: #e6e4d9;
+            --bg-hover: #dad8ce;
+            --bg-hover-light: #cecdc3;
+            --border-color: #dad8ce;
+            --text-primary: #100f0f;
+            --text-bright: #100f0f;
+            --text-muted: #6f6e69;
+            --accent: #205ea6;
+            --accent-hover: #1b508d;
+            --bg-drop-active: #e4eef7;
+            --modal-backdrop: rgba(0, 0, 0, 0.5);
+            --badge-danger-text: #d14d41;
+            --danger-bg: #dad8ce;
+            --badge-bg-neutral: #f6f3e7;
+            --badge-warning-text: #8c6910;
+            --badge-success-text: #6e7c2e;
+            --tag-red-text: #d14d41;
+            --tag-purple-text: #ce5d97;
+            --tag-orange-text: #8c6910;
+            --tag-blue-text: #4385be;
+            --tag-gray-text: #6f6e69;
+            --tag-green-text: #6e7c2e;
+            --help-icon-color: #8c6910;
         }
 
         [data-theme="everforest"] {
@@ -831,7 +947,7 @@
             --help-icon-color: #6e6e6e;
         }
 
-        [data-theme="winxp"] {
+        [data-theme="luna-blue"] {
             --bg-primary: #15398C;
             --bg-secondary: #1F4FB0;
             --bg-tertiary: #2E63C7;
@@ -922,7 +1038,7 @@
            background with a bright foreground color), the blue itself is
            the dominant color here - that flat saturated blue is the whole
            point of the reference. */
-        [data-theme="msdos"] {
+        [data-theme="dos-blue"] {
             --bg-primary: #0000AA;
             --bg-secondary: #0000CC;
             --bg-tertiary: #1A1AE0;
@@ -995,6 +1111,8 @@
         #helpModal .modal-content { max-width: 700px; }
         #helpModal.wide .modal-content { max-width: 850px; }
         #helpModalBody { max-height: 60vh; overflow-y: auto; }
+        #rulesModal .modal-content { max-width: 900px; }
+        .rule-update-log { font-family: monospace; font-size: 0.85rem; white-space: pre; max-height: 400px; overflow: auto; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 12px; color: var(--text-primary); }
         #fileInfoContainer { margin-bottom: 20px; }
         .container { width: 100%; padding: 20px; box-sizing: border-box; padding-bottom: 80px; padding-top: 56px; }
         header { background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); padding: 30px; border-radius: 12px; margin-bottom: 20px; border: 1px solid var(--border-color); }
@@ -1201,6 +1319,13 @@
         .theme-tile[data-theme-option]::before { content: ''; display: inline-block; width: 1em; flex-shrink: 0; }
         .theme-tile[data-theme-option].theme-active { border-color: var(--accent); border-width: 2px; font-weight: 600; }
         .theme-tile[data-theme-option].theme-active::before { content: '✓'; color: var(--accent); font-weight: 700; }
+        .theme-switch { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
+        .theme-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+        .theme-switch-slider { position: absolute; inset: 0; background: var(--bg-hover); border-radius: 20px; transition: background 0.2s; pointer-events: none; }
+        .theme-switch-slider::before { content: ''; position: absolute; left: 3px; top: 3px; width: 14px; height: 14px; background: var(--text-muted); border-radius: 50%; transition: transform 0.2s, background 0.2s; }
+        .theme-switch input:checked + .theme-switch-slider { background: var(--accent); }
+        .theme-switch input:checked + .theme-switch-slider::before { transform: translateX(16px); background: var(--bg-primary); }
+        .theme-switch input:focus-visible + .theme-switch-slider { outline: 2px solid var(--accent); outline-offset: 2px; }
         /* Hover/click on a theme tile only ever touches this iframe's own
            isolated document (see previewTheme()/revertTheme() in
            socrates.js) - never the real page's document.documentElement. A
@@ -1224,7 +1349,7 @@
             --text-bright: #ffffff;
             --text-muted: #55aaaa;
         }
-        [data-theme="c64"] .app-logo-text {
+        [data-theme="breadbin-blue"] .app-logo-text {
             color: var(--text-primary) !important;
         }
 

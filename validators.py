@@ -2,9 +2,12 @@
 import os
 import ipaddress
 import socket
+import threading
 import time
 from urllib.parse import urlparse
 import config
+
+DNS_RESOLUTION_TIMEOUT = 5  # seconds; see _resolve_and_validate_ips
 
 ALLOWED_URL_SCHEMES = ('http', 'https')
 BLOCKED_HOSTS = ('localhost', '127.0.0.1', '0.0.0.0', '::1')
@@ -73,18 +76,36 @@ def _resolve_and_validate_ips(hostname):
     "93.1.2.3" but the host may have no IPv6 route).
     Raises ValueError if resolution fails, times out, or any address is blocked.
     """
-    try:
-        # Set a 5-second timeout to prevent hanging on slow/unresponsive DNS
-        old_timeout = socket.getdefaulttimeout()
-        socket.setdefaulttimeout(5)
+    # socket.setdefaulttimeout() has NO effect here - getaddrinfo() is a
+    # thin wrapper directly around the C-extension resolver call and never
+    # constructs a Python socket object, so the default-timeout mechanism
+    # (which only applies to sockets created afterward) is never consulted.
+    # A slow/non-responding DNS server for an attacker-supplied hostname
+    # could otherwise hang this thread for as long as the OS resolver's own
+    # retry/timeout policy allows, which can be far longer than 5s. Run the
+    # lookup in a daemon thread and stop waiting after 5s instead - the
+    # thread is abandoned to finish resolving on its own if it's still
+    # running, which is harmless since it holds no locks/resources this
+    # process cares about once abandoned.
+    result = {}
+
+    def _do_resolve():
         try:
-            addrinfo = socket.getaddrinfo(hostname, None)
-        finally:
-            socket.setdefaulttimeout(old_timeout)
-    except socket.gaierror:
-        raise ValueError(f"Could not resolve hostname: {hostname}")
-    except socket.timeout:
+            result['addrinfo'] = socket.getaddrinfo(hostname, None)
+        except OSError as e:
+            # Covers both socket.gaierror (resolution failure) and
+            # socket.timeout (an OSError subclass) - either way, the
+            # caller just needs "resolution didn't succeed."
+            result['error'] = e
+
+    thread = threading.Thread(target=_do_resolve, daemon=True)
+    thread.start()
+    thread.join(timeout=DNS_RESOLUTION_TIMEOUT)
+    if thread.is_alive():
         raise ValueError(f"DNS resolution timed out for hostname: {hostname}")
+    if 'error' in result:
+        raise ValueError(f"Could not resolve hostname: {hostname}")
+    addrinfo = result['addrinfo']
 
     resolved_ips = list(dict.fromkeys(info[4][0] for info in addrinfo))
     for addr in resolved_ips:
@@ -178,28 +199,6 @@ def is_host_reachable(host, port, timeout=5):
         return True
     except OSError:
         return False
-
-
-def make_reachability_checker(host, port, timeout=5):
-    """Return a zero-arg callable that checks host:port reachability on
-    first call and caches the result for its own lifetime.
-
-    Lets several independent staleness checks made during the same
-    orchestration (e.g. socrates.py's startup checking YARA + both Sigma
-    rulesets) share one network probe instead of each blocking through its
-    own timeout if the host is slow/unreachable. Create a fresh checker per
-    orchestration rather than reusing one across a long-running process --
-    reachability can change over time, so this must not become a
-    process-lifetime cache.
-    """
-    cache = {}
-
-    def check():
-        if 'result' not in cache:
-            cache['result'] = is_host_reachable(host, port, timeout)
-        return cache['result']
-
-    return check
 
 
 def is_file_stale(path, max_age_hours):

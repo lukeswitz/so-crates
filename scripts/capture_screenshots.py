@@ -24,10 +24,11 @@ IMAGES_DIR = os.path.join(REPO_ROOT, 'docs', 'images')
 THEMES_DIR = os.path.join(IMAGES_DIR, 'themes')
 
 THEMES = [
-    'dark', 'light', 'sguil', 'hacker', 'cga', 'c64', 'vaporwave', 'matte-black', 'tokyo-night',
-    'retro-82', 'ethereal', 'lumon', 'catppuccin', 'catppuccin-latte',
+    'dark', 'light', 'sguil', 'hacker', 'cga', 'breadbin-blue', 'vaporwave', 'digital-frontier',
+    'retro-handheld', 'matte-black', 'tokyo-night',
+    'retro-82', 'ethereal', 'lumon', 'catppuccin', 'ohmydebn', 'catppuccin-latte', 'flexoki-light',
     'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord',
-    'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'winxp', 'amber', 'msdos',
+    'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'luna-blue', 'amber', 'dos-blue',
 ]
 
 DEFAULT_VIEWPORT = {'width': 1600, 'height': 1000}

@@ -96,11 +96,16 @@ RUN mkdir -p /usr/share/yara-rules && \
     > /usr/share/yara-rules/yara-rules-full.yar && \
     rm /tmp/yara-forge-full.zip
 
-# Bake Sigma rules (Zircolite JSON format) into image for air-gapped deployments
+# Bake Sigma rules (Zircolite JSON format) into image for air-gapped
+# deployments. Destination filenames must be windows.json/linux.json (not
+# the upstream rules_*.json names) - sigma_analyzer.py's setup_sigma_rules()
+# looks for '<ruleset>.json' under BAKED_IN_SIGMA_DIR, keyed by the
+# ZIRCOLITE_RULES_URLS dict keys ('windows'/'linux'), not by the source URL's
+# own filename.
 RUN mkdir -p /usr/share/sigma-rules && \
-    curl -fsSL -o /usr/share/sigma-rules/rules_windows_merged.json \
+    curl -fsSL -o /usr/share/sigma-rules/windows.json \
     "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_windows_merged.json" && \
-    curl -fsSL -o /usr/share/sigma-rules/rules_linux.json \
+    curl -fsSL -o /usr/share/sigma-rules/linux.json \
     "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_linux.json"
 
 RUN mkdir -p /data && chown -R 1000:1000 /data && \

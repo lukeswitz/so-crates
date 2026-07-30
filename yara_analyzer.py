@@ -34,18 +34,28 @@ def check_yara_executable():
     return shutil.which('yara') is not None
 
 
-def _check_reachable(reachable_check):
-    """Resolve GitHub reachability, preferring an already-computed shared
-    checker (see validators.make_reachability_checker) over a fresh direct
-    call - lets setup_yara_rules reuse a reachability probe a caller (e.g.
-    socrates.py's startup, alongside setup_sigma_rules) already made,
-    instead of blocking through its own separate timeout."""
-    if reachable_check is not None:
-        return reachable_check()
-    return is_host_reachable('github.com', 443, timeout=5)
+def get_yara_rules_info(data_dir=None):
+    """Return {'count': int|None, 'updated': epoch|None} for the current
+    YARA Forge ruleset. Rules are declared as 'rule <name> ...' at the start
+    of a line (verified against the real file). Never raises - returns None
+    fields if the rules file doesn't exist yet."""
+    if data_dir is None:
+        data_dir = os.path.expanduser('~/socrates-data')
+    rules_file = os.path.join(data_dir, YARA_RULES_SUBDIR, YARA_FORGE_FILENAME)
+    if not os.path.isfile(rules_file):
+        return {'count': None, 'updated': None}
+    try:
+        count = 0
+        with open(rules_file, 'r', errors='ignore') as f:
+            for line in f:
+                if re.match(r'^\s*rule\s+', line):
+                    count += 1
+        return {'count': count, 'updated': os.path.getmtime(rules_file)}
+    except OSError:
+        return {'count': None, 'updated': None}
 
 
-def setup_yara_rules(data_dir=None, reachable_check=None):
+def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, force=False):
     """Ensure YARA Forge rules are available.
 
     Priority:
@@ -56,11 +66,21 @@ def setup_yara_rules(data_dir=None, reachable_check=None):
     2. Baked-in rules in /usr/share/yara-rules (Docker)
     3. Download latest YARA Forge release if internet is available
 
-    reachable_check: optional zero-arg callable (from
-    validators.make_reachability_checker) for callers that also check
-    other rule sources in the same breath and want to share one network
-    probe instead of each paying their own timeout. Defaults to a fresh
-    direct check.
+    on_progress: callable receiving one progress-message string at a time
+    (defaults to print - callers that want to capture/stream progress
+    instead of just logging to stdout pass their own).
+
+    network_allowed: when False, skips reachability checks and any
+    download entirely, using only what's already cached/baked-in (used at
+    server startup so it never blocks on the network; callers that want
+    on-demand refresh pass True, the default).
+
+    force: when True, checks for an update even if the cached copy isn't
+    stale yet - used by the on-demand "check for rule updates" action,
+    where staying silent just because the 24h cache window hasn't expired
+    would defeat the point of the user explicitly asking for a check right
+    now. Has no effect if there's no cached copy to begin with (that path
+    always checks/downloads already) or if network_allowed is False.
 
     Returns the rules file path or None if no rules are available.
     """
@@ -70,42 +90,43 @@ def setup_yara_rules(data_dir=None, reachable_check=None):
 
     # Already downloaded/cached
     if os.path.isfile(rules_file):
-        if is_file_stale(rules_file, config.RULES_MAX_AGE_HOURS):
-            if _check_reachable(reachable_check):
-                print('Cached YARA Forge rules are stale — checking for updates...')
+        stale = is_file_stale(rules_file, config.RULES_MAX_AGE_HOURS)
+        if force or stale:
+            if network_allowed and is_host_reachable('github.com', 443, timeout=5):
+                on_progress('Checking for YARA Forge rule updates...')
                 try:
                     _download_yara_forge_rules(rules_file)
-                    print('YARA Forge rules refreshed successfully')
+                    on_progress('YARA Forge rules refreshed successfully')
                 except (OSError, urllib.error.URLError) as e:
-                    print(f'Warning: could not refresh YARA Forge rules, using cached copy: {e}')
+                    on_progress(f'Warning: could not refresh YARA Forge rules, using cached copy: {e}')
             else:
-                print('Cached YARA Forge rules are stale but no internet access detected — using cached rules')
-        else:
-            print('YARA Forge rules already present — using cached rules')
+                on_progress('No internet access detected — using cached YARA Forge rules')
+        elif network_allowed:
+            on_progress('YARA Forge rules already present — using cached rules')
         return rules_file
 
     # Baked-in rules (Docker image)
     if os.path.isfile(BAKED_IN_YARA_FILE):
-        print('Copying baked-in YARA Forge rules...')
+        on_progress('Copying baked-in YARA Forge rules...')
         os.makedirs(os.path.dirname(rules_file), exist_ok=True)
         try:
             shutil.copy2(BAKED_IN_YARA_FILE, rules_file)
-            print('Baked-in YARA Forge rules ready')
+            on_progress('Baked-in YARA Forge rules ready')
             return rules_file
         except OSError as e:
-            print(f'Warning: could not copy baked-in rules: {e}')
+            on_progress(f'Warning: could not copy baked-in rules: {e}')
 
     # Try to download
-    if _check_reachable(reachable_check):
-        print('Internet access detected — downloading YARA Forge rules...')
+    if network_allowed and is_host_reachable('github.com', 443, timeout=5):
+        on_progress('Internet access detected — downloading YARA Forge rules...')
         try:
             _download_yara_forge_rules(rules_file)
-            print('YARA Forge rules downloaded successfully')
+            on_progress('YARA Forge rules downloaded successfully')
             return rules_file
         except (OSError, urllib.error.URLError) as e:
-            print(f'Warning: could not download YARA Forge rules: {e}')
+            on_progress(f'Warning: could not download YARA Forge rules: {e}')
     else:
-        print('No internet access detected — YARA Forge rules not available')
+        on_progress('No internet access detected — YARA Forge rules not available')
 
     return None
 
@@ -162,8 +183,15 @@ def _run_yara_with_index(rules_file, list_path, filestore_dir=None):
     except subprocess.TimeoutExpired:
         print(f'YARA scan timed out for {os.path.basename(rules_file)}')
         return []
-    except (subprocess.CalledProcessError, OSError) as e:
+    except OSError as e:
         print(f'YARA scan error for {os.path.basename(rules_file)}: {e}')
+        return []
+
+    if result.returncode != 0:
+        # Without this check, a compile/scan failure (corrupted rules file,
+        # incompatible module, bad --scan-list entry) was indistinguishable
+        # from a clean scan that simply found nothing.
+        print(f'YARA scan error for {os.path.basename(rules_file)}: {result.stderr.strip()}')
         return []
 
     return _parse_yara_output(result.stdout, filestore_dir)

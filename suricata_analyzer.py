@@ -123,7 +123,58 @@ def _enable_eve_log_arp(config_content):
     )
 
 
-def setup_suricata_config(data_dir=None, enable_arp=False):
+def _stream_suricata_update(cmd, timeout, on_progress):
+    """Run suricata-update, streaming its combined stdout/stderr through
+    on_progress() line by line while still enforcing timeout via a watchdog
+    thread - mirrors spawn_suricata()'s Popen+watchdog idiom below, adapted
+    so the timeout kill (which closes the pipe) is what unblocks the
+    otherwise-unbounded `for line in proc.stdout` read loop below, rather
+    than needing a separate per-line read timeout.
+    """
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    timed_out = threading.Event()
+
+    def _kill_after_deadline():
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out.set()
+            proc.kill()
+
+    watchdog = threading.Thread(target=_kill_after_deadline, daemon=True)
+    watchdog.start()
+    for line in proc.stdout:
+        on_progress(line.rstrip())
+    proc.stdout.close()
+    proc.wait()
+    watchdog.join(timeout=1)
+    return proc.returncode, timed_out.is_set()
+
+
+def get_suricata_rules_info(data_dir=None):
+    """Return {'count': int|None, 'updated': epoch|None} for the current
+    Suricata ruleset. Disabled rules are '#'-commented in suricata.rules, so
+    counting non-blank, non-'#' lines gives the real enabled-rule count
+    (verified against suricata-update's own reported count). Never raises -
+    returns None fields if the rules file doesn't exist yet."""
+    if data_dir is None:
+        data_dir = os.path.expanduser('~/socrates-data')
+    rules_file = os.path.join(data_dir, 'suricata', 'rules', 'suricata.rules')
+    if not os.path.isfile(rules_file):
+        return {'count': None, 'updated': None}
+    try:
+        count = 0
+        with open(rules_file, 'r', errors='ignore') as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped and not stripped.startswith('#'):
+                    count += 1
+        return {'count': count, 'updated': os.path.getmtime(rules_file)}
+    except OSError:
+        return {'count': None, 'updated': None}
+
+
+def setup_suricata_config(data_dir=None, enable_arp=False, on_progress=print, network_allowed=True):
     if data_dir is None:
         data_dir = os.path.expanduser('~/socrates-data')
     suricata_dir = os.path.join(data_dir, 'suricata')
@@ -145,12 +196,12 @@ def setup_suricata_config(data_dir=None, enable_arp=False):
                     try:
                         shutil.copy2(src, dst)
                     except OSError as e:
-                        print(f'Warning: could not copy {src} to {dst}: {e}')
+                        on_progress(f'Warning: could not copy {src} to {dst}: {e}')
                 elif os.path.isdir(src):
                     try:
                         shutil.copytree(src, dst, dirs_exist_ok=True)
                     except OSError as e:
-                        print(f'Warning: could not copy directory {src} to {dst}: {e}')
+                        on_progress(f'Warning: could not copy directory {src} to {dst}: {e}')
 
     suricata_config = os.path.join(suricata_dir, 'suricata.yaml')
     if os.path.exists(suricata_config):
@@ -167,6 +218,12 @@ def setup_suricata_config(data_dir=None, enable_arp=False):
             r'\1enabled: yes',
             config_content
         )
+        # These five rely on Suricata's default-shipped suricata.yaml having
+        # this exact commented-out text at this exact 6-space indentation
+        # (matching the fragility already called out in
+        # _enable_app_layer_protocols/_enable_eve_log_protocol_types/
+        # _enable_eve_log_arp above) - if a future Suricata version reflows
+        # this block, these become silent no-ops rather than a clean failure.
         config_content = config_content.replace('      #dir: filestore', '      dir: filestore')
         config_content = config_content.replace('      #write-fileinfo: yes', '      write-fileinfo: yes')
         config_content = config_content.replace('      #force-filestore: yes', '      force-filestore: yes')
@@ -187,36 +244,73 @@ def setup_suricata_config(data_dir=None, enable_arp=False):
     baked_in_rules_dir = '/usr/share/suricata/rules'
     baked_in_rules_exist = os.path.isdir(baked_in_rules_dir) and os.path.exists(os.path.join(baked_in_rules_dir, 'suricata.rules'))
 
-    print("Checking for internet access...")
-    if has_internet_access():
-        print("Internet access detected — updating Suricata rules...")
+    if network_allowed:
+        on_progress("Checking for internet access...")
+    if network_allowed and has_internet_access():
+        on_progress("Internet access detected — updating Suricata rules...")
+        update_succeeded = False
         try:
-            subprocess.run(
+            returncode, timed_out = _stream_suricata_update(
                 ['suricata-update', '--no-test', '--suricata-conf', suricata_config, '--data-dir', suricata_dir, '--disable-conf', disable_conf, '--output', suricata_rules_dir],
-                timeout=config.SURICATA_UPDATE_TIMEOUT,
-                check=True
+                config.SURICATA_UPDATE_TIMEOUT,
+                on_progress,
             )
-            print("Suricata rules updated successfully")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
-            print(f'suricata-update warning: {e}')
+            if returncode == 0:
+                on_progress("Suricata rules updated successfully")
+                update_succeeded = True
+            elif timed_out:
+                on_progress(f'suricata-update warning: timed out after {config.SURICATA_UPDATE_TIMEOUT}s')
+            else:
+                on_progress(f'suricata-update warning: exited with code {returncode}')
+        except OSError as e:
+            on_progress(f'suricata-update warning: {e}')
+
+        if not update_succeeded:
+            # The reachability probe passing doesn't guarantee
+            # suricata-update itself succeeds (proxy blocking the real rule
+            # mirrors, cert error, disk full, bad --data-dir permissions,
+            # etc.) - fall back to whatever's already usable instead of
+            # silently leaving Suricata with no rules at all, mirroring the
+            # same resilience setup_yara_rules/setup_sigma_rules already
+            # have. Re-check rules_exist rather than trusting the
+            # pre-update value - suricata-update writes its final
+            # suricata.rules near the end of a run, so a failed attempt
+            # may still have left the prior good copy (or nothing) behind.
+            if os.path.exists(os.path.join(suricata_rules_dir, 'suricata.rules')):
+                on_progress("Using existing Suricata rules despite the failed update")
+            elif baked_in_rules_exist:
+                on_progress("Falling back to baked-in Suricata rules after the failed update")
+                try:
+                    shutil.copytree(baked_in_rules_dir, suricata_rules_dir, dirs_exist_ok=True)
+                    on_progress("Baked-in rules copied successfully")
+                except OSError as e:
+                    on_progress(f'Warning: could not copy baked-in rules: {e}')
+            else:
+                on_progress("Warning: suricata-update failed and no fallback rules are available")
     elif baked_in_rules_exist:
-        print("No internet access detected — using baked-in Suricata rules")
+        on_progress("No internet access detected — using baked-in Suricata rules")
         try:
             shutil.copytree(baked_in_rules_dir, suricata_rules_dir, dirs_exist_ok=True)
-            print("Baked-in rules copied successfully")
+            on_progress("Baked-in rules copied successfully")
         except OSError as e:
-            print(f'Warning: could not copy baked-in rules: {e}')
+            on_progress(f'Warning: could not copy baked-in rules: {e}')
     elif rules_exist:
-        print("No internet access and no baked-in rules found — using existing Suricata rules from a previous run")
+        if network_allowed:
+            on_progress("No internet access and no baked-in rules found — using existing Suricata rules from a previous run")
     else:
-        print("Warning: no baked-in rules found and no internet access — Suricata may not have rules to use")
+        on_progress("Warning: no baked-in rules found and no internet access — Suricata may not have rules to use")
 
 
 def spawn_suricata(dir_path, pcap_path, suricata_config_path=None, data_dir=None):
     """Spawn Suricata in the background to analyze a PCAP.
 
     Returns True if a new Suricata process was started.
-    Returns False if analysis is already in progress (lock exists).
+    Returns False either because analysis is already in progress (a
+    .phase lock exists) or because Suricata itself failed to start
+    (OSError/PermissionError) - callers that need to tell these apart
+    should check for a fresh .error file after a False return (only the
+    startup-failure case writes one; the already-in-progress case returns
+    early before ever calling _set_error/_clear_error).
     """
     if data_dir is None:
         data_dir = os.path.expanduser('~/socrates-data')

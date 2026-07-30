@@ -1,10 +1,10 @@
 # UI
 
-Three files under `static/`:
+Three files:
 
 | File | Content |
 |---|---|
-| `socrates.html` | HTML shell |
+| `socrates.html` | HTML shell (repo root) |
 | `static/socrates.css` | All styles |
 | `static/socrates.js` | All JavaScript |
 

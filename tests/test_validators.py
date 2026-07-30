@@ -367,6 +367,26 @@ class TestResolveSafeIps(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validators.resolve_safe_ips('slow.example.com')
 
+    def test_hanging_resolver_does_not_block_past_the_timeout(self):
+        """REGRESSION: socket.setdefaulttimeout() has no effect on
+        getaddrinfo() (it's a thin wrapper around the C resolver call, never
+        constructs a Python socket) - a slow/non-responding DNS server used
+        to be able to hang this call indefinitely instead of the intended
+        5s. Must actually stop waiting once the timeout elapses, even if
+        the underlying resolver call never returns at all."""
+        import time as time_mod
+
+        def _hang(*args, **kwargs):
+            time_mod.sleep(60)
+
+        with unittest.mock.patch('socket.getaddrinfo', side_effect=_hang), \
+                unittest.mock.patch('validators.DNS_RESOLUTION_TIMEOUT', 0.05):
+            start = time_mod.monotonic()
+            with self.assertRaises(ValueError):
+                validators.resolve_safe_ips('never-responds.example.com')
+            elapsed = time_mod.monotonic() - start
+        self.assertLess(elapsed, 5, 'must stop waiting at the timeout, not hang for the full 60s resolver call')
+
     def test_returned_ip_is_what_validate_url_safety_checked(self):
         """resolve_safe_ips must apply the same blocklist as validate_url_safety
         so the IPs it returns for pinning are exactly what was already vetted."""
@@ -429,39 +449,6 @@ class TestResolveSafeIps(unittest.TestCase):
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('::127.0.0.1')):
             with self.assertRaises(ValueError):
                 validators.resolve_safe_ips('v6compat.example.com')
-
-
-class TestMakeReachabilityChecker(unittest.TestCase):
-    @unittest.mock.patch('validators.is_host_reachable')
-    def test_caches_result_across_calls(self, mock_reachable):
-        mock_reachable.return_value = True
-        check = validators.make_reachability_checker('github.com', 443, timeout=5)
-        self.assertTrue(check())
-        self.assertTrue(check())
-        self.assertTrue(check())
-        mock_reachable.assert_called_once_with('github.com', 443, 5)
-
-    @unittest.mock.patch('validators.is_host_reachable')
-    def test_caches_false_result_too(self, mock_reachable):
-        """A cached 'unreachable' answer must not re-trigger the network
-        probe either - only the first call's outcome, whatever it is,
-        should stick for this checker's lifetime."""
-        mock_reachable.return_value = False
-        check = validators.make_reachability_checker('github.com', 443, timeout=5)
-        self.assertFalse(check())
-        self.assertFalse(check())
-        mock_reachable.assert_called_once()
-
-    @unittest.mock.patch('validators.is_host_reachable')
-    def test_independent_checkers_probe_independently(self, mock_reachable):
-        """Two separate checker instances (e.g. from two separate
-        orchestration runs) must not share a cache with each other."""
-        mock_reachable.return_value = True
-        check_a = validators.make_reachability_checker('github.com', 443, timeout=5)
-        check_b = validators.make_reachability_checker('github.com', 443, timeout=5)
-        check_a()
-        check_b()
-        self.assertEqual(mock_reachable.call_count, 2)
 
 
 class TestIsFileStale(unittest.TestCase):

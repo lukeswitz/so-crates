@@ -7,7 +7,9 @@
     rules/
       suricata.rules       # Downloaded by suricata-update (online) or copied from baked-in image (offline/air-gapped)
     disable.conf
-  zircolite/               # Zircolite source (auto-cloned on first run if not present)
+  zircolite/               # Optional: a pre-existing zircolite.py copy here is used if found, otherwise the
+                           # `zircolite`/`zircolite.py` command on PATH is used (installed via pip, or baked
+                           # into the Docker image at build time - never auto-cloned at runtime)
   sigma-rules/
     windows.json           # Pre-compiled Sigma rules for Windows logs
     linux.json             # Pre-compiled Sigma rules for Linux logs
@@ -26,4 +28,8 @@
     fast.log               # Suricata's plaintext alert log (PCAP only)
     stats.log               # Suricata's periodic stats log (PCAP only)
     suricata.log            # Suricata's own process log (PCAP only)
+    zircolite.log           # Zircolite's own process log (log files only)
+    .zircolite_events.db    # Zircolite's intermediate SQLite output (log files only)
+    .phase                  # Current pipeline phase, while analysis is in progress
+    .error                  # Present only if analysis failed; contains the error message
 ```

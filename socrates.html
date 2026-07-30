@@ -43,6 +43,14 @@
                         <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg></span>
                         <span>Themes</span>
                     </button>
+                    <button class="app-header-menu-item" onclick="showRulesModal(); closeMenu();">
+                        <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></span>
+                        <span>Rules</span>
+                    </button>
+                    <button class="app-header-menu-item" onclick="showAboutModal(); closeMenu();">
+                        <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                        <span>About</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -56,8 +64,8 @@
             </div>
         </div>
         
-        <div class="modal" id="errorModal">
-            <div class="modal-content" style="max-width: 400px;">
+        <div class="modal" id="errorModal" onclick="handleErrorBackdropClick(event)">
+            <div class="modal-content" style="max-width: 400px;" onclick="event.stopPropagation()">
                 <div class="modal-header">
                     <h3 style="color: #ff6b6b;">Error</h3>
                     <button class="modal-close" onclick="closeErrorModal()">&times;</button>
@@ -126,6 +134,9 @@
                     <button class="modal-close" onclick="closeHelpModal()">&times;</button>
                 </div>
                 <div id="helpModalBody">Loading...</div>
+                <div style="color: var(--text-muted); font-size: 0.85rem; margin-top: 10px;">
+                    Learn more at <a href="https://so-crates.org" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">so-crates.org</a>
+                </div>
                 <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 15px; border-top: 1px solid var(--bg-hover); margin-top: 10px;">
                     <label id="helpShowAgainContainer" style="color: var(--text-muted); font-size: 0.9rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
                         <input type="checkbox" id="helpShowAgain" checked style="cursor: pointer;">
@@ -160,16 +171,40 @@
                     <div id="uploadSizeHint" style="color: var(--text-muted); font-size: 0.8rem; margin-top: 6px;"></div>
                     <div id="uploadSizeError" style="color: var(--badge-warning-text); font-size: 0.85rem; margin-top: 6px; display: none;"></div>
 
-                    <div style="border-top: 1px solid var(--bg-hover); margin: 18px 0;"></div>
-
-                    <label style="color: var(--text-muted); font-size: 0.9rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                        <input type="checkbox" id="checkForUpdates" onchange="handleCheckForUpdatesChange(this)" style="cursor: pointer;">
-                        Check GitHub for newer SO-CRATES releases
-                    </label>
                 </div>
                 <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 15px; border-top: 1px solid var(--bg-hover); margin-top: 10px;">
                     <button onclick="closeSettingsModal()" style="background: transparent; color: var(--text-muted); border: 1px solid var(--bg-hover); padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Cancel</button>
                     <button id="settingsSaveBtn" onclick="saveSettings()" style="background: var(--accent); color: var(--bg-primary); border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal" id="aboutModal" onclick="handleAboutBackdropClick(event)">
+            <div class="modal-content" style="max-width: 650px;" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3>About</h3>
+                    <button class="modal-close" onclick="closeAboutModal()">&times;</button>
+                </div>
+                <div id="aboutModalBody">
+                    <div style="color: var(--text-bright); font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">SO-CRATES <span id="aboutVersion"></span></div>
+                    <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px; white-space: nowrap;">Security Onion Containerized Rapid Analysis of Threats, Evil, and Sus</div>
+                    <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px; display: flex; align-items: center; gap: 6px; white-space: nowrap;">
+                        Made with
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--badge-danger-text)" stroke="none" style="vertical-align: middle;"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+                        by defenders for defenders - Sponsored by <a href="https://securityonion.com" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">Security Onion Solutions, LLC</a>
+                    </div>
+                    <div style="margin-bottom: 16px; display: flex; gap: 20px;">
+                        <a href="https://so-crates.org" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Documentation</a>
+                        <a href="https://github.com/dougburks/so-crates" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">GitHub repo</a>
+                    </div>
+                    <div style="border-top: 1px solid var(--bg-hover); margin: 18px 0;"></div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                        <label style="color: var(--text-muted); font-size: 0.9rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="checkForUpdates" onchange="handleCheckForUpdatesChange(this)" style="cursor: pointer;">
+                            Check GitHub for newer SO-CRATES releases
+                        </label>
+                        <button onclick="checkForAppUpdateNow()" style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">Check Now</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -180,18 +215,39 @@
                     <h3>Themes</h3>
                     <button class="modal-close" onclick="closeThemesModal()">&times;</button>
                 </div>
-                <div id="themeCheatCodeHint" style="color: var(--text-muted); font-size: 0.95rem; margin: 0 14px 8px 14px;">Previewing <strong id="themePreviewingLabel" style="color: var(--text-bright);"></strong> theme<span id="themeCheatCodePart" style="visibility: hidden;"> — Cheat code: <code style="color: var(--accent); font-weight: 600;"></code></span></div>
-                <iframe class="theme-preview-frame" id="themePreviewFrame" title="Theme preview" tabindex="-1" aria-hidden="true"></iframe>
-                <div style="color: var(--text-muted); font-size: 0.95rem; margin: 8px 14px 4px 14px;">Hover over a theme name below to preview it in this live preview. Click to apply the theme to the entire window.</div>
-                <div style="color: var(--text-muted); font-size: 0.95rem; margin: 0 14px 12px 14px;">You can also press the <strong>t</strong> key at any time to cycle through themes.</div>
                 <div id="syncThemeWithOSContainer" style="display: none;">
                     <label style="color: var(--text-muted); font-size: 0.9rem; display: flex; align-items: center; gap: 8px; cursor: pointer; margin: 0 14px 4px 14px;">
-                        <input type="checkbox" id="syncThemeWithOS" onchange="handleSyncThemeWithOSChange(this)" style="cursor: pointer;">
-                        Sync theme to <a href="https://ohmydebn.org" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">OhMyDebn</a>
+                        <span class="theme-switch">
+                            <input type="checkbox" id="syncThemeWithOS" onchange="handleSyncThemeWithOSChange(this)">
+                            <span class="theme-switch-slider"></span>
+                        </span>
+                        Sync theme to OhMyDebn theme
                     </label>
                     <div style="border-top: 1px solid var(--bg-hover); margin: 8px 14px 8px 14px;"></div>
                 </div>
-                <div id="themesModalBody"></div>
+                <div id="themeSyncActiveNotice" style="display: none; color: var(--text-muted); font-size: 0.95rem; margin: 4px 14px 14px 14px;">
+                    Theme is controlled by OhMyDebn. Turn off the sync option above to choose a theme manually.
+                </div>
+                <div id="themePickerControls">
+                    <div id="themeCheatCodeHint" style="color: var(--text-muted); font-size: 0.95rem; margin: 0 14px 8px 14px;">Previewing <strong id="themePreviewingLabel" style="color: var(--text-bright);"></strong> theme<span id="themeCheatCodePart" style="visibility: hidden;"> — Cheat code: <code style="color: var(--accent); font-weight: 600;"></code></span></div>
+                    <iframe class="theme-preview-frame" id="themePreviewFrame" title="Theme preview" tabindex="-1" aria-hidden="true"></iframe>
+                    <div style="color: var(--text-muted); font-size: 0.95rem; margin: 8px 14px 4px 14px;">Hover over a theme name below to preview it in this live preview. Click the theme name to apply the theme to the entire window.</div>
+                    <div style="color: var(--text-muted); font-size: 0.95rem; margin: 0 14px 12px 14px;">You can also press the <strong>t</strong> key at any time to cycle through themes.</div>
+                    <div id="themesModalBody"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal" id="rulesModal" onclick="handleRulesBackdropClick(event)">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3>Rules</h3>
+                    <button class="modal-close" onclick="closeRulesModal()">&times;</button>
+                </div>
+                <div id="rulesModalBody">Loading...</div>
+                <div style="display: flex; justify-content: flex-end; padding-top: 15px; border-top: 1px solid var(--bg-hover); margin-top: 10px;">
+                    <button id="updateAllRulesBtn" onclick="triggerRulesetUpdate('all')" style="background: var(--accent); color: var(--bg-primary); border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Update All</button>
+                </div>
             </div>
         </div>
 
@@ -222,7 +278,7 @@
         <script src="static/socrates.js"></script>
     </div>
     <div class="footer">
-        <a href="https://github.com/dougburks/so-crates" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;" id="footerVersionLink">SO-CRATES</a><span id="footerUpdateBadge" style="display: none; margin-left: 8px;"><a href="https://github.com/dougburks/so-crates/releases/latest" target="_blank" rel="noopener noreferrer" style="color: var(--badge-warning-text); text-decoration: none;">Update available</a></span>
+        <a href="#" onclick="showAboutModal(); return false;" style="color: var(--accent); text-decoration: none;" id="footerVersionLink">SO-CRATES</a><span id="footerUpdateBadge" style="display: none; margin-left: 8px;"><a href="https://github.com/dougburks/so-crates/releases/latest" target="_blank" rel="noopener noreferrer" style="color: var(--badge-warning-text); text-decoration: none;">Update available</a></span>
         <a href="https://securityonion.com" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">&copy; 2026 Security Onion Solutions, LLC</a>
     </div>
 </body>

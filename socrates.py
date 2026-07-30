@@ -30,30 +30,36 @@ from validators import (
     validate_ip, validate_port, sanitize_filename, is_safe_path,
     validate_url_safety, resolve_safe_ips, validate_zip_extraction,
     is_log_file, is_log_file_by_extension, is_office_file_by_extension,
-    is_pcap_file, make_reachability_checker,
+    is_pcap_file,
 )
 from suricata_analyzer import (
     check_executables, setup_suricata_config, spawn_suricata,
-    _set_error, _set_phase, _clear_phase,
+    _set_error, _set_phase, _clear_phase, get_suricata_rules_info,
 )
-from yara_analyzer import check_yara_executable, setup_yara_rules, scan_single_file
+from yara_analyzer import check_yara_executable, setup_yara_rules, scan_single_file, get_yara_rules_info
 from sigma_analyzer import (
     is_zircolite_available, setup_sigma_rules, run_sigma_pipeline,
-    parse_zircolite_results, import_zircolite_logs,
+    parse_zircolite_results, import_zircolite_logs, get_sigma_rules_info,
+)
+from ohmydebn_colors import (
+    derive_theme_colors, derive_theme_colors_from_alacritty, derive_theme_colors_from_named_palette,
 )
 import config
+import tomllib
 
 VERSION = '3.1.0'
 GITHUB_RELEASES_API = 'https://api.github.com/repos/dougburks/so-crates/releases/latest'
 PORT = int(os.environ.get('PORT', 8000))
 BIND_ADDRESS = os.environ.get('BIND_ADDRESS', '127.0.0.1')
 DATA_DIR = os.environ.get('DATA_DIR', os.path.expanduser('~/socrates-data'))
-# Path to a file containing a single theme name, kept in sync by an external
-# tool (e.g. OhMyDebn's ohmydebn-theme-set). Unset means the feature is off.
-OHMYDEBN_THEME_FILE = os.environ.get('OHMYDEBN_THEME_FILE')
+# Base OhMyDebn config directory (e.g. ~/.config/ohmydebn/), kept in sync
+# by an external tool (e.g. OhMyDebn's ohmydebn-theme-set). Unset means the
+# theme-sync feature is off. The active theme's name and palette are read
+# by convention from <OHMYDEBN_THEME_DIR>/current/theme.name and
+# <OHMYDEBN_THEME_DIR>/current/theme/{colors,alacritty}.toml.
+OHMYDEBN_THEME_DIR = os.environ.get('OHMYDEBN_THEME_DIR')
 # Re-export size limits for backward compatibility
 MAX_TRANSCRIPT_SIZE = config.MAX_TRANSCRIPT_SIZE
-MAX_UPLOAD_SIZE = config.MAX_UPLOAD_SIZE
 MAX_EVE_SIZE = config.MAX_EVE_SIZE
 SURICATA_DIR = os.path.join(DATA_DIR, 'suricata')
 
@@ -62,8 +68,9 @@ MD5_RE = re.compile(r'^[a-f0-9]{32}$')
 # Deliberately permissive rather than an enum of known theme names, so the
 # client's own THEMES allowlist (static/socrates.js) stays the single source
 # of truth; this just bounds what a malformed/oversized file can smuggle
-# through as JSON.
-THEME_NAME_RE = re.compile(r'^[a-z0-9-]{1,40}$')
+# through as JSON. Underscores included alongside hyphens - confirmed real
+# installed OhMyDebn theme names use them (e.g. "black_arch", "snow_black").
+THEME_NAME_RE = re.compile(r'^[a-z0-9_-]{1,40}$')
 
 # Pipeline output artifacts removed by /api/reanalyze before re-running analysis
 PCAP_ANALYSIS_ARTIFACTS = ('eve.json', 'events.db', '.phase', '.error', 'yara_matches.json', 'sigma_matches.json', '.meta', 'file_metadata.json')
@@ -88,6 +95,45 @@ def _evict_analysis_cache(md5):
                 del cache[key]
 
 
+# Server-wide rule-update job state, polled by the frontend via
+# GET /api/rule-update-status after POST /api/update-rules starts a
+# per-ruleset job. Keyed by ruleset name (not per-md5 like the .phase file
+# pattern used elsewhere) since each of the three rulesets can be updated
+# independently of the others and of any analysis. Each sub-dict is
+# replaced (not mutated field-by-field) when its ruleset's run starts, so a
+# slow poller from a previous run of that ruleset can never blend its stale
+# reference with a new run's lines.
+_rule_update_lock = threading.Lock()
+_rule_update_state = {
+    'suricata': {'running': False, 'lines': [], 'done': True, 'error': None},
+    'yara': {'running': False, 'lines': [], 'done': True, 'error': None},
+    'sigma': {'running': False, 'lines': [], 'done': True, 'error': None},
+}
+
+_RULESET_LABELS = {'suricata': 'Suricata', 'yara': 'YARA', 'sigma': 'Sigma'}
+
+
+def _run_ruleset_update(name):
+    def on_progress(message):
+        print(message)
+        with _rule_update_lock:
+            _rule_update_state[name]['lines'].append(message)
+
+    try:
+        if name == 'suricata':
+            setup_suricata_config(DATA_DIR, enable_arp=bool(os.environ.get('ENABLE_ARP_LOGGING')), on_progress=on_progress)
+        elif name == 'yara':
+            setup_yara_rules(DATA_DIR, on_progress=on_progress, force=True)
+        elif name == 'sigma':
+            setup_sigma_rules(DATA_DIR, on_progress=on_progress, force=True)
+    except Exception as e:
+        on_progress(f'Error updating {_RULESET_LABELS[name]} rules: {e}')
+    finally:
+        with _rule_update_lock:
+            _rule_update_state[name]['done'] = True
+            _rule_update_state[name]['running'] = False
+
+
 class _FileTooLargeError(Exception):
     """Raised by _fetch_url_safely when the downloaded body exceeds max_size."""
 
@@ -103,7 +149,7 @@ def _connect_to_pinned_ips(pinned_ips, port, timeout):
             return socket.create_connection((ip, port), timeout)
         except OSError as e:
             last_err = e
-    raise last_err
+    raise last_err or OSError('No addresses to connect to')
 
 
 class _PinnedHTTPConnection(http.client.HTTPConnection):
@@ -211,7 +257,11 @@ def _attempt_zip_extract(zip_ref, extract_dir, passwords, max_size=None):
     try:
         zip_ref.extractall(extract_dir)
         extracted = True
-    except RuntimeError:
+    except (RuntimeError, NotImplementedError):
+        # RuntimeError: bad/missing password. NotImplementedError: zipfile's
+        # own signal for strong encryption (AES) or an unsupported
+        # compression method - both are real, fairly common in
+        # malware-sample archives, not just "wrong password".
         pass
 
     if not extracted and passwords:
@@ -220,7 +270,7 @@ def _attempt_zip_extract(zip_ref, extract_dir, passwords, max_size=None):
                 zip_ref.extractall(extract_dir, pwd=pwd)
                 extracted = True
                 break
-            except RuntimeError:
+            except (RuntimeError, NotImplementedError):
                 continue
 
     return extracted
@@ -265,6 +315,47 @@ def _is_newer_version(candidate, current):
     except (ValueError, AttributeError):
         return False
     return candidate_parts > current_parts
+
+
+def _load_toml(path):
+    try:
+        with open(path, 'rb') as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+
+
+def _get_ohmydebn_custom_colors():
+    """Reads the active OhMyDebn/Aether theme's raw palette (under
+    OHMYDEBN_THEME_DIR) and derives a full SO-CRATES theme from it, for
+    themes the client's THEMES registry has no hand-built CSS for. Tries
+    the native colors.toml first - both the numbered color0-15 ANSI-slot
+    scheme and the semantic-named variant (red/blue/bright_red/muted/...,
+    confirmed on a real installed theme) - falling back to alacritty.toml
+    (many custom-installed themes only ship the latter) if neither native
+    reading produces a usable result. Never raises - any failure (unset,
+    unreadable, malformed TOML, missing/invalid palette keys) just means
+    no fallback is available."""
+    if not OHMYDEBN_THEME_DIR:
+        return None
+    theme_dir = os.path.join(OHMYDEBN_THEME_DIR, 'current', 'theme')
+
+    colors_toml = _load_toml(os.path.join(theme_dir, 'colors.toml'))
+    if colors_toml is not None:
+        result = derive_theme_colors(colors_toml)
+        if result is not None:
+            return result
+        result = derive_theme_colors_from_named_palette(colors_toml)
+        if result is not None:
+            return result
+
+    alacritty_toml = _load_toml(os.path.join(theme_dir, 'alacritty.toml'))
+    if alacritty_toml is not None:
+        result = derive_theme_colors_from_alacritty(alacritty_toml)
+        if result is not None:
+            return result
+
+    return None
 
 
 def _upload_tmp_dir():
@@ -538,9 +629,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """List user files in an analysis dir, excluding PCAPs and pipeline artifacts."""
         if not os.path.exists(dir_path):
             return []
+        # Exact artifact filenames (not a blanket '.log' suffix exclusion -
+        # a user-uploaded log file legitimately ends in .log too, and must
+        # still be found here as a display-name fallback before name.txt
+        # exists) - zircolite.log specifically used to slip through this
+        # check and could transiently win a directory listing race against
+        # the real uploaded file's name.
+        exact_artifacts = set(PCAP_ANALYSIS_ARTIFACTS) | set(FILE_ANALYSIS_ARTIFACTS)
         return [f for f in os.listdir(dir_path)
                 if not f.lower().endswith(PCAP_EXTENSIONS + ('.zip', '.db', '.json', '.txt', '.phase'))
-                and not f.startswith('.')]
+                and not f.startswith('.')
+                and f not in exact_artifacts]
 
     def _resolve_display_name(self, dir_path, md5):
         """Resolve the human-readable display name for an analysis directory.
@@ -570,6 +669,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return md5
 
     def _validate_stream_params(self, params):
+        """Returns (result, error_message, status_code). On success,
+        error_message/status_code are both None."""
         src = params.get('src', [''])[0]
         sport = params.get('sport', [''])[0]
         dst = params.get('dst', [''])[0]
@@ -577,17 +678,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         md5 = params.get('md5', [''])[0]
 
         if not (validate_ip(src) and validate_ip(dst) and validate_port(sport) and validate_port(dport)):
-            return None, 'Invalid IP or port'
+            return None, 'Invalid IP or port', 400
         dir_path, error = self._resolve_md5_dir(md5)
         if error:
-            return None, error
+            # _resolve_md5_dir's own errors (missing/malformed md5, unsafe
+            # path) are always 400 - never guessed from the message text.
+            return None, error, 400
 
         pcap_file = _find_pcap_file(dir_path)
         pcap = os.path.join(dir_path, pcap_file) if pcap_file else None
         if not pcap:
-            return None, 'No pcap file found'
+            return None, 'No pcap file found', 404
 
-        return {'pcap': pcap, 'src': src, 'sport': sport, 'dst': dst, 'dport': dport}, None
+        return {'pcap': pcap, 'src': src, 'sport': sport, 'dst': dst, 'dport': dport}, None, None
 
     GET_ROUTES = {
         '/api/events': 'handle_get_events',
@@ -610,6 +713,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '/api/sigma-count': 'handle_get_sigma_count',
         '/api/sigma-stats': 'handle_get_sigma_stats',
         '/api/status': 'handle_get_status',
+        '/api/rule-update-status': 'handle_get_rule_update_status',
+        '/api/rules-info': 'handle_get_rules_info',
     }
 
     POST_ROUTES = {
@@ -619,6 +724,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '/api/reanalyze': 'handle_post_reanalyze',
         '/api/delete-analysis': 'handle_post_delete_analysis',
         '/api/delete-all-analyses': 'handle_post_delete_all_analyses',
+        '/api/update-rules': 'handle_post_update_rules',
     }
 
     def do_GET(self):
@@ -773,9 +879,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._send_json(data)
 
     def handle_get_download_stream(self, params):
-        result, error = self._validate_stream_params(params)
+        result, error, status_code = self._validate_stream_params(params)
         if error:
-            self._send_error(400 if 'required' in error or 'Invalid' in error else 404, error)
+            self._send_error(status_code, error)
             return
 
         pcap = result['pcap']
@@ -805,9 +911,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_error(500, 'Internal server error')
 
     def handle_get_ascii_stream(self, params):
-        result, error = self._validate_stream_params(params)
+        result, error, status_code = self._validate_stream_params(params)
         if error:
-            self._send_error(400 if 'required' in error or 'Invalid' in error else 404, error)
+            self._send_error(status_code, error)
             return
 
         pcap = result['pcap']
@@ -859,9 +965,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return lines
 
     def handle_get_hexdump_stream(self, params):
-        result, error = self._validate_stream_params(params)
+        result, error, status_code = self._validate_stream_params(params)
         if error:
-            self._send_error(400 if 'required' in error or 'Invalid' in error else 404, error)
+            self._send_error(status_code, error)
             return
 
         pcap = result['pcap']
@@ -947,7 +1053,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if os.path.exists(eve_path):
                 eve_size = os.path.getsize(eve_path)
                 if eve_size > MAX_EVE_SIZE:
-                    self._send_error(400, f'Eve.json too large ({eve_size // (1024*1024)}MB, max {MAX_EVE_SIZE // (1024*1024)}MB)')
+                    self._send_error(400, f'eve.json too large ({eve_size // (1024*1024)}MB, max {MAX_EVE_SIZE // (1024*1024)}MB)')
                     return
 
             self._send_json({'success': True, 'md5': md5, 'file_name': self._resolve_display_name(dir_path, md5)})
@@ -996,6 +1102,54 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             _SANKEY_CACHE.clear()
             _AGGREGATION_CACHE.clear()
         self._send_json({'success': True, 'deleted': deleted})
+
+    def handle_post_update_rules(self):
+        data = self._read_json_body(config.MAX_REQUEST_BODY_SIZE)
+        if data is None:
+            return
+        ruleset = data.get('ruleset', '')
+        if ruleset not in ('suricata', 'yara', 'sigma', 'all'):
+            self._send_error(400, "ruleset must be one of 'suricata', 'yara', 'sigma', 'all'")
+            return
+
+        names = ('suricata', 'yara', 'sigma') if ruleset == 'all' else (ruleset,)
+        # Check-and-set every targeted ruleset's 'running' flag under a
+        # single lock acquisition - for 'all' this must check+set all three
+        # keys atomically together, not one at a time, or two concurrent
+        # 'all' requests could interleave and each start a different subset.
+        with _rule_update_lock:
+            if any(_rule_update_state[n]['running'] for n in names):
+                self._send_error(409, 'Rule update already in progress')
+                return
+            for n in names:
+                _rule_update_state[n] = {'running': True, 'lines': [], 'done': False, 'error': None}
+        for n in names:
+            threading.Thread(target=_run_ruleset_update, args=(n,), daemon=True).start()
+        self._send_json({'status': 'started'})
+
+    def handle_get_rule_update_status(self, params):
+        # Copy 'lines' (not just the outer dict) while holding the lock, and
+        # send the response after releasing it - holding the lock across
+        # the socket write would stall the background job's on_progress()
+        # appends if this client is slow to read.
+        with _rule_update_lock:
+            state = {
+                n: {
+                    'running': _rule_update_state[n]['running'],
+                    'lines': list(_rule_update_state[n]['lines']),
+                    'done': _rule_update_state[n]['done'],
+                    'error': _rule_update_state[n]['error'],
+                }
+                for n in _rule_update_state
+            }
+        self._send_json(state)
+
+    def handle_get_rules_info(self, params):
+        self._send_json({
+            'suricata': get_suricata_rules_info(DATA_DIR),
+            'yara': get_yara_rules_info(DATA_DIR),
+            'sigma': get_sigma_rules_info(DATA_DIR),
+        })
 
     def handle_get_pcap_path(self, params):
         md5 = params.get('md5', [''])[0]
@@ -1052,24 +1206,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def handle_get_theme(self, params):
         theme = None
-        if OHMYDEBN_THEME_FILE:
+        if OHMYDEBN_THEME_DIR:
             try:
-                with open(OHMYDEBN_THEME_FILE, 'r') as f:
+                name_path = os.path.join(OHMYDEBN_THEME_DIR, 'current', 'theme.name')
+                with open(name_path, 'r') as f:
                     candidate = f.read(256).strip()
                 if THEME_NAME_RE.match(candidate):
                     theme = candidate
             except OSError:
                 pass
-        self._send_json({'theme': theme})
+        self._send_json({'theme': theme, 'customColors': _get_ohmydebn_custom_colors()})
 
     def handle_get_theme_sync_available(self, params):
         """Lets the frontend hide the "Sync theme to OhMyDebn" toggle
         entirely rather than showing a control that can never do anything
-        (OHMYDEBN_THEME_FILE unset, or set but unreadable)."""
+        (OHMYDEBN_THEME_DIR unset, or its theme.name unreadable)."""
         available = False
-        if OHMYDEBN_THEME_FILE:
+        if OHMYDEBN_THEME_DIR:
             try:
-                with open(OHMYDEBN_THEME_FILE, 'r'):
+                name_path = os.path.join(OHMYDEBN_THEME_DIR, 'current', 'theme.name')
+                with open(name_path, 'r'):
                     available = True
             except OSError:
                 pass
@@ -1135,6 +1291,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         else:
             self._send_json({})
 
+    def _commit_file_or_return_ready(self, dir_path, md5_hash, dedup_markers, commit_fn):
+        """Shared first step of every _process_uploaded_file branch: if any
+        dedup_markers file already exists in dir_path, this upload is a
+        duplicate of an already-completed analysis - return the 'ready'
+        response immediately without touching anything on disk. Otherwise
+        create dir_path and call commit_fn() to move the uploaded/extracted
+        file into place.
+
+        Returns the 'ready' response dict if deduped (caller should return
+        it immediately), or None if the caller should continue processing.
+        """
+        if any(os.path.exists(os.path.join(dir_path, marker)) for marker in dedup_markers):
+            return {'status': 'ready', 'md5': md5_hash}
+        os.makedirs(dir_path, exist_ok=True)
+        commit_fn()
+        return None
+
     def _process_uploaded_file(self, src_path, original_filename, passwords=None, effective_max=None):
         """Process uploaded or downloaded file: detect ZIP, extract, find PCAP, compute MD5, dispatch.
 
@@ -1167,52 +1340,63 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 tmp_dir = tempfile.mkdtemp(dir=_upload_tmp_dir())
                 try:
                     extracted_files = _extract_zip_contents(src_path, tmp_dir, passwords or [], effective_max)
+                    # Only one file from the archive is ever analyzed (the
+                    # first PCAP, or the first non-hidden file if there's no
+                    # PCAP) - everything else extracted alongside it is
+                    # discarded when tmp_dir is removed below. Surfaced to
+                    # the user via 'filesSkipped' rather than silently lost.
+                    non_hidden_extracted = [f for f in extracted_files if not os.path.basename(f).startswith('.')]
+                    files_skipped = max(0, len(non_hidden_extracted) - 1)
                     pcap_files = [f for f in extracted_files if f.lower().endswith(PCAP_EXTENSIONS)]
                     if pcap_files:
                         md5_hash = _hash_file(pcap_files[0])
                         dir_path = os.path.join(DATA_DIR, md5_hash)
                         pcap_filename = sanitize_filename(os.path.basename(pcap_files[0]))
                         pcap_path = os.path.join(dir_path, pcap_filename)
-                        eve_path = os.path.join(dir_path, 'eve.json')
                         name_path = os.path.join(dir_path, 'name.txt')
 
-                        if os.path.exists(eve_path):
-                            return {'status': 'ready', 'md5': md5_hash}
-
-                        os.makedirs(dir_path, exist_ok=True)
-                        shutil.move(pcap_files[0], pcap_path)
+                        deduped = self._commit_file_or_return_ready(
+                            dir_path, md5_hash, ('eve.json',),
+                            lambda: shutil.move(pcap_files[0], pcap_path)
+                        )
+                        if deduped:
+                            return deduped
                         with open(name_path, 'w') as f:
                             f.write(pcap_filename)
                         _write_meta(dir_path, safe_filename, pcap_filename, 'pcap')
 
                         spawn_suricata(dir_path, pcap_path, os.path.join(SURICATA_DIR, 'suricata.yaml'), data_dir=DATA_DIR)
-                        return {'status': 'processing', 'md5': md5_hash, 'phase': 'network'}
+                        response = {'status': 'processing', 'md5': md5_hash, 'phase': 'network'}
+                        if files_skipped:
+                            response['filesSkipped'] = files_skipped
+                        return response
                     else:
                         # ZIP contained no PCAP — treat as standalone file archive
-                        non_hidden = [f for f in extracted_files if not os.path.basename(f).startswith('.')]
-                        if not non_hidden:
+                        if not non_hidden_extracted:
                             raise ValueError('ZIP archive is empty')
-                        first_file = non_hidden[0]
+                        first_file = non_hidden_extracted[0]
                         md5_hash, prefix = _hash_file_with_prefix(first_file)
                         dir_path = os.path.join(DATA_DIR, md5_hash)
                         dest_filename = sanitize_filename(os.path.basename(first_file))
                         dest_path = os.path.join(dir_path, dest_filename)
-                        db_path = os.path.join(dir_path, 'events.db')
-                        name_path = os.path.join(dir_path, 'name.txt')
 
-                        if os.path.exists(db_path):
-                            return {'status': 'ready', 'md5': md5_hash}
-
-                        os.makedirs(dir_path, exist_ok=True)
-                        shutil.move(first_file, dest_path)
+                        deduped = self._commit_file_or_return_ready(
+                            dir_path, md5_hash, ('events.db',),
+                            lambda: shutil.move(first_file, dest_path)
+                        )
+                        if deduped:
+                            return deduped
                         detected = 'log' if (is_log_file(prefix) or is_log_file_by_extension(dest_path)) else 'binary'
                         _write_meta(dir_path, safe_filename, os.path.basename(dest_path), detected)
                         if detected == 'log':
                             self._analyze_log_file(dir_path, dest_path, os.path.basename(dest_path))
-                            return {'status': 'processing', 'md5': md5_hash, 'phase': 'logs'}
+                            response = {'status': 'processing', 'md5': md5_hash, 'phase': 'logs'}
                         else:
                             self._analyze_standalone_file(dir_path, dest_path, os.path.basename(dest_path))
-                            return {'status': 'processing', 'md5': md5_hash, 'phase': 'files'}
+                            response = {'status': 'processing', 'md5': md5_hash, 'phase': 'files'}
+                        if files_skipped:
+                            response['filesSkipped'] = files_skipped
+                        return response
                 finally:
                     shutil.rmtree(tmp_dir, ignore_errors=True)
             else:
@@ -1220,15 +1404,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 dir_path = os.path.join(DATA_DIR, md5_hash)
                 dest_filename = safe_filename if safe_filename else 'uploaded'
                 dest_path = os.path.join(dir_path, dest_filename)
-                eve_path = os.path.join(dir_path, 'eve.json')
-                db_path = os.path.join(dir_path, 'events.db')
                 name_path = os.path.join(dir_path, 'name.txt')
 
-                if os.path.exists(eve_path) or os.path.exists(db_path):
-                    return {'status': 'ready', 'md5': md5_hash}
-
-                os.makedirs(dir_path, exist_ok=True)
-                os.replace(src_path, dest_path)
+                deduped = self._commit_file_or_return_ready(
+                    dir_path, md5_hash, ('eve.json', 'events.db'),
+                    lambda: os.replace(src_path, dest_path)
+                )
+                if deduped:
+                    return deduped
                 with open(name_path, 'w') as f:
                     f.write(dest_filename)
 
@@ -1289,7 +1472,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 name_path = os.path.join(dir_path, 'name.txt')
 
                 if not is_zircolite_available():
-                    _set_error(dir_path, 'Sigma analysis unavailable — Zircolite is not installed. Install with: pip3 install zircolite==3.7.1')
+                    _set_error(dir_path, f'Sigma analysis unavailable — Zircolite is not installed. Install with: pip3 install zircolite=={config.ZIRCOLITE_VERSION}')
                     init_empty_db(db_file)
                 else:
                     try:
@@ -1651,7 +1834,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if spawn_suricata(dir_path, pcap_path, os.path.join(SURICATA_DIR, 'suricata.yaml'), data_dir=DATA_DIR):
                 self._send_json({'status': 'processing', 'md5': md5, 'phase': 'network'})
             else:
-                self._send_error(409, 'Analysis already in progress')
+                # spawn_suricata() returns False for two different reasons -
+                # already in progress (no .error written), or a genuine
+                # failure to start (Suricata missing/permissions/etc, which
+                # does write .error) - check which one actually happened
+                # rather than always reporting "already in progress" for a
+                # real startup failure.
+                error_file = os.path.join(dir_path, '.error')
+                if os.path.exists(error_file):
+                    try:
+                        with open(error_file, 'r') as f:
+                            error_msg = f.read().strip()
+                    except OSError:
+                        error_msg = 'Suricata failed to start'
+                    self._send_error(500, error_msg)
+                else:
+                    self._send_error(409, 'Analysis already in progress')
         elif non_pcap_files:
             file_path = os.path.join(dir_path, non_pcap_files[0])
             for artifact in FILE_ANALYSIS_ARTIFACTS:
@@ -1708,14 +1906,17 @@ def main():
     ================================================================
     """)
 
-    # Run setup - handles rules download first. YARA and Sigma's (x2, one
-    # per ruleset) staleness checks share one reachability probe via
-    # rules_reachable_check instead of each blocking through its own
-    # timeout if github.com is slow/unreachable.
-    setup_suricata_config(DATA_DIR, enable_arp=bool(os.environ.get('ENABLE_ARP_LOGGING')))
-    rules_reachable_check = make_reachability_checker('github.com', 443, timeout=5)
-    setup_yara_rules(DATA_DIR, reachable_check=rules_reachable_check)
-    setup_sigma_rules(DATA_DIR, reachable_check=rules_reachable_check)
+    # Local bootstrap only - config files, cached/baked-in rules. No network
+    # calls here (network_allowed=False), so the server can never block
+    # startup on a slow/unreachable rule source; refreshing rules over the
+    # network is now an explicit on-demand action (see _run_ruleset_update()
+    # and POST /api/update-rules) triggered from the Rules modal (gear menu)
+    # instead.
+    setup_suricata_config(DATA_DIR, enable_arp=bool(os.environ.get('ENABLE_ARP_LOGGING')), network_allowed=False)
+    setup_yara_rules(DATA_DIR, network_allowed=False)
+    setup_sigma_rules(DATA_DIR, network_allowed=False)
+
+    print("Rule updates are now managed from the web interface (gear menu > Rules) instead of at startup.")
 
     if os.environ.get('DEMO'):
         msg = 'SO-CRATES is now running. Click the link on the left!'

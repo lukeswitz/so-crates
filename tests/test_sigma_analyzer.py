@@ -388,21 +388,22 @@ class TestSetupSigmaRulesFreshness(unittest.TestCase):
                 self.assertEqual(f.read(), '{"good": "cached rules"}')
             self.assertFalse(os.path.exists(dest + '.new'), 'temp file must be cleaned up')
 
-    @unittest.mock.patch('validators.is_host_reachable', return_value=True)
-    @unittest.mock.patch('sigma_analyzer.is_host_reachable')
-    def test_shared_reachable_check_is_used_instead_of_direct_call(self, mock_reachable, mock_shared_reachable):
-        """When a caller passes a shared reachable_check (as socrates.py's
-        startup does), setup_sigma_rules must use it for both rulesets
-        rather than calling is_host_reachable itself - otherwise sharing
-        the checker across YARA + both Sigma rulesets wouldn't actually
-        save any probes."""
+    @unittest.mock.patch('sigma_analyzer.urllib.request.urlopen')
+    def test_download_rule_file_rejects_non_json_response(self, mock_urlopen):
+        """REGRESSION: a transient bad response (rate-limit page, outage
+        page, truncated-but-200 body) used to be written straight to disk
+        and atomically swapped in over a good cached ruleset with no
+        validation at all. Must be rejected before ever touching dest_file."""
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = b'<html>rate limited</html>'
         with tempfile.TemporaryDirectory() as tmpdir:
-            self._make_stale_rules(tmpdir)
-            shared_check = validators.make_reachability_checker('github.com', 443, timeout=5)
-            with unittest.mock.patch('sigma_analyzer._download_rule_file'):
-                sigma_analyzer.setup_sigma_rules(tmpdir, reachable_check=shared_check)
-        mock_reachable.assert_not_called()
-        mock_shared_reachable.assert_called_once()
+            dest = os.path.join(tmpdir, 'windows.json')
+            with open(dest, 'w') as f:
+                f.write('{"good": "cached rules"}')
+            with self.assertRaises(OSError):
+                sigma_analyzer._download_rule_file('http://example.com/rules.json', dest)
+            with open(dest) as f:
+                self.assertEqual(f.read(), '{"good": "cached rules"}')
+            self.assertFalse(os.path.exists(dest + '.new'), 'temp file must be cleaned up')
 
 
 if __name__ == '__main__':

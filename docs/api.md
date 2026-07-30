@@ -20,6 +20,30 @@ Returns the running SO-CRATES version.
 
 ---
 
+### `GET /api/version-check`
+
+Checks GitHub's releases API for a newer SO-CRATES version. Only ever called by the frontend if the user has opted in (the "Check GitHub for newer releases" checkbox in the About modal, or its manual "Check Now" button) - never fetched automatically otherwise.
+
+**Response:** `{"currentVersion": "<version>", "latestVersion": <string or null>, "updateAvailable": <boolean>}` - `latestVersion`/`updateAvailable` stay `null`/`false` on any failure to reach GitHub (never surfaces an error to the caller).
+
+---
+
+### `GET /api/theme`
+
+Reads the active OhMyDebn theme's name and color palette, for the opt-in "Sync theme with OS" feature. A no-op (`theme`/`customColors` both `null`) unless the `OHMYDEBN_THEME_DIR` environment variable is set.
+
+**Response:** `{"theme": <string or null>, "customColors": <object or null>}` - `theme` is the raw theme name (from `<OHMYDEBN_THEME_DIR>/current/theme.name`) if it's set and passes a loose name-format check, else `null`. `customColors` is a set of ~25 CSS custom-property name/hex-value pairs synthesized from the theme's `colors.toml`/`alacritty.toml` palette (see [Themes](themes.md)), or `null` if no theme directory is configured or no palette could be derived.
+
+---
+
+### `GET /api/theme-sync-available`
+
+Tells the frontend whether the "Sync theme with OS" toggle could ever do anything, so it isn't shown as a dead control on deployments not launched via OhMyDebn.
+
+**Response:** `{"available": <boolean>}` - `true` iff `OHMYDEBN_THEME_DIR` is set and its `current/theme.name` file is currently readable (regardless of whether its *contents* are valid - that's `/api/theme`'s concern).
+
+---
+
 ### `GET /api/events`
 
 Returns event data from Suricata's eve.json (via SQLite index or direct JSON parse).
@@ -90,6 +114,34 @@ Returns total event count, optionally filtered by type or search query.
 Returns server-enforced limits the client should respect (e.g. when validating the user-configurable query-limit setting).
 
 **Response:** `{"maxQueryLimit": <number>, "maxUploadSize": <number>}` - `MAX_QUERY_LIMIT` (100,000 by default) and `MAX_UPLOAD_SIZE` in bytes (5,000 MB by default); both are hard ceilings that any client-requested override (`limit=`, or the `X-Max-Upload-Size` upload header) is clamped to server-side, regardless of what the client requests.
+
+---
+
+### `GET /api/rules-info`
+
+Returns on-disk rule counts and last-updated times for all three rulesets, for the Rules modal (gear menu > Rules). Purely a snapshot of what's currently on disk - no job/update state involved (that's `/api/rule-update-status`'s job).
+
+**Response:** `{"suricata": {"count": <number or null>, "updated": <epoch or null>}, "yara": {"count": <number or null>, "updated": <epoch or null>}, "sigma": {"windows": {"count": ..., "updated": ...}, "linux": {"count": ..., "updated": ...}}}` - fields are `null` if that ruleset has never been set up.
+
+---
+
+### `GET /api/rule-update-status`
+
+Returns the live/last-run state of each ruleset's update job, polled by the Rules modal while open.
+
+**Response:** `{"suricata": {"running": <boolean>, "lines": [<string>, ...], "done": <boolean>, "error": <string or null>}, "yara": {...}, "sigma": {...}}` - `lines` accumulates progress messages for the current (or most recent) run of that ruleset.
+
+---
+
+### `POST /api/update-rules`
+
+Starts an update for one ruleset, or all three. Triggered by the Rules modal's per-ruleset "Update" buttons and its "Update All" button.
+
+**Request body:** `{"ruleset": "suricata"|"yara"|"sigma"|"all"}`
+
+**Response:** `{"status": "started"}`
+
+**Errors:** `400` if `ruleset` isn't one of the four allowed values. `409` ("Rule update already in progress") if the targeted ruleset (or, for `"all"`, any one of the three) is already running.
 
 ---
 
