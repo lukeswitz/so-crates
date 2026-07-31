@@ -67,8 +67,18 @@ class TestSQLite(unittest.TestCase):
     def test_sort_expr_real_column(self):
         self.assertEqual(db._sort_expr('flow', 'Protocol'), 'protocol')
         self.assertEqual(db._sort_expr('flow', 'Source IP', prefix='e.'), 'e.src_ip')
-        # Source Port is cast to text (REAL_AGGREGATION_COLUMNS marks it cast_text=True)
-        self.assertEqual(db._sort_expr('flow', 'Source Port'), 'CAST(src_port AS TEXT)')
+
+    def test_sort_expr_port_columns_sort_numerically_not_as_text(self):
+        """REGRESSION: REAL_AGGREGATION_COLUMNS marks Source/Dest Port
+        cast_text=True so the aggregation table's GROUP BY output is
+        uniformly a string - but src_port/dest_port are real INTEGER
+        columns, and _sort_expr (used for the events table's ORDER BY, not
+        aggregation) must not reuse that flag: casting to TEXT for sorting
+        would order port 3306 before 443 before 80, surprising an analyst
+        who clicks the Source Port/Dest Port column header expecting
+        numeric order."""
+        self.assertEqual(db._sort_expr('flow', 'Source Port'), 'src_port')
+        self.assertEqual(db._sort_expr('flow', 'Dest Port', prefix='e.'), 'e.dest_port')
 
     def test_sort_expr_json_path_column(self):
         expr = db._sort_expr('flow', 'Pkts →')

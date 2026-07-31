@@ -428,7 +428,7 @@ def _find_pcap_file(dir_path):
         if f.lower().endswith(PCAP_EXTENSIONS):
             return f
     for f in entries:
-        if f.startswith('.') or f in PCAP_ANALYSIS_ARTIFACTS or f == 'name.txt':
+        if f.startswith('.') or f in PCAP_ANALYSIS_ARTIFACTS or f in ('name.txt', 'notes.txt'):
             continue
         full_path = os.path.join(dir_path, f)
         if not os.path.isfile(full_path):
@@ -661,7 +661,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         if not os.path.exists(dir_path):
             return []
-        exact_artifacts = set(PCAP_ANALYSIS_ARTIFACTS) | set(FILE_ANALYSIS_ARTIFACTS) | {'name.txt'}
+        exact_artifacts = set(PCAP_ANALYSIS_ARTIFACTS) | set(FILE_ANALYSIS_ARTIFACTS) | {'name.txt', 'notes.txt'}
         return [f for f in os.listdir(dir_path)
                 if f != pcap_file
                 and not f.lower().endswith(PCAP_EXTENSIONS + ('.zip',))
@@ -750,6 +750,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '/api/check-status': 'handle_post_check_status',
         '/api/reanalyze': 'handle_post_reanalyze',
         '/api/delete-analysis': 'handle_post_delete_analysis',
+        '/api/rename-analysis': 'handle_post_rename_analysis',
+        '/api/analysis-notes': 'handle_post_analysis_notes',
         '/api/delete-all-analyses': 'handle_post_delete_all_analyses',
         '/api/update-rules': 'handle_post_update_rules',
     }
@@ -1060,7 +1062,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         continue
 
                 if os.path.exists(eve_path) or os.path.exists(db_path):
-                    analyses.append({'md5': md5_dir, 'name': self._resolve_display_name(dir_path, md5_dir)})
+                    date_range = {'min': None, 'max': None}
+                    if os.path.exists(db_path):
+                        date_range = get_event_date_range_sqlite(db_path)
+                    analyses.append({
+                        'md5': md5_dir,
+                        'name': self._resolve_display_name(dir_path, md5_dir),
+                        'date_range': date_range,
+                        'has_notes': os.path.isfile(os.path.join(dir_path, 'notes.txt')),
+                    })
 
             analyses.sort(key=lambda x: x['name'].lower())
 
@@ -1083,7 +1093,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     self._send_error(400, f'eve.json too large ({eve_size // (1024*1024)}MB, max {MAX_EVE_SIZE // (1024*1024)}MB)')
                     return
 
-            self._send_json({'success': True, 'md5': md5, 'file_name': self._resolve_display_name(dir_path, md5)})
+            notes = ''
+            notes_path = os.path.join(dir_path, 'notes.txt')
+            if os.path.isfile(notes_path):
+                try:
+                    with open(notes_path, 'r') as f:
+                        notes = f.read()
+                except OSError:
+                    notes = ''
+            self._send_json({'success': True, 'md5': md5, 'file_name': self._resolve_display_name(dir_path, md5), 'notes': notes})
         else:
             self._send_error(404, 'Analysis not found')
 
@@ -1103,6 +1121,86 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json({'success': True})
         else:
             self._send_error(404, 'Analysis not found')
+
+    def handle_post_rename_analysis(self):
+        """Overwrite name.txt with a user-chosen display name.
+
+        This only ever changes what's displayed (header, previous-analyses
+        list) - the real originally-uploaded filename stays intact in
+        .meta's 'original' field, so nothing is lost by renaming.
+        """
+        data = self._read_json_body(config.MAX_REQUEST_BODY_SIZE)
+        if data is None:
+            return
+        md5 = data.get('md5', '')
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
+            return
+        if not os.path.exists(dir_path) or not os.path.isdir(dir_path):
+            self._send_error(404, 'Analysis not found')
+            return
+
+        new_name = data.get('name', '')
+        if not isinstance(new_name, str):
+            self._send_error(400, 'Invalid name')
+            return
+        # name.txt is read back as one whole-file string, not line-by-line -
+        # collapse embedded newlines so they can't become part of the
+        # displayed name verbatim.
+        new_name = new_name.replace('\r', ' ').replace('\n', ' ').strip()[:config.MAX_DISPLAY_NAME_LENGTH]
+        if not new_name:
+            self._send_error(400, 'Name cannot be empty')
+            return
+
+        name_path = os.path.join(dir_path, 'name.txt')
+        try:
+            with open(name_path, 'w') as f:
+                f.write(new_name)
+        except OSError:
+            self._send_error(500, 'Could not rename analysis')
+            return
+        self._send_json({'success': True, 'name': new_name})
+
+    def handle_post_analysis_notes(self):
+        """Overwrite (or clear) notes.txt with freeform analyst notes.
+
+        Unlike name.txt, embedded newlines are preserved (multi-line notes
+        are the point) and an empty submission is a valid, intentional way
+        to clear notes rather than an error.
+        """
+        data = self._read_json_body(config.MAX_REQUEST_BODY_SIZE)
+        if data is None:
+            return
+        md5 = data.get('md5', '')
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
+            return
+        if not os.path.exists(dir_path) or not os.path.isdir(dir_path):
+            self._send_error(404, 'Analysis not found')
+            return
+
+        notes = data.get('notes', '')
+        if not isinstance(notes, str):
+            self._send_error(400, 'Invalid notes')
+            return
+        notes = notes.strip()[:config.MAX_NOTES_LENGTH]
+
+        notes_path = os.path.join(dir_path, 'notes.txt')
+        try:
+            if notes:
+                with open(notes_path, 'w') as f:
+                    f.write(notes)
+            else:
+                try:
+                    os.remove(notes_path)
+                except FileNotFoundError:
+                    pass
+        except OSError:
+            self._send_error(500, 'Could not save notes')
+            return
+        self._send_json({'success': True, 'notes': notes})
 
     def handle_post_delete_all_analyses(self):
         deleted = 0

@@ -22,6 +22,7 @@
     eve.json               # Suricata JSON output (newline-delimited, PCAP only)
     events.db              # SQLite index (auto-created after analysis)
     name.txt               # Human-readable display name
+    notes.txt              # Freeform per-analysis notes (optional, written by POST /api/analysis-notes)
     filestore/             # Extracted files from Suricata file-store (PCAP only)
     yara_matches.json      # YARA scan results (auto-created after analysis)
     sigma_matches.json     # Sigma detection results (log files only)

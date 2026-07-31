@@ -1,12 +1,12 @@
 # Themes
 
-SO-CRATES includes thirty-two UI themes in three groups — Dark Themes, Light Themes, and Fun Themes. Press the `t` key to cycle through themes, or open Themes from the gear icon menu in the upper-right corner to browse them: hovering a theme shows a live preview without changing the rest of the app, and clicking applies it for real without closing the picker, so you can click through several in a row. The currently applied theme is marked with a ✓ in the grid. Your choice is persisted in the browser's `localStorage` and restored on the next visit.
+SO-CRATES includes thirty-two UI themes in three groups — Dark Themes, Light Themes, and Fun Themes. Press the `t` key to cycle through themes, or open Themes from the gear icon menu in the upper-right corner to browse them: hovering a theme shows a live preview without changing the rest of the app, and clicking applies it for real without closing the picker, so you can click through several in a row. The currently applied theme is highlighted with an accent-colored border in the grid. Your choice is persisted in the browser's `localStorage` and restored on the next visit.
 
 Click any screenshot below to zoom in.
 
 ## Syncing with OhMyDebn
 
-If SO-CRATES was launched via [OhMyDebn](installation/ohmydebn.md), the Themes modal also has a "Sync theme with OS" toggle (off by default). While enabled, SO-CRATES follows your OhMyDebn desktop theme automatically and the manual picker below is hidden, since OhMyDebn owns the theme choice. A theme name that matches one of the built-ins below is applied directly; for a custom or Aether-generated OhMyDebn theme with no built-in match, a full theme is instead generated at runtime from that theme's own color palette (its `colors.toml`, or `alacritty.toml` as a fallback), with contrast-safety adjustments so muted/tag/accent text stays legible regardless of the source palette. This toggle is hidden entirely on any deployment not launched via OhMyDebn.
+If SO-CRATES was launched via [OhMyDebn](installation/ohmydebn.md), the Themes modal also has a "Sync theme to OhMyDebn theme" toggle (off by default). While enabled, SO-CRATES follows your OhMyDebn desktop theme automatically and the manual picker below is hidden, since OhMyDebn owns the theme choice. A theme name that matches one of the built-ins below is applied directly; for a custom or Aether-generated OhMyDebn theme with no built-in match, a full theme is instead generated at runtime from that theme's own color palette (its `colors.toml`, or `alacritty.toml` as a fallback), with contrast-safety adjustments so muted/tag/accent text stays legible regardless of the source palette. This toggle is hidden entirely on any deployment not launched via OhMyDebn.
 
 ## Dark Themes
 

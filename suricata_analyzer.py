@@ -378,6 +378,7 @@ def spawn_suricata(dir_path, pcap_path, suricata_config_path=None, data_dir=None
                 proc.wait(timeout=config.SURICATA_RUN_TIMEOUT)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                proc.wait()
                 _set_error(dir_path, f'Suricata timed out after {config.SURICATA_RUN_TIMEOUT}s')
                 _clear_phase(dir_path)
                 return

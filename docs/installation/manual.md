@@ -10,6 +10,7 @@ If you prefer to run without Docker or Podman, then you will need these prerequi
 - **yara** (optional) — for scanning extracted files. If installed, SO-CRATES automatically downloads YARA rules on first run (or uses baked-in rules in Docker). If missing, file extraction and File Alerts are skipped.
 - **Zircolite** (optional) — for Sigma rule detection on log files. SO-CRATES auto-detects if Zircolite is installed and skips log analysis if absent. The Dockerfile bakes in Zircolite v3.7.1.
 - **exiftool** (optional) — for extracting EXIF/media metadata from binary files. If missing, EXIF extraction is silently skipped (the rest of the file analysis still runs).
+- **file** (optional) — for MIME/file-type detection on non-PCAP uploads. If missing, this detection is silently skipped (the rest of the file analysis still runs).
 
 Once you have the prerequisites, then you can clone this github repo and run the server:
 

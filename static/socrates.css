@@ -1106,6 +1106,8 @@
         .app-header-left { display: flex; align-items: center; gap: 8px; }
         .app-header-left svg { vertical-align: middle; }
         .app-header-filename { color: var(--text-bright); font-weight: 600; font-size: 0.9rem; margin-left: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
+        .app-header-filename-input { color: var(--text-bright); font-weight: 600; font-size: 0.9rem; font-family: inherit; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 2px 6px; width: 280px; max-width: 100%; }
+        .app-header-filename-input:focus { outline: none; border-color: var(--interactive-highlight, var(--accent)); }
         .app-header-right { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; justify-content: flex-end; }
         .app-header-meta { display: flex; align-items: center; gap: 15px; margin-left: 15px; }
         #helpModal .modal-content { max-width: 700px; }
@@ -1200,6 +1202,8 @@
         .pagination-page-input:focus { outline: none; border-color: var(--interactive-highlight, var(--accent)); }
         .settings-number-input { width: 120px; text-align: center; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 6px; font-size: 0.85rem; font-weight: 600; font-family: inherit; }
         .settings-number-input:focus { outline: none; border-color: var(--interactive-highlight, var(--accent)); }
+        .notes-textarea { width: 100%; min-height: 160px; resize: vertical; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 8px 10px; font-size: 0.9rem; font-family: inherit; box-sizing: border-box; }
+        .notes-textarea:focus { outline: none; border-color: var(--interactive-highlight, var(--accent)); }
         .pagination-btn { background: var(--accent); color: var(--bg-primary); border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
         .pagination-btn:hover:not(:disabled) { background: var(--accent-hover); }
         .pagination-btn:disabled { opacity: 0.4; cursor: default; }
@@ -1265,6 +1269,13 @@
         [data-theme="miasma"] .previous-analysis-reanalyze,
         [data-theme="catppuccin-latte"] .previous-analysis-reanalyze,
         [data-theme="white"] .previous-analysis-reanalyze { color: var(--text-bright); }
+        .previous-analysis-notes { background: var(--bg-hover); color: var(--accent); }
+        [data-theme="ristretto"] .previous-analysis-notes,
+        [data-theme="rose-pine"] .previous-analysis-notes,
+        [data-theme="ethereal"] .previous-analysis-notes,
+        [data-theme="miasma"] .previous-analysis-notes,
+        [data-theme="catppuccin-latte"] .previous-analysis-notes,
+        [data-theme="white"] .previous-analysis-notes { color: var(--text-bright); }
         .previous-analysis-delete-all { background: var(--danger-bg); color: var(--badge-danger-text); }
         [data-theme="hacker"] .previous-analysis-delete-all { color: var(--accent); }
         .reanalyze-confirm-btn {
@@ -1314,9 +1325,7 @@
         .theme-tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; padding: 4px 14px 16px 14px; }
         .theme-tile { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 12px; color: var(--text-primary); font-size: 0.9rem; cursor: pointer; border: 1px solid var(--border-color); background: var(--bg-primary); border-radius: 8px; text-align: center; }
         .theme-tile:hover { background: var(--bg-tertiary); border-color: var(--interactive-highlight, var(--accent)); }
-        .theme-tile[data-theme-option]::before { content: ''; display: inline-block; width: 1em; flex-shrink: 0; }
         .theme-tile[data-theme-option].theme-active { border-color: var(--accent); border-width: 2px; font-weight: 600; }
-        .theme-tile[data-theme-option].theme-active::before { content: '✓'; color: var(--accent); font-weight: 700; }
         .theme-switch { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
         .theme-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
         .theme-switch-slider { position: absolute; inset: 0; background: var(--bg-hover); border-radius: 20px; transition: background 0.2s; pointer-events: none; }

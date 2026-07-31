@@ -1664,6 +1664,84 @@ bright_magenta = "#D9B9D9"
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), [])
 
+    def test_analyses_includes_date_range(self):
+        """The Previous Analyses list shows a short MD5 prefix and,
+        instead of forcing an analyst to recognize the MD5 itself, the
+        sample's own date range - an analyst is far more likely to
+        recognize "when" than a hash fragment. date_range must reflect
+        the sample's own event timestamps, not upload time."""
+        md5 = '2' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            eve_file = os.path.join(md5dir, 'eve.json')
+            db_file = os.path.join(md5dir, 'events.db')
+            with open(eve_file, 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "proto": "TCP", "alert": {"category": "Trojan", "severity": 2}}\n')
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:05:00", "src_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "proto": "TCP", "alert": {"category": "Trojan", "severity": 2}}\n')
+            db.create_sqlite_db(db_file, eve_file)
+            with open(os.path.join(md5dir, 'name.txt'), 'w') as f:
+                f.write('date-range-test')
+
+            status, body = self._get('/api/analyses')
+            self.assertEqual(status, 200)
+            entry = next(a for a in json.loads(body) if a['md5'] == md5)
+            self.assertEqual(entry['date_range'], {'min': '2026-01-01T00:00:00', 'max': '2026-01-01T00:05:00'})
+        finally:
+            server._evict_analysis_cache(md5)
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_analyses_date_range_null_before_events_db_exists(self):
+        """An analysis still mid-processing (eve.json written, events.db
+        not built yet) must not error out of the whole /api/analyses
+        listing - date_range degrades to nulls, matching /api/stats's own
+        never-raises convention."""
+        md5 = '3' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00"}\n')
+
+            status, body = self._get('/api/analyses')
+            self.assertEqual(status, 200)
+            entry = next(a for a in json.loads(body) if a['md5'] == md5)
+            self.assertEqual(entry['date_range'], {'min': None, 'max': None})
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_analyses_has_notes_true_when_notes_txt_exists(self):
+        md5 = '5' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00"}\n')
+            with open(os.path.join(md5dir, 'notes.txt'), 'w') as f:
+                f.write('Suspected GuLoader')
+
+            status, body = self._get('/api/analyses')
+            self.assertEqual(status, 200)
+            entry = next(a for a in json.loads(body) if a['md5'] == md5)
+            self.assertTrue(entry['has_notes'])
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_analyses_has_notes_false_when_no_notes_txt(self):
+        md5 = '6' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00"}\n')
+
+            status, body = self._get('/api/analyses')
+            self.assertEqual(status, 200)
+            entry = next(a for a in json.loads(body) if a['md5'] == md5)
+            self.assertFalse(entry['has_notes'])
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
     def test_load_analysis_invalid_md5(self):
         status, body = self._get('/api/load-analysis?md5=invalid')
         self.assertEqual(status, 400)
@@ -1692,6 +1770,237 @@ bright_magenta = "#D9B9D9"
         self.assertEqual(status, 400)
         data = json.loads(body)
         self.assertIn('Invalid JSON', data.get('error', ''))
+
+    def test_rename_analysis_valid_format_nonexistent(self):
+        status, body = self._post('/api/rename-analysis', {'md5': 'a' * 32, 'name': 'new name'})
+        self.assertEqual(status, 404)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_rename_analysis_invalid_md5_returns_400(self):
+        status, body = self._post('/api/rename-analysis', {'md5': 'not-a-real-md5', 'name': 'new name'})
+        self.assertEqual(status, 400)
+
+    def test_rename_analysis_get_returns_404(self):
+        """GET /api/rename-analysis must return 404 - POST only."""
+        status, body = self._get('/api/rename-analysis?md5=' + 'a' * 32)
+        self.assertEqual(status, 404)
+
+    def test_rename_analysis_malformed_json_returns_400(self):
+        status, body = self._post('/api/rename-analysis', b'not-json-at-all')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('Invalid JSON', data.get('error', ''))
+
+    def test_rename_analysis_success_writes_name_txt(self):
+        md5 = 'b' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            status, body = self._post('/api/rename-analysis', {'md5': md5, 'name': 'My Renamed Analysis'})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data, {'success': True, 'name': 'My Renamed Analysis'})
+            with open(os.path.join(md5dir, 'name.txt')) as f:
+                self.assertEqual(f.read(), 'My Renamed Analysis')
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_rename_analysis_overwrites_existing_name_txt(self):
+        md5 = 'c' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            with open(os.path.join(md5dir, 'name.txt'), 'w') as f:
+                f.write('original-upload.pcap')
+            status, body = self._post('/api/rename-analysis', {'md5': md5, 'name': 'Renamed'})
+            self.assertEqual(status, 200)
+            with open(os.path.join(md5dir, 'name.txt')) as f:
+                self.assertEqual(f.read(), 'Renamed')
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_rename_analysis_empty_name_returns_400(self):
+        md5 = 'd' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            status, body = self._post('/api/rename-analysis', {'md5': md5, 'name': '   '})
+            self.assertEqual(status, 400)
+            data = json.loads(body)
+            self.assertIn('empty', data.get('error', '').lower())
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_rename_analysis_missing_name_returns_400(self):
+        md5 = 'e' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            status, body = self._post('/api/rename-analysis', {'md5': md5})
+            self.assertEqual(status, 400)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_rename_analysis_collapses_embedded_newlines(self):
+        """REGRESSION: name.txt is read back as one whole-file string, not
+        line-by-line - an embedded newline would otherwise become part of
+        the displayed name verbatim instead of being treated as whitespace."""
+        md5 = 'f' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            status, body = self._post('/api/rename-analysis', {'md5': md5, 'name': 'line one\nline two\r\nline three'})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertNotIn('\n', data['name'])
+            self.assertNotIn('\r', data['name'])
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_rename_analysis_truncates_long_name(self):
+        md5 = '1' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            long_name = 'x' * (config.MAX_DISPLAY_NAME_LENGTH + 100)
+            status, body = self._post('/api/rename-analysis', {'md5': md5, 'name': long_name})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(len(data['name']), config.MAX_DISPLAY_NAME_LENGTH)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_analysis_notes_valid_format_nonexistent(self):
+        status, body = self._post('/api/analysis-notes', {'md5': 'a' * 32, 'notes': 'some notes'})
+        self.assertEqual(status, 404)
+        data = json.loads(body)
+        self.assertIn('error', data)
+
+    def test_analysis_notes_invalid_md5_returns_400(self):
+        status, body = self._post('/api/analysis-notes', {'md5': 'not-a-real-md5', 'notes': 'some notes'})
+        self.assertEqual(status, 400)
+
+    def test_analysis_notes_get_returns_404(self):
+        """GET /api/analysis-notes must return 404 - POST only."""
+        status, body = self._get('/api/analysis-notes?md5=' + 'a' * 32)
+        self.assertEqual(status, 404)
+
+    def test_analysis_notes_malformed_json_returns_400(self):
+        status, body = self._post('/api/analysis-notes', b'not-json-at-all')
+        self.assertEqual(status, 400)
+        data = json.loads(body)
+        self.assertIn('Invalid JSON', data.get('error', ''))
+
+    def test_analysis_notes_success_writes_notes_txt(self):
+        md5 = 'b' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            status, body = self._post('/api/analysis-notes', {'md5': md5, 'notes': 'Suspected GuLoader'})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data, {'success': True, 'notes': 'Suspected GuLoader'})
+            with open(os.path.join(md5dir, 'notes.txt')) as f:
+                self.assertEqual(f.read(), 'Suspected GuLoader')
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_analysis_notes_overwrites_existing_notes_txt(self):
+        md5 = 'c' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            with open(os.path.join(md5dir, 'notes.txt'), 'w') as f:
+                f.write('old notes')
+            status, body = self._post('/api/analysis-notes', {'md5': md5, 'notes': 'new notes'})
+            self.assertEqual(status, 200)
+            with open(os.path.join(md5dir, 'notes.txt')) as f:
+                self.assertEqual(f.read(), 'new notes')
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_analysis_notes_empty_clears_notes_txt(self):
+        """REGRESSION: unlike rename (empty name is an error), an empty
+        notes submission is a valid, intentional way to clear notes - the
+        notes.txt file must be removed, not written as an empty file."""
+        md5 = 'd' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            with open(os.path.join(md5dir, 'notes.txt'), 'w') as f:
+                f.write('old notes')
+            status, body = self._post('/api/analysis-notes', {'md5': md5, 'notes': '   '})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data, {'success': True, 'notes': ''})
+            self.assertFalse(os.path.exists(os.path.join(md5dir, 'notes.txt')))
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_analysis_notes_empty_when_no_notes_txt_existed(self):
+        """Clearing notes that never existed must not error (no notes.txt
+        to remove is not a failure)."""
+        md5 = 'e' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            status, body = self._post('/api/analysis-notes', {'md5': md5, 'notes': ''})
+            self.assertEqual(status, 200)
+            self.assertFalse(os.path.exists(os.path.join(md5dir, 'notes.txt')))
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_analysis_notes_missing_notes_returns_success_and_clears(self):
+        """A missing 'notes' key defaults to '' (same as rename's
+        data.get('name', '')), which is the clear-notes path."""
+        md5 = 'f' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            status, body = self._post('/api/analysis-notes', {'md5': md5})
+            self.assertEqual(status, 200)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_analysis_notes_non_string_returns_400(self):
+        md5 = '2' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            status, body = self._post('/api/analysis-notes', {'md5': md5, 'notes': 12345})
+            self.assertEqual(status, 400)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_analysis_notes_preserves_embedded_newlines(self):
+        """REGRESSION: unlike rename, notes must preserve multi-line text
+        verbatim - this is the whole point of a freeform notes field."""
+        md5 = '3' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            status, body = self._post('/api/analysis-notes', {'md5': md5, 'notes': 'line one\nline two\nline three'})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data['notes'], 'line one\nline two\nline three')
+            with open(os.path.join(md5dir, 'notes.txt')) as f:
+                self.assertEqual(f.read(), 'line one\nline two\nline three')
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_analysis_notes_truncates_long_notes(self):
+        md5 = '4' * 32
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        try:
+            long_notes = 'x' * (config.MAX_NOTES_LENGTH + 100)
+            status, body = self._post('/api/analysis-notes', {'md5': md5, 'notes': long_notes})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(len(data['notes']), config.MAX_NOTES_LENGTH)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
 
     def test_delete_all_analyses_removes_directories(self):
         md5_one = 'd41d8cd98f00b204e9800998ecf8427e'
@@ -2964,6 +3273,53 @@ bright_magenta = "#D9B9D9"
         self.assertEqual(result['md5'], md5)
         self.assertIn('file_name', result)
 
+    def _make_ready_analysis_dir(self, md5):
+        """Minimal events.db-backed analysis directory, ready to load."""
+        dir_path = os.path.join(server.DATA_DIR, md5)
+        os.makedirs(dir_path, exist_ok=True)
+        import sqlite3
+        conn = sqlite3.connect(os.path.join(dir_path, 'events.db'))
+        conn.executescript('''
+            CREATE TABLE events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                timestamp TEXT,
+                src_ip TEXT,
+                src_port INTEGER,
+                dest_ip TEXT,
+                dest_port INTEGER,
+                protocol TEXT,
+                app_proto TEXT,
+                json_data TEXT
+            );
+        ''')
+        conn.commit()
+        conn.close()
+        return dir_path
+
+    def test_load_analysis_notes_empty_when_no_notes_txt(self):
+        md5 = 'a1' * 16
+        dir_path = self._make_ready_analysis_dir(md5)
+        try:
+            status, body = self._get('/api/load-analysis?md5=' + md5)
+            self.assertEqual(status, 200)
+            result = json.loads(body)
+            self.assertEqual(result.get('notes'), '')
+        finally:
+            shutil.rmtree(dir_path, ignore_errors=True)
+
+    def test_load_analysis_includes_notes_content(self):
+        md5 = 'b2' * 16
+        dir_path = self._make_ready_analysis_dir(md5)
+        try:
+            with open(os.path.join(dir_path, 'notes.txt'), 'w') as f:
+                f.write('Suspected GuLoader\nC2 at x.top')
+            status, body = self._get('/api/load-analysis?md5=' + md5)
+            self.assertEqual(status, 200)
+            result = json.loads(body)
+            self.assertEqual(result.get('notes'), 'Suspected GuLoader\nC2 at x.top')
+        finally:
+            shutil.rmtree(dir_path, ignore_errors=True)
 
     def test_corrupted_db_returns_500(self):
         """Corrupted events.db must return HTTP 500 instead of crashing the connection."""
@@ -3292,6 +3648,36 @@ class TestSpawnSuricataErrorHandling(unittest.TestCase):
 
             # Verify .phase was cleared
             self.assertFalse(os.path.exists(os.path.join(tmpdir, '.phase')), '.phase must be cleared on failure')
+
+    def test_watchdog_reaps_process_after_kill_on_timeout(self):
+        """REGRESSION: the watchdog thread called proc.kill() on a timeout
+        but never called proc.wait() again afterward, leaving a zombie
+        process until the whole so-crates server eventually exited."""
+        import unittest.mock
+        import subprocess
+        import time
+        from suricata_analyzer import spawn_suricata
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcap_path = os.path.join(tmpdir, 'test.pcap')
+            with open(pcap_path, 'wb') as f:
+                f.write(b'\xd4\xc3\xb2\xa1' + b'\x00' * 100)
+
+            mock_proc = unittest.mock.MagicMock()
+            mock_proc.wait.side_effect = [subprocess.TimeoutExpired('suricata', 300), None]
+            with unittest.mock.patch('subprocess.Popen', return_value=mock_proc):
+                result = spawn_suricata(tmpdir, pcap_path)
+                self.assertTrue(result)
+
+            # The watchdog runs in a daemon thread - give it a moment to hit
+            # the TimeoutExpired branch and reap the killed process.
+            for _ in range(50):
+                if mock_proc.wait.call_count >= 2:
+                    break
+                time.sleep(0.1)
+
+            mock_proc.kill.assert_called_once()
+            self.assertEqual(mock_proc.wait.call_count, 2,
+                             'proc.wait() must be called again after kill() to reap the process, not just once before the timeout')
 
 
 class TestServerBinding(unittest.TestCase):

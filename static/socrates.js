@@ -19,6 +19,19 @@
             return escapeHtml(jsEscaped);
         }
 
+        // Shared by loadAnalysis() (the analysis header) and showWelcome()
+        // (the Previous Analyses list) so both render a sample's own event
+        // date range identically. Returns '' if neither bound is known
+        // (e.g. an analysis still mid-processing, with no events.db yet).
+        function formatDateRange(dateRange) {
+            const min = dateRange && dateRange.min;
+            const max = dateRange && dateRange.max;
+            if (!min && !max) return '';
+            return min && min === max
+                ? min.slice(0, 19)
+                : `${min?.slice(0, 19) || ''} to ${max?.slice(0, 19) || ''}`;
+        }
+
         function safeStorageGet(storage, key) {
             try { return storage.getItem(key); } catch (e) { return null; }
         }
@@ -839,9 +852,11 @@
         const LIGHTBULB_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-7 7c0 2.5 1.5 4.5 3 6h8c1.5-1.5 3-3.5 3-6a7 7 0 0 0-7-7z"/></svg>';
         const SEARCH_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
         const CALENDAR_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>';
+        const NOTES_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M14 3v4a1 1 0 0 0 1 1h4"></path><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"></path><line x1="9" y1="9" x2="10" y2="9"></line><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>';
+        const NOTES_MAX_LENGTH = 10000;
         function getWelcomeHelpContent() { return `
             <p style="color: var(--text-muted); font-size: 0.95rem;">
-                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is ${getUserMaxUploadSizeMB().toLocaleString()} MB (adjustable in Settings).
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is ${getUserMaxUploadSizeMB().toLocaleString()} MB (adjustable in <a href="#" onclick="event.preventDefault(); showSettingsModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Settings</a>).
             </p>
             <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
                 <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Processing may take a minute or two depending on the size of the file.
@@ -1729,6 +1744,8 @@
                     openReanalyzeModal(md5, name);
                 } else if (action === 'delete') {
                     openDeleteAnalysis(md5, name);
+                } else if (action === 'notes') {
+                    openAnalysisNotesFromList(md5);
                 }
             }
         });
@@ -1795,7 +1812,7 @@
         // again" checkbox state) that must only fire if Help was actually
         // open.
         function closeOtherMenuModals(exceptId) {
-            const closers = { helpModal: closeHelpModal, settingsModal: closeSettingsModal, themesModal: closeThemesModal, rulesModal: closeRulesModal, aboutModal: closeAboutModal };
+            const closers = { helpModal: closeHelpModal, settingsModal: closeSettingsModal, themesModal: closeThemesModal, rulesModal: closeRulesModal, aboutModal: closeAboutModal, notesModal: closeNotesModal };
             Object.keys(closers).forEach(function(id) {
                 if (id === exceptId) return;
                 const modal = document.getElementById(id);
@@ -1982,6 +1999,7 @@
         
         async function showWelcome() {
             document.title = 'SO-CRATES - Welcome';
+            closeAllModals();
             if (window.location.search.includes('file=') || window.location.search.includes('pcap=')) {
                 history.replaceState({}, '', window.location.pathname);
             }
@@ -1999,13 +2017,36 @@
                 const analyses = await resp.json();
                 previousAnalysisCount = analyses.length;
                 if (analyses.length > 0) {
-                    previousHtml = analyses.map(a => 
-                        `<div class="previous-analysis-row" style="display: flex; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border-color);">
-                            <a href="?file=${escapeHtml(a.md5)}" onclick="event.preventDefault(); loadAnalysis('${escapeJsString(a.md5)}');" style="color: var(--accent); text-decoration: none; flex: 1;">${FOLDER_ICON_SVG}${escapeHtml(a.name)}</a>
+                    previousHtml = analyses.map(a => {
+                        // The MD5 is still reachable via the link's
+                        // href/status-bar URL - showing it in the hover
+                        // tooltip too would be redundant. An analyst is far
+                        // more likely to recognize the sample's own date
+                        // range at a glance than an MD5 fragment, so that's
+                        // the tooltip instead; keeping it out of the row
+                        // itself (rather than an inline span) keeps the row
+                        // uncluttered.
+                        const dateText = formatDateRange(a.date_range);
+                        const rowTitle = dateText || a.md5;
+                        // Bare presence signal (no content preview) - the row
+                        // is already tight with name + date + action buttons,
+                        // so this just answers "does this one have notes?"
+                        // without an analyst having to open it to check. It's
+                        // its own button (not nested in the name/date link)
+                        // so clicking it can jump straight to that analysis's
+                        // Notes modal instead of just the normal overview.
+                        const notesButtonHtml = a.has_notes
+                            ? `<button data-md5="${escapeHtml(a.md5)}" data-action="notes" class="previous-analysis-notes" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="View/edit notes">${NOTES_ICON_SVG}</button>`
+                            : '';
+                        return `<div class="previous-analysis-row" style="display: flex; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border-color);">
+                            <a href="?file=${escapeHtml(a.md5)}" onclick="event.preventDefault(); loadAnalysis('${escapeJsString(a.md5)}');" style="color: var(--accent); text-decoration: none; flex: 1; display: flex; align-items: baseline; gap: 8px; overflow: hidden;" title="${escapeHtml(rowTitle)}">
+                                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${FOLDER_ICON_SVG}${escapeHtml(a.name)}</span>
+                            </a>
+                            ${notesButtonHtml}
                             <button data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="reanalyze" class="previous-analysis-reanalyze" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="Re-analyze">${REFRESH_ICON_SVG}</button>
                             <button class="previous-analysis-delete" data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="delete" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px;" title="Delete">${DELETE_ICON_SVG}</button>
-                        </div>`
-                    ).join('');
+                        </div>`;
+                    }).join('');
                 } else {
                     previousHtml = '<span style="color: var(--bg-hover-light);">No previous analyses available</span>';
                 }
@@ -2073,19 +2114,29 @@
             document.getElementById('pcapUrl').value = lastSampleUrl;
         }
         
+        // Shared by the Escape handler and showWelcome() (leaving the
+        // analysis view entirely should not leave a stale modal floating on
+        // top of it - Notes is the sharpest case since it's tied to the
+        // specific analysis being left, but none of these belong open once
+        // there's no longer an analysis page under them).
+        function closeAllModals() {
+            closeMenu();
+            closeHelpModal();
+            closeThemesModal();
+            closeSettingsModal();
+            closeErrorModal();
+            closeDeleteModal();
+            closeDeleteAllModal();
+            closeReanalyzeModal();
+            closeRulesModal();
+            closeAboutModal();
+            closeNotesModal();
+        }
+
         let keyBuffer = '';
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
-                closeMenu();
-                closeHelpModal();
-                closeThemesModal();
-                closeSettingsModal();
-                closeErrorModal();
-                closeDeleteModal();
-                closeDeleteAllModal();
-                closeReanalyzeModal();
-                closeRulesModal();
-                closeAboutModal();
+                closeAllModals();
             }
             if (e.key === '?' && !e.ctrlKey && !e.altKey && !e.metaKey && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
                 e.preventDefault();
@@ -2277,13 +2328,37 @@
             return epoch ? new Date(epoch * 1000).toLocaleString() : 'never';
         }
 
+        const RULES_STALE_DAYS = 30;
+
+        function isRulesetStale(epoch) {
+            return !epoch || (Date.now() - epoch * 1000) > RULES_STALE_DAYS * 86400000;
+        }
+
+        // Flags an "updated" date as stale (or missing) so an analyst
+        // notices at a glance without having to do the date math themselves.
+        function formatDateSpan(epoch) {
+            const style = isRulesetStale(epoch) ? ' style="color: var(--badge-warning-text);"' : '';
+            return `<span${style}>${formatRuleDate(epoch)}</span>`;
+        }
+
+        // Canonical source for each ruleset - same projects/links listed in
+        // docs/credits.md - shown in the Rules modal so an analyst knows
+        // what they're pulling in before clicking Update.
+        const RULESET_SOURCES = {
+            yara: { label: 'YARA Forge', url: 'https://github.com/YARAHQ/yara-forge' },
+            sigma: { label: 'SigmaHQ', url: 'https://github.com/SigmaHQ/sigma' },
+            suricata: { label: 'Emerging Threats Open', url: 'https://rules.emergingthreats.net/' },
+        };
+
         function renderRuleSection(name, label, countText, statusEntry) {
             const logText = statusEntry.lines.join('\n');
+            const source = RULESET_SOURCES[name];
             return `
                 <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--bg-hover);">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 10px;">
                         <div>
                             <strong style="color: var(--text-bright);">${label}</strong>
+                            <a href="${source.url}" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.8rem; margin-left: 6px;">(${source.label})</a>
                             <div style="color: var(--text-muted); font-size: 0.9rem;">${countText}</div>
                         </div>
                         <button onclick="triggerRulesetUpdate('${name}')" ${statusEntry.running ? 'disabled' : ''} style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">${statusEntry.running ? 'Updating…' : 'Update'}</button>
@@ -2294,9 +2369,9 @@
         }
 
         function renderRulesModalBody(info, status) {
-            const suricataText = `${formatRuleCount(info.suricata.count)} — updated ${formatRuleDate(info.suricata.updated)}`;
-            const yaraText = `${formatRuleCount(info.yara.count)} — updated ${formatRuleDate(info.yara.updated)}`;
-            const sigmaText = `Windows: ${formatRuleCount(info.sigma.windows.count)} — updated ${formatRuleDate(info.sigma.windows.updated)}<br>Linux: ${formatRuleCount(info.sigma.linux.count)} — updated ${formatRuleDate(info.sigma.linux.updated)}`;
+            const suricataText = `${formatRuleCount(info.suricata.count)} — updated ${formatDateSpan(info.suricata.updated)}`;
+            const yaraText = `${formatRuleCount(info.yara.count)} — updated ${formatDateSpan(info.yara.updated)}`;
+            const sigmaText = `Windows: ${formatRuleCount(info.sigma.windows.count)} — updated ${formatDateSpan(info.sigma.windows.updated)}<br>Linux: ${formatRuleCount(info.sigma.linux.count)} — updated ${formatDateSpan(info.sigma.linux.updated)}`;
             // Ordered shortest-to-longest output (YARA/Sigma are a couple
             // lines; Suricata's suricata-update log can run to dozens of
             // lines) so the two quick summaries are visible without
@@ -4524,8 +4599,13 @@
         // script evaluations, same reason as currentFilters/advancedMode below.
         var truncatedTypes = new Set();
         let eventTypes = [];
-        let currentMd5 = '';
-        let currentFileName = '';
+        // NOTE: these must stay `var` (not let/const) so they attach to the
+        // global object - the JSDOM test harness assigns/reads them via
+        // separate script evaluations, same reason as truncatedTypes above
+        // and currentFilters/advancedMode below.
+        var currentMd5 = '';
+        var currentFileName = '';
+        var currentNotes = '';
         // NOTE: these must stay `var` (not let/const) so they attach to the
         // global object — the JSDOM test harness and inline handlers assign
         // them via separate script evaluations.
@@ -5208,6 +5288,157 @@
             }
         }
 
+        // Click-to-rename for the header filename. Only one edit can be
+        // active at a time (guarded by the existing <input> check below),
+        // and blur commits the edit (matching common rename-in-place UIs
+        // like a file manager) while Escape cancels it.
+        async function copyMd5ToClipboard(md5) {
+            // navigator.clipboard requires a secure context (HTTPS, or the
+            // browser's localhost/127.0.0.1/::1 loopback exception) - a
+            // real LAN deployment reached over plain http:// (a common way
+            // to reach a container's published port from another machine)
+            // won't have it at all, so fail with a clear toast rather than
+            // a silent no-op either way.
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                showToast('Clipboard access unavailable (requires HTTPS or localhost)');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(md5);
+                showToast('MD5 copied to clipboard');
+            } catch (e) {
+                showToast('Could not copy to clipboard');
+            }
+        }
+
+        async function startRenameAnalysis() {
+            const el = document.getElementById('appHeaderFilename');
+            if (!el || el.querySelector('input')) return;
+
+            const originalName = currentFileName;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'app-header-filename-input';
+            input.value = originalName;
+            input.maxLength = 255;
+            el.onclick = null;
+            el.style.cursor = 'default';
+            el.innerHTML = '';
+            el.appendChild(input);
+            input.focus();
+            input.select();
+
+            let finished = false;
+            async function finish(save) {
+                if (finished) return;
+                finished = true;
+                const newValue = input.value.trim();
+                if (save && newValue && newValue !== originalName) {
+                    try {
+                        const resp = await fetch('/api/rename-analysis', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ md5: currentMd5, name: newValue })
+                        });
+                        const result = await resp.json();
+                        if (resp.ok && result.success) {
+                            currentFileName = result.name;
+                            document.title = 'SO-CRATES - ' + currentFileName;
+                        } else {
+                            showToast(result.error || 'Could not rename analysis');
+                        }
+                    } catch (e) {
+                        showToast('Could not rename analysis');
+                    }
+                }
+                el.innerHTML = `${FILE_ICON_SVG}${escapeHtml(currentFileName)}`;
+                el.title = currentFileName;
+                el.style.cursor = 'pointer';
+                el.onclick = startRenameAnalysis;
+            }
+
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+                else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+            });
+            input.addEventListener('blur', function() { finish(true); });
+            input.addEventListener('click', function(e) { e.stopPropagation(); });
+        }
+
+        // Cheap "has notes" signal in the header, without opening the modal.
+        function notesIconHtml() {
+            const color = currentNotes ? 'var(--accent)' : 'var(--text-muted)';
+            const title = currentNotes ? 'View/edit notes' : 'Add notes';
+            return `<span id="appHeaderNotesIcon" onclick="showNotesModal()" style="cursor: pointer; white-space: nowrap; color: ${color};" title="${title}">${NOTES_ICON_SVG}</span>`;
+        }
+
+        function updateNotesCountHint() {
+            const textarea = document.getElementById('analysisNotesInput');
+            document.getElementById('notesCountHint').textContent =
+                `${textarea.value.length.toLocaleString()} / ${NOTES_MAX_LENGTH.toLocaleString()}`;
+        }
+
+        function showNotesModal() {
+            closeOtherMenuModals('notesModal');
+            const textarea = document.getElementById('analysisNotesInput');
+            textarea.maxLength = NOTES_MAX_LENGTH;
+            textarea.value = currentNotes;
+            textarea.oninput = updateNotesCountHint;
+            document.getElementById('notesError').style.display = 'none';
+            updateNotesCountHint();
+            document.getElementById('notesModal').classList.add('active');
+            textarea.focus();
+        }
+
+        function closeNotesModal() {
+            document.getElementById('notesModal').classList.remove('active');
+        }
+
+        function handleNotesBackdropClick(event) {
+            if (event.target === document.getElementById('notesModal')) {
+                closeNotesModal();
+            }
+        }
+
+        async function saveAnalysisNotes() {
+            const textarea = document.getElementById('analysisNotesInput');
+            const errorEl = document.getElementById('notesError');
+            const saveBtn = document.getElementById('notesSaveBtn');
+            errorEl.style.display = 'none';
+            saveBtn.disabled = true;
+            try {
+                const resp = await fetch('/api/analysis-notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ md5: currentMd5, notes: textarea.value })
+                });
+                const result = await resp.json();
+                if (resp.ok && result.success) {
+                    currentNotes = result.notes;
+                    const iconEl = document.getElementById('appHeaderNotesIcon');
+                    if (iconEl) iconEl.outerHTML = notesIconHtml();
+                    closeNotesModal();
+                } else {
+                    errorEl.textContent = result.error || 'Could not save notes';
+                    errorEl.style.display = 'block';
+                }
+            } catch (e) {
+                errorEl.textContent = 'Could not save notes';
+                errorEl.style.display = 'block';
+            } finally {
+                saveBtn.disabled = false;
+            }
+        }
+
+        // Lets the notes icon in the Previous Analyses list jump straight to
+        // that analysis's Notes modal, instead of just the normal overview -
+        // loadAnalysis() must finish first so currentMd5/currentNotes (and
+        // the DOM the modal reads from) reflect the newly-opened analysis.
+        async function openAnalysisNotesFromList(md5) {
+            await loadAnalysis(md5);
+            showNotesModal();
+        }
+
         async function loadAnalysis(md5) {
             const gen = bumpFetchGeneration();
             try {
@@ -5224,6 +5455,7 @@
                 if (result.success) {
                     currentMd5 = md5;
                     currentFileName = result.file_name || md5;
+                    currentNotes = result.notes || '';
                     document.title = 'SO-CRATES - ' + currentFileName;
                     const urlParams = new URLSearchParams(window.location.search);
                     urlParams.set('file', md5);
@@ -5256,21 +5488,13 @@
                     // eventTypes should not include 'all' - it's added separately by buildStats()
                     eventTypes = types;
 
-                    const { min: rangeMin, max: rangeMax } = statsData.date_range;
-                    const dateDisplay = rangeMin && rangeMin === rangeMax
-                        ? rangeMin.slice(0, 19)
-                        : `${rangeMin?.slice(0, 19) || ''} to ${rangeMax?.slice(0, 19) || ''}`;
+                    const dateDisplay = formatDateRange(statsData.date_range);
 
                     // Fetch analysis metadata for routing (supports ZIP uploads)
                     const statusResp = await fetch('/api/status?md5=' + encodeURIComponent(md5) + '&t=' + Date.now());
                     const analysisStatus = await statusResp.json();
                     const detectedType = analysisStatus.meta?.detected_type || detectFileType(currentFileName);
-                    
-                    // Update filename to extracted inner name if available
-                    if (analysisStatus.meta?.extracted) {
-                        currentFileName = analysisStatus.meta.extracted;
-                    }
-                    
+
                     const isPcap = detectedType === 'pcap';
                     const isLogFile = detectedType === 'log';
                     const isFileOnly = !isPcap;
@@ -5284,10 +5508,14 @@
                     const appHeaderFilenameEl = document.getElementById('appHeaderFilename');
                     appHeaderFilenameEl.innerHTML = `${FILE_ICON_SVG}${escapeHtml(currentFileName)}`;
                     appHeaderFilenameEl.title = currentFileName;
+                    appHeaderFilenameEl.style.cursor = 'pointer';
+                    appHeaderFilenameEl.onclick = startRenameAnalysis;
                     document.getElementById('appHeaderMeta').innerHTML = `
-                        <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${FOLDER_ICON_SVG}${escapeHtml(currentMd5)}</span>
+                        <span id="appHeaderMd5" style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; cursor: pointer;" title="Click to copy">${FOLDER_ICON_SVG}${escapeHtml(currentMd5)}</span>
                         <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${CALENDAR_ICON_SVG}${escapeHtml(dateDisplay)}</span>
+                        ${notesIconHtml()}
                     `;
+                    document.getElementById('appHeaderMd5').onclick = () => copyMd5ToClipboard(currentMd5);
                     document.getElementById('appHeaderRight').innerHTML = renderGearMenu();
                     updateThemeMenu();
                     showAnalysisUI();

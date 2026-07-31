@@ -252,7 +252,7 @@ Extracts per-packet hex dumps from a TCP/UDP stream using `tcpdump -X`. Truncate
 
 Lists all previously-analyzed files.
 
-**Response:** Array of `{"md5": "<hash>", "name": "<display name>"}` sorted alphabetically by name.
+**Response:** Array of `{"md5": "<hash>", "name": "<display name>", "date_range": {"min": "<ISO timestamp or null>", "max": "<ISO timestamp or null>"}, "has_notes": <bool>}` sorted alphabetically by name. `date_range` reflects the sample's own event timestamps (not upload time), and is `{"min": null, "max": null}` if the analysis has no `events.db` yet. `has_notes` is `true` if a `notes.txt` file exists for the analysis.
 
 ---
 
@@ -268,7 +268,7 @@ Loads a historical analysis by MD5.
 
 **Response:**
 ```json
-{"success": true, "md5": "<hash>", "file_name": "<filename>"}
+{"success": true, "md5": "<hash>", "file_name": "<filename>", "notes": "<notes text or empty string>"}
 ```
 
 **Errors:** `400` if MD5 is invalid or path is unsafe. `404` if analysis not found. `400` if eve.json exceeds size limit.
@@ -500,6 +500,46 @@ Deletes a single historical analysis (removes the entire MD5 directory).
 ```
 
 **Errors:** `400` for invalid MD5 or unsafe path. `404` if analysis not found.
+
+---
+
+### `POST /api/rename-analysis`
+
+Sets a custom display name for an analysis, overwriting `name.txt`. Only changes what's displayed (header, previous-analyses list) — the real originally-uploaded filename is unaffected, preserved separately in `.meta`'s `original` field.
+
+**Request Body:**
+```json
+{"md5": "<hash>", "name": "<new display name>"}
+```
+
+The name is trimmed, has embedded newlines collapsed to spaces, and is capped at 255 characters.
+
+**Response:**
+```json
+{"success": true, "name": "<new display name>"}
+```
+
+**Errors:** `400` for invalid MD5, unsafe path, or an empty/whitespace-only name. `404` if analysis not found.
+
+---
+
+### `POST /api/analysis-notes`
+
+Sets (or clears) freeform investigation notes for an analysis, overwriting `notes.txt`. Unlike `/api/rename-analysis`, embedded newlines are preserved verbatim (multi-line notes are the point), and an empty submission is a valid way to clear notes rather than an error.
+
+**Request Body:**
+```json
+{"md5": "<hash>", "notes": "<notes text>"}
+```
+
+The notes are trimmed and capped at 10,000 characters. An empty (or whitespace-only) value deletes `notes.txt` if present.
+
+**Response:**
+```json
+{"success": true, "notes": "<notes text>"}
+```
+
+**Errors:** `400` for invalid MD5, unsafe path, or non-string notes. `404` if analysis not found.
 
 ---
 

@@ -1137,8 +1137,14 @@ def _sort_expr(event_type, label, prefix=''):
     if label == 'Time':
         return f'{prefix}timestamp'
     if label in REAL_AGGREGATION_COLUMNS:
-        col, cast_text = REAL_AGGREGATION_COLUMNS[label]
-        return f'CAST({prefix}{col} AS TEXT)' if cast_text else f'{prefix}{col}'
+        # cast_text (used by _aggregation_expr's GROUP BY, below) exists
+        # only so the aggregation table's returned value is uniformly a
+        # string, matching every other aggregation column's shape - it says
+        # nothing about the column's actual storage type. src_port/dest_port
+        # are real INTEGER columns, so ORDER BY must sort them numerically;
+        # casting to TEXT here would sort "3306" before "443" before "80".
+        col, _cast_text = REAL_AGGREGATION_COLUMNS[label]
+        return f'{prefix}{col}'
     if event_type in AGGREGATION_JSON_PATHS and label in AGGREGATION_JSON_PATHS[event_type]:
         return _aggregation_expr(event_type, label, AGGREGATION_JSON_PATHS[event_type][label], prefix=prefix)
     if event_type is None:

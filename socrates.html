@@ -238,6 +238,24 @@
             </div>
         </div>
 
+        <div class="modal" id="notesModal" onclick="handleNotesBackdropClick(event)">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3>Notes</h3>
+                    <button class="modal-close" onclick="closeNotesModal()">&times;</button>
+                </div>
+                <div id="notesModalBody">
+                    <textarea id="analysisNotesInput" class="notes-textarea" placeholder="Add investigation notes for this analysis..."></textarea>
+                    <div id="notesCountHint" style="color: var(--text-muted); font-size: 0.8rem; margin-top: 6px;"></div>
+                    <div id="notesError" style="color: var(--badge-warning-text); font-size: 0.85rem; margin-top: 6px; display: none;"></div>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 15px; border-top: 1px solid var(--bg-hover); margin-top: 10px;">
+                    <button onclick="closeNotesModal()" style="background: transparent; color: var(--text-muted); border: 1px solid var(--bg-hover); padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Cancel</button>
+                    <button id="notesSaveBtn" onclick="saveAnalysisNotes()" style="background: var(--accent); color: var(--bg-primary); border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Save</button>
+                </div>
+            </div>
+        </div>
+
         <div class="modal" id="rulesModal" onclick="handleRulesBackdropClick(event)">
             <div class="modal-content" onclick="event.stopPropagation()">
                 <div class="modal-header">
@@ -251,9 +269,7 @@
             </div>
         </div>
 
-        <header id="mainHeader" style="display: none;">
-            <div id="headerContent" style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;"></div>
-        </header>
+        <header id="mainHeader" style="display: none;"></header>
 
         <div id="fileInfoContainer" style="display: none;"></div>
 

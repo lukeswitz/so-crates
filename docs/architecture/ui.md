@@ -33,14 +33,17 @@ Analysis View (analysis loaded)
 ```js
 let allEvents = [];          // Loaded for "All Events" tab
 let eventTypes = [];         // available types for current analysis
-let currentMd5 = '';         // current analysis MD5
-let currentFileName = '';    // display name
-let currentFilters = {};     // {columnName: value} — global, flat
+var currentMd5 = '';         // current analysis MD5 (var, not let - see below)
+var currentFileName = '';    // display name (var, not let - see below)
+var currentNotes = '';       // per-analysis freeform notes (var, not let - see below)
+var currentFilters = {};     // {columnName: value} — global, flat (var, not let - see below)
 let currentSearch = [];      // server-side full-text search terms (array)
 let baseEventStats = {};     // unfiltered totals for stats card denominator
-let advancedMode = false;    // advanced toggle state
+var advancedMode = false;    // advanced toggle state (var, not let - see below)
 let tabDataCache = {};       // cached event data per type
 ```
+
+`currentMd5`/`currentFileName`/`currentNotes`/`currentFilters`/`advancedMode` (and a couple of others, e.g. `truncatedTypes`) are deliberately declared with `var` rather than `let`/`const` - the JSDOM test harness (`tests/jsdom_helper.py`) assigns/reads them via separate `window.eval()` invocations, and only `var`/function declarations attach to the actual global object persistently across those separate evaluations.
 
 **Key function groups:**
 
@@ -53,6 +56,7 @@ let tabDataCache = {};       // cached event data per type
 | Search | `performSearch()`, `clearSearchTerm()`, `refreshAnalysisData()` | Full-text search via server |
 | Filtering | `applyFilter()`, `applyFilters()`, `clearFilter()`, `clearAllFilters()`, `getFilteredEvents()`, `getSankeyEvents()`, `refreshCurrentView()` | Column filter management |
 | Streams | `downloadPcap()`, `loadAsciiTranscript()`, `loadHexdumpData()`, `switchStreamView()`, `togglePacket()`, `toggleRow()` | Stream analysis |
+| Modals | `closeAllModals()`, `showNotesModal()`, `closeNotesModal()`, `saveAnalysisNotes()`, `openAnalysisNotesFromList()`, `showRulesModal()`, `closeRulesModal()`, `triggerRulesetUpdate()`, `isRulesetStale()` | Notes editing and Rules-modal management, shared modal cleanup |
 | Utilities | `escapeHtml()`, `formatEvent()`, `extractValue()`, `extractAllValue()`, `getColumnsForType()`, `clearAnalysisContainers()` | Helpers |
 
 ## Column System

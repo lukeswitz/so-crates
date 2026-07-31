@@ -25,6 +25,7 @@ All analyzed files are stored in `~/socrates-data/`. Each analysis gets a subdir
     eve.json                   # Suricata's JSON output (PCAP only)
     events.db                  # SQLite database (alerts + events + log events + sigma alerts)
     name.txt                   # Human-readable display name
+    notes.txt                  # Freeform analyst notes (absent unless explicitly added)
     filestore/                 # Extracted files from Suricata file-store (PCAP only)
     yara_matches.json          # YARA scan results (binary files)
     sigma_matches.json         # Sigma detection results (log files)
@@ -44,6 +45,8 @@ All analyzed files are stored in `~/socrates-data/`. Each analysis gets a subdir
 | `MAX_TRANSCRIPT_SIZE` | `100,000 chars` | Maximum ASCII transcript / hexdump length |
 | `MAX_QUERY_LIMIT` | `100,000` | Hard ceiling for the `limit` query param on paginated endpoints, regardless of any user override |
 | `DISK_SPACE_SAFETY_MARGIN` | `100 MB` | Free-space buffer required (on top of the upload size) before an upload is accepted |
+| `MAX_DISPLAY_NAME_LENGTH` | `255 chars` | Maximum length of a user-renamed analysis display name |
+| `MAX_NOTES_LENGTH` | `10,000 chars` | Maximum length of a per-analysis Notes field |
 
 Suricata config is auto-generated from `/etc/suricata/` on first run. Rules are downloaded via `suricata-update` when internet access is available; otherwise, the app uses baked-in rules (Docker/Podman) or warns and continues without rules (source).
 

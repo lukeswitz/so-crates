@@ -158,6 +158,22 @@ def validate_zip_extraction(zip_ref, extract_path, max_size=None):
     socrates.py's _resolve_upload_size_limit) so a user who hasn't opted
     into a higher personal upload limit doesn't get the full server hard
     ceiling as their zip-bomb decompression budget.
+
+    NOT a real bypass, re-confirmed each time it's been raised in review: a
+    ZIP member with a spoofed/lying declared file_size (small metadata,
+    large real decompressed content) does NOT let zip_ref.extractall() (or
+    zip_ref.open().read()) silently write more bytes than declared before
+    this check would catch it. CPython's zipfile.ZipExtFile bounds every
+    read to the declared file_size internally (see _read1's
+    `data = data[:self._left]`, where self._left is initialized from
+    file_size) and then validates CRC32 against the *original* (untruncated)
+    checksum - a size lie produces a truncated read whose CRC provably
+    can't match, raising zipfile.BadZipFile before the mismatch could ever
+    be exploited. Verified directly against both zip_ref.extractall() and a
+    manual streaming read on a real spoofed-metadata ZipInfo (not just
+    read from source) - both raise BadZipFile identically, with or without
+    this function's own size check. Don't re-implement a streaming
+    extractor to "fix" this again without re-verifying that premise first.
     """
     if max_size is None:
         max_size = config.MAX_UPLOAD_SIZE

@@ -25,7 +25,7 @@ After analysis completes, the UI displays different views depending on the file 
 - **Search** — full-text search across all event data using SQLite FTS5 (falls back to `LIKE` if FTS5 is unavailable)
 - **Filtering** — apply filters by clicking aggregation values; filter chips show active filters; filters persist across all tabs and the Sankey diagram
 
-**For log files (`.evtx`, `.json`, `.csv`, `.xml`, `.log`):**
+**For log files (`.evtx`, `.json`, `.jsonl`, `.csv`, `.xml`, `.log`):**
 
 - **Sigma Alerts** — detections matched by Sigma rules, with severity, MITRE techniques, and rule metadata
 - **Log Events** — all parsed log events with dynamic column discovery based on the actual data

@@ -2,41 +2,77 @@
 
 ## 3.1.0
 
-### OhMyDebn theme sync
+### Rename an analysis, add notes, and click-to-copy the MD5
 
-A new opt-in "Sync theme with OS" setting (off by default, in the Themes
-modal) lets SO-CRATES follow OhMyDebn desktop theme switches automatically.
-A `GET /api/theme` endpoint reads the active theme's name and color
-palette from a single `OHMYDEBN_THEME_DIR` environment variable (unset
-outside an OhMyDebn/podman launch, so this is a no-op for every other
-deployment), by convention at `<OHMYDEBN_THEME_DIR>/current/theme.name`
-and `<OHMYDEBN_THEME_DIR>/current/theme/`, and the frontend polls it once
-a second while the tab is visible.
+Clicking the filename in the analysis header now turns it into an
+editable field — Enter or clicking away saves the new display name
+(`POST /api/rename-analysis`), Escape cancels. Renaming only changes
+what's displayed (header, Previous Analyses list); the real
+originally-uploaded filename stays intact in `.meta`'s `original` field.
+Fixed a real bug found while building this: reopening a renamed analysis
+from the Previous Analyses list reverted the header back to the
+*original* filename — `loadAnalysis()` was unconditionally overwriting
+the already-correct, rename-aware display name with `.meta.extracted`
+(the upload-time filename, which a rename never touches), a leftover
+override that turned out to be entirely redundant even before renaming
+existed, since `name.txt` and `.meta.extracted` always start identical
+at upload time anyway. The filename is truncated with an ellipsis when
+it's too long to fit — hovering it shows the full filename via a native
+tooltip.
 
-- A theme name that matches one of SO-CRATES's built-in themes is applied
-  directly, with a toast: "Changed SO-CRATES theme to `<name>` to match
-  OhMyDebn".
-- For a custom or Aether-generated theme with no built-in match, a full
-  theme (~25 CSS custom properties) is instead synthesized at runtime from
-  the theme's raw color palette, with a toast: "Generated color palette
-  from OhMyDebn theme `<name>`". Three source formats are supported, tried
-  in order against real installed themes until one works: the native
-  `colors.toml`'s numbered `color0`-`color15` ANSI-slot scheme; the same
-  file's alternate semantic-named scheme (`red`/`blue`/`bright_red`/
-  `muted`/..., used by at least one of OhMyDebn's own bundled themes); and
-  `alacritty.toml` (standard `[colors.primary]`/`[colors.normal]`/
-  `[colors.bright]` tables), including its `0xrrggbb` hex variant and
-  themes that omit `[colors.bright]` entirely (falls back to `[colors.normal]`
-  per color). Every derived text/accent color (`--text-muted`,
-  `--tag-*-text`, `--badge-*-text`, `--accent`) is nudged as needed to meet
-  a real WCAG 3:1 contrast ratio against the derived background, so a
-  low-contrast source palette can't make labels/headings unreadable.
-  Verified against all themes bundled with a real OhMyDebn installation.
-- If neither a known theme nor a usable palette is available, sync
-  disables itself and SO-CRATES reverts to Midnight, with a sticky toast
-  explaining why (click, or its "Open Themes" link, to dismiss).
+A new Notes field lets an analyst attach freeform investigation context
+to an analysis ("suspected GuLoader, C2 at x.top", "false positive,
+benign updater") — separate from rename, which only relabels the
+analysis rather than annotating it. A small icon next to the MD5/date in
+the analysis header opens a Notes modal (textarea, live character count,
+explicit Save/Cancel — not autosave, since a modal already has an
+obvious commit action); the icon itself is muted when there are no notes
+and accent-colored once there are, so an analyst can tell at a glance
+without opening it. Notes are stored as a plain-text `notes.txt` per
+analysis (mirroring `name.txt`'s convention) and saved via a new
+`POST /api/analysis-notes` — unlike rename, multi-line text is preserved
+verbatim (not collapsed to a single line) and an empty submission is a
+valid, intentional way to clear notes rather than a rejected empty name.
 
-### Rule updates moved to an on-demand Rules modal
+The Previous Analyses list also shows this same icon on any row that has
+notes, so an analyst doesn't have to open every analysis just to check —
+and clicking it jumps straight to that analysis and opens its Notes
+modal in one step, rather than just the normal overview.
+
+Two small bugs were caught and fixed while building this: the notes
+button initially had no dedicated CSS rule and fell back to the
+browser's default white button, which looked out of place next to the
+dark-styled reanalyze/delete buttons beside it — now matches
+`.previous-analysis-reanalyze`'s background/color treatment, including
+its per-theme overrides. And any open modal (Notes included) used to
+stay open if you navigated back to the Welcome screen via the
+"SO-CRATES" logo — most confusing for Notes specifically, since it's
+tied to the specific analysis you just left. `showWelcome()` now closes
+every modal via a `closeAllModals()` helper shared with the existing
+Escape-key handler.
+
+Clicking the MD5 hash next to it copies it to the clipboard, with a
+toast confirming success — or a clear error if `navigator.clipboard`
+isn't available, which happens on any real HTTP (non-HTTPS) origin other
+than the browser's `localhost`/`127.0.0.1` loopback exception (a common
+way to reach a container's published port from another machine on the
+same LAN).
+
+Since the display name is now user-editable, two different analyses
+could end up renamed to the same thing with nothing to tell them apart
+in the Previous Analyses list. Each row's hover tooltip now shows the
+sample's own date range instead of its MD5 — an analyst is far more
+likely to recognize "when" than an MD5 fragment, and the MD5 is still
+reachable via the row's href/status-bar URL, so showing it in the
+tooltip too was redundant. Keeping the date range in the tooltip rather
+than an inline span next to the name keeps the row itself uncluttered:
+duplicates stay distinguishable on hover without restricting what
+anything can be renamed to. `GET /api/analyses` now includes a
+`date_range` field per analysis for this (`{"min": ..., "max": ...}`,
+both `null` for an analysis still mid-processing with no `events.db`
+yet); the tooltip falls back to the MD5 in that case.
+
+### Rules modal: on-demand updates, sources, staleness, and readability
 
 Suricata/YARA/Sigma rule updates no longer block server startup. A new
 "Rules" entry in the gear menu opens a modal showing each ruleset's current
@@ -76,36 +112,40 @@ missing, since it's equally useful for a container install whose
 baked-in rules might just be outdated) is what tells the user what to
 do about it.
 
-### About modal and manual update checks
+Each ruleset section now names and links to its actual upstream source —
+Suricata to [Emerging Threats Open](https://rules.emergingthreats.net/),
+YARA to [YARA Forge](https://github.com/YARAHQ/yara-forge), Sigma to
+[SigmaHQ](https://github.com/SigmaHQ/sigma) — the same three projects
+already listed in [Credits](credits.md), so an analyst can see what
+they're actually pulling in before clicking Update.
 
-A new "About" entry in the gear menu opens a modal with the current
-version, tagline, a "Made with ♥ by defenders for defenders - Sponsored by
-Security Onion Solutions, LLC" line, and Documentation/GitHub links. The
-"Check GitHub for newer releases" checkbox and its manual "Check Now"
-button (added alongside the existing opt-in automatic check, not
-replacing it) moved here from Settings. The footer's "SO-CRATES" link now
-opens this modal instead of navigating to GitHub (the "Update available"
-badge still links directly to the GitHub release).
+Each ruleset's "updated" date is now colored with the warning color once
+it's more than 30 days old (or was never successfully updated) — an
+analyst previously had to notice and mentally calculate staleness from a
+plain date string; now it's visible at a glance across all four dates
+(Suricata, YARA, Sigma Windows, Sigma Linux).
 
-### Theme renames and additions
+- The modal now grows up to 1550px / 95% of viewport width and 92% of
+  viewport height (up from a fixed 900px), and each ruleset's log box no
+  longer has its own small fixed height — it sizes to its content, so the
+  modal itself is the only scrollable region instead of three separate,
+  cramped inner scrollbars. On a large enough screen, a full
+  `suricata-update` run is visible with no scrollbars at all.
+- Log lines now wrap instead of forcing a horizontal scrollbar on long
+  lines (e.g. `suricata-update`'s "Writing rules to ..." summary line).
+- Sections are now ordered YARA, Sigma, Suricata (shortest output to
+  longest) instead of Suricata first, so the two quick rule-count
+  summaries are visible without scrolling past Suricata's much longer,
+  variable-length update log.
 
-- **C64 → Breadbin Blue**, **MS-DOS Blue → DOS Blue**, **Windows XP → Luna
-  Blue** — both the display label and the underlying registry key/cheat
-  code changed (`c64`→`breadbin-blue`/`bread`, `msdos`→`dos-blue`/`dos`,
-  `winxp`→`luna-blue`/`luna`), to move away from specific product/console
-  branding.
-- Two new Fun themes: **Digital Frontier** (a Tron-inspired look, cheat
-  code `digit`) and **Retro Handheld** (a Game Boy-inspired 4-shade green
-  look, cheat code `retro`) — named generically for the same reason.
-
-### Other UI fixes
-
-- All modals now dismiss via Escape or a backdrop click, not just their
-  close button.
-- The Help modal links to https://so-crates.org.
-- The Themes modal's "Sync theme with OS" toggle moves to the top and
-  hides the manual picker while enabled, since OhMyDebn owns the theme
-  while sync is on.
+Startup itself is now quieter too: it no longer prints "No internet
+access detected — using baked-in Suricata rules" or "Baked-in rules
+copied successfully" — since startup never touches the network by
+design, that message no longer reflected an actual check and was just
+noise every time. The old "Rule updates are now managed from the web
+interface..." line is now a friendlier tip:
+"Tip! To check for rule updates, click the menu in the upper-right
+corner and then select Rules."
 
 ### YARA Forge / Sigma rule freshness
 
@@ -126,6 +166,26 @@ and `_download_rule_file` used to write straight into the destination
 file, which would have corrupted an already-good cached copy if a refresh
 failed partway through. Both now write to a temp file and rename
 atomically into place.
+
+### Other UI fixes
+
+- All modals now dismiss via Escape or a backdrop click, not just their
+  close button.
+- The Help modal links to https://so-crates.org.
+- The welcome tip mentioning the max upload size now links "Settings"
+  directly to the Settings modal instead of just naming it in plain
+  text.
+
+### About modal and manual update checks
+
+A new "About" entry in the gear menu opens a modal with the current
+version, tagline, a "Made with ♥ by defenders for defenders - Sponsored by
+Security Onion Solutions, LLC" line, and Documentation/GitHub links. The
+"Check GitHub for newer releases" checkbox and its manual "Check Now"
+button (added alongside the existing opt-in automatic check, not
+replacing it) moved here from Settings. The footer's "SO-CRATES" link now
+opens this modal instead of navigating to GitHub (the "Update available"
+badge still links directly to the GitHub release).
 
 ### Smaller Docker image
 
@@ -159,37 +219,60 @@ hand-maintained file list that had the same gap — it now dynamically
 checks every `.py` file actually in the repo root against the Dockerfile
 instead.
 
-### Quieter startup, and a friendlier pointer to the Rules modal
+### Theme renames and additions
 
-Startup no longer prints "No internet access detected — using baked-in
-Suricata rules" or "Baked-in rules copied successfully" — since startup
-never touches the network by design (see "Rule updates moved to an
-on-demand Rules modal", above), that message no longer reflects an actual
-check and was just noise every time. The old "Rule updates are now
-managed from the web interface..." line is now a friendlier tip: "Tip! If
-you want to check for rule updates, click the menu in the upper-corner
-and then select Rules."
+- **C64 → Breadbin Blue**, **MS-DOS Blue → DOS Blue**, **Windows XP → Luna
+  Blue** — both the display label and the underlying registry key/cheat
+  code changed (`c64`→`breadbin-blue`/`bread`, `msdos`→`dos-blue`/`dos`,
+  `winxp`→`luna-blue`/`luna`), to move away from specific product/console
+  branding.
+- Two new Fun themes: **Digital Frontier** (a Tron-inspired look, cheat
+  code `digit`) and **Retro Handheld** (a Game Boy-inspired 4-shade green
+  look, cheat code `retro`) — named generically for the same reason.
 
-### Rules modal readability
+### Themes modal UI cleanup
 
-- The modal now grows up to 1550px / 95% of viewport width and 92% of
-  viewport height (up from a fixed 900px), and each ruleset's log box no
-  longer has its own small fixed height — it sizes to its content, so the
-  modal itself is the only scrollable region instead of three separate,
-  cramped inner scrollbars. On a large enough screen, a full
-  `suricata-update` run is visible with no scrollbars at all.
-- Log lines now wrap instead of forcing a horizontal scrollbar on long
-  lines (e.g. `suricata-update`'s "Writing rules to ..." summary line).
-- Sections are now ordered YARA, Sigma, Suricata (shortest output to
-  longest) instead of Suricata first, so the two quick rule-count
-  summaries are visible without scrolling past Suricata's much longer,
-  variable-length update log.
+- The "Sync theme with OS" toggle moves to the top of the Themes modal
+  and hides the manual picker while enabled, since OhMyDebn owns the
+  theme while sync is on.
+- Removed the active-theme checkmark from the theme tile grid — the
+  border-color/bold-text highlight already marks the active tile, so the
+  checkmark (and the empty placeholder space reserved for it on every
+  other tile) was redundant visual noise.
 
-### Header filename tooltip
+### OhMyDebn theme sync
 
-The analysis header's filename is truncated with an ellipsis when it's
-too long to fit — hovering it now shows the full filename via a native
-tooltip.
+A new opt-in "Sync theme with OS" setting (off by default, in the Themes
+modal) lets SO-CRATES follow OhMyDebn desktop theme switches automatically.
+A `GET /api/theme` endpoint reads the active theme's name and color
+palette from a single `OHMYDEBN_THEME_DIR` environment variable (unset
+outside an OhMyDebn/podman launch, so this is a no-op for every other
+deployment), by convention at `<OHMYDEBN_THEME_DIR>/current/theme.name`
+and `<OHMYDEBN_THEME_DIR>/current/theme/`, and the frontend polls it once
+a second while the tab is visible.
+
+- A theme name that matches one of SO-CRATES's built-in themes is applied
+  directly, with a toast: "Changed SO-CRATES theme to `<name>` to match
+  OhMyDebn".
+- For a custom or Aether-generated theme with no built-in match, a full
+  theme (~25 CSS custom properties) is instead synthesized at runtime from
+  the theme's raw color palette, with a toast: "Generated color palette
+  from OhMyDebn theme `<name>`". Three source formats are supported, tried
+  in order against real installed themes until one works: the native
+  `colors.toml`'s numbered `color0`-`color15` ANSI-slot scheme; the same
+  file's alternate semantic-named scheme (`red`/`blue`/`bright_red`/
+  `muted`/..., used by at least one of OhMyDebn's own bundled themes); and
+  `alacritty.toml` (standard `[colors.primary]`/`[colors.normal]`/
+  `[colors.bright]` tables), including its `0xrrggbb` hex variant and
+  themes that omit `[colors.bright]` entirely (falls back to `[colors.normal]`
+  per color). Every derived text/accent color (`--text-muted`,
+  `--tag-*-text`, `--badge-*-text`, `--accent`) is nudged as needed to meet
+  a real WCAG 3:1 contrast ratio against the derived background, so a
+  low-contrast source palette can't make labels/headings unreadable.
+  Verified against all themes bundled with a real OhMyDebn installation.
+- If neither a known theme nor a usable palette is available, sync
+  disables itself and SO-CRATES reverts to Midnight, with a sticky toast
+  explaining why (click, or its "Open Themes" link, to dismiss).
 
 ### Reliability and security fixes
 
@@ -200,6 +283,17 @@ tooltip.
   "j-**pe**-g"), so every JPEG silently lost its image-specific EXIF
   fields to the executable-metadata branch instead. Reordered so the
   reliable MIME-type checks run first.
+- **Critical: baked-in Suricata rules silently overwrote a previously
+  fetched, better ruleset on every single restart.** The no-live-update
+  branch of `setup_suricata_config()` checked for the baked-in rules copy
+  *before* checking whether rules already existed on disk — and since
+  every server startup calls this with `network_allowed=False`
+  unconditionally, a real Docker/Podman deployment with a persistent
+  `/data` volume would have its live-updated `suricata.rules` reverted
+  back to the generic baked-in snapshot on every restart, with no
+  progress message logged. Fixed by checking existing on-disk rules
+  first, matching the priority order already used by the (correct)
+  update-failure fallback a few lines away.
 - **FTS5 search index could drift from `file_metadata.json`.** The file
   metadata merge path relied on a stale comment claiming FTS5's
   external-content table auto-updates on a plain `UPDATE` of the content
@@ -211,80 +305,40 @@ tooltip.
   reachability probe fails — a proxy blocking the real rule mirrors, a
   cert error, or a full disk could previously leave Suricata with no
   rules at all despite "internet access" having been detected.
-- Multiple frontend `fetch()` call sites built URLs by interpolating the
-  current file's MD5 directly into a query string without
-  `encodeURIComponent` — swept all of them (previously only
-  `buildStreamUrl()`/`buildSearchQuery()` encoded correctly).
-- A ZIP upload containing more than one supported file only ever
-  analyzes the first one found; the count of skipped files is now
-  surfaced as a toast instead of being silent data loss the user has no
-  way to notice.
-- `_validate_stream_params` now returns its HTTP status code explicitly
-  instead of callers guessing 400 vs. 404 by substring-matching the
-  error message text.
-- Removed dead code: the `reachable_check` parameter on
-  `setup_yara_rules`/`setup_sigma_rules`, the `_check_reachable()` helper
-  duplicated in both `yara_analyzer.py` and `sigma_analyzer.py`, and
-  `validators.make_reachability_checker()` — all unused after an earlier
-  refactor moved rule updates to independent per-ruleset background
-  threads.
-
-### Pre-release review pass
-
-A full source/docs review ahead of this release turned up several more
-issues:
-
-- **Critical: baked-in Suricata rules silently overwrote a previously
-  fetched, better ruleset on every single restart.** The no-live-update
-  branch of `setup_suricata_config()` checked for the baked-in rules copy
-  *before* checking whether rules already existed on disk — and since
-  every server startup calls this with `network_allowed=False`
-  unconditionally, a real Docker/Podman deployment with a persistent
-  `/data` volume would have its live-updated `suricata.rules` reverted
-  back to the generic baked-in snapshot on every restart, with no
-  progress message logged. Fixed by checking existing on-disk rules
-  first, matching the priority order already used by the (correct)
-  update-failure fallback a few lines above.
-- `_fetch_url_safely()`'s redirect-following path read a redirect
-  response's body with a bare, unbounded `resp.read()` — unlike the
-  200-response path, which streams in bounded chunks and aborts once the
-  configured max size is exceeded. Since this function fetches
-  attacker/analyst-supplied URLs, a malicious or compromised server could
-  pair a redirect with an arbitrarily large or slow-trickling body and
-  exhaust memory before `Location` was ever read. Now bounded the same
-  way as the 200 path.
-- `setup_yara_rules()`'s refresh-failure fallback only caught
-  `(OSError, urllib.error.URLError)`, but the download helper can also
+- **`_run_ruleset_update()`'s error reporting was silently broken.** Its
+  `except` branch logged a failed update to the progress log but never
+  set `_rule_update_state[name]['error']` — always `None` — so the
+  frontend's error-vs-success toast (`status[name].error ? '... update
+  error: ...' : '... rules updated'`) could never actually show a
+  failure: a ruleset update that raised still reported success, giving an
+  analyst false confidence that their rules were current.
+- **`setup_yara_rules()`'s refresh-failure fallback only caught
+  `(OSError, urllib.error.URLError)`**, but the download helper can also
   raise `zipfile.BadZipFile` (a truncated, rate-limited, or HTML-error
   response that isn't actually a zip) or `KeyError` (if the expected
   member is ever renamed upstream) — neither is an `OSError` subclass, so
   both escaped the fallback entirely and turned a routine "check for
   updates" refresh into a whole-file-analysis failure despite a perfectly
   good cached copy sitting on disk. Both exceptions are now caught too.
-- `get_sigma_rules_info()`'s docstring promises it never raises, but it
-  opened its cached rules file in plain text mode with no `errors`
+- **`get_sigma_rules_info()`'s docstring promises it never raises**, but
+  it opened its cached rules file in plain text mode with no `errors`
   handling — unlike its YARA/Suricata siblings, which both use
   `errors='ignore'`. Invalid bytes in a corrupted cached file raised
   `UnicodeDecodeError` instead of the documented graceful fallback,
   breaking the entire Rules-info panel (Suricata and YARA included) for
   a problem in just one ruleset's file. Fixed to match its siblings.
-- `_run_ruleset_update()`'s `except` branch logged a failed update to the
-  progress log but never set `_rule_update_state[name]['error']` — always
-  `None` — so the frontend's error-vs-success toast (`status[name].error
-  ? '... update error: ...' : '... rules updated'`) could never actually
-  show a failure: a ruleset update that raised still reported success.
-- `is_host_reachable()` never closed the socket it opened to test
-  reachability — masked by CPython's refcounting GC, but a real resource
-  leak (and the source of `ResourceWarning: unclosed <socket.socket...>`
-  noise seen in test runs). Now uses a `with` block.
-- Clicking a column header inside an Aggregation Tables mini-panel
-  (e.g. the "Count"/"Value" headers) silently re-sorted the unrelated
-  main data table underneath it, with zero visual feedback in the panel
-  itself — `.agg-table th` had `cursor: pointer` copy-pasted from the
-  real sortable table's header style, so the app's own delegated
-  click-to-sort handler (which only skips headers with `cursor: default`)
-  treated it as sortable. Fixed by giving aggregation-table headers
-  `cursor: default`.
+- **`_fetch_url_safely()`'s redirect-following path read a redirect
+  response's body with a bare, unbounded `resp.read()`**, unlike the
+  200-response path, which streams in bounded chunks and aborts once the
+  configured max size is exceeded. Since this function fetches
+  attacker/analyst-supplied URLs, a malicious or compromised server could
+  pair a redirect with an arbitrarily large or slow-trickling body and
+  exhaust memory before `Location` was ever read. Now bounded the same
+  way as the 200 path.
+- A ZIP upload containing more than one supported file only ever
+  analyzes the first one found; the count of skipped files is now
+  surfaced as a toast instead of being silent data loss the user has no
+  way to notice.
 - A YARA match's `file_path` field was silently truncated for any scanned
   filename containing a space (e.g. a user-uploaded `My Invoice.pdf`) —
   the CLI output parser took the last whitespace-delimited token as the
@@ -297,6 +351,21 @@ issues:
   paths passed to `--scan-list` (which the app always already knows)
   instead of a naive split, falling back to the old behavior only if
   nothing in that known set matches.
+- Multiple frontend `fetch()` call sites built URLs by interpolating the
+  current file's MD5 directly into a query string without
+  `encodeURIComponent` — swept all of them (previously only
+  `buildStreamUrl()`/`buildSearchQuery()` encoded correctly).
+- Clicking a column header inside an Aggregation Tables mini-panel
+  (e.g. the "Count"/"Value" headers) silently re-sorted the unrelated
+  main data table underneath it, with zero visual feedback in the panel
+  itself — `.agg-table th` had `cursor: pointer` copy-pasted from the
+  real sortable table's header style, so the app's own delegated
+  click-to-sort handler (which only skips headers with `cursor: default`)
+  treated it as sortable. Fixed by giving aggregation-table headers
+  `cursor: default`.
+- `_validate_stream_params` now returns its HTTP status code explicitly
+  instead of callers guessing 400 vs. 404 by substring-matching the
+  error message text.
 - `_non_artifact_files()` (the display-name fallback used when `name.txt`
   is missing) and `handle_post_reanalyze()`'s file-selection logic used
   to be two separately hand-rolled, drifted implementations of "the real
@@ -308,6 +377,16 @@ issues:
   artifact names only) happily found and re-analyzed that exact same
   file. Consolidated into one shared helper so the two can no longer
   silently disagree.
+- `is_host_reachable()` never closed the socket it opened to test
+  reachability — masked by CPython's refcounting GC, but a real resource
+  leak (and the source of `ResourceWarning: unclosed <socket.socket...>`
+  noise seen in test runs). Now uses a `with` block.
+- Removed dead code: the `reachable_check` parameter on
+  `setup_yara_rules`/`setup_sigma_rules`, the `_check_reachable()` helper
+  duplicated in both `yara_analyzer.py` and `sigma_analyzer.py`, and
+  `validators.make_reachability_checker()` — all unused after an earlier
+  refactor moved rule updates to independent per-ruleset background
+  threads.
 - A handful of docs pages had drifted from the current source: a stale
   "seven test files" list in the architecture docs (now ten, with the
   three newest ones added), a reversed description of Zircolite's
@@ -525,7 +604,7 @@ analyses from Suricata 7 too.
 - **Podman Compose deployment bug**: `docker-compose.podman.yml`'s
   `user: "${UID}:${GID}"` silently resolved to an empty `user: ":"` when
   following the README's exact instructions, since bash doesn't export
-  `$UID`/`$GID` by default - this forced the container to run as root
+  `$UID`/`$GID` by default — this forced the container to run as root
   instead of the current user, defeating the whole point of the
   `userns_mode: keep-id` volume-permission mapping. Confirmed by actually
   building and running the image. README now has users write a `.env` file

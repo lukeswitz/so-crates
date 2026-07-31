@@ -634,7 +634,7 @@ class TestJavaScriptDataStructures(unittest.TestCase):
         self.assertIn('let allEvents', JS_CONTENT)
         self.assertIn('let tabDataCache', JS_CONTENT)
         self.assertIn('let eventTypes', JS_CONTENT)
-        self.assertIn('let currentMd5', JS_CONTENT)
+        self.assertIn('var currentMd5', JS_CONTENT)
 
 
 class TestJavaScriptLogic(unittest.TestCase):
@@ -685,10 +685,10 @@ class TestJavaScriptLogic(unittest.TestCase):
     def test_date_range_display(self):
         """Date range comes from the server's /api/stats date_range field
         (not a client-side scan of allEvents, which would defeat lazy
-        loading)."""
+        loading), formatted via the shared formatDateRange() helper (also
+        used by the Previous Analyses list rows)."""
         self.assertIn('statsData.date_range', JS_CONTENT)
-        self.assertIn('rangeMin', JS_CONTENT)
-        self.assertIn('rangeMax', JS_CONTENT)
+        self.assertIn('formatDateRange(statsData.date_range)', JS_CONTENT)
 
     def test_event_type_sorting(self):
         self.assertIn("function sortEventTypes", JS_CONTENT)
@@ -788,6 +788,26 @@ class TestUXFeatures(unittest.TestCase):
         content = JS_CONTENT[start:pos]
         self.assertIn('<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span>', content,
                       'Welcome help lightbulb icons must use --help-icon-color')
+
+    def test_welcome_help_settings_is_a_hyperlink(self):
+        """The max-file-size tip's 'Settings' mention must be a clickable
+        link that opens the Settings modal directly, not just plain text."""
+        self.assertIn('adjustable in <a href="#" onclick="event.preventDefault(); showSettingsModal();"', JS_CONTENT,
+                      'Settings mention in the welcome help tip must link directly to showSettingsModal()')
+
+    def test_welcome_help_settings_link_opens_settings_modal(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            document.getElementById('helpModalBody').innerHTML = getWelcomeHelpContent();
+            var link = [...document.querySelectorAll('a')].find(a => a.textContent === 'Settings');
+            link.onclick({ preventDefault: function() {} });
+            window.__jsdom_result = {
+                found: !!link,
+                settingsModalOpen: document.getElementById('settingsModal').classList.contains('active')
+            };
+        ''')
+        self.assertTrue(result['found'], 'Welcome help content must contain a Settings link')
+        self.assertTrue(result['settingsModalOpen'], 'Clicking the Settings link must open the Settings modal')
 
     def test_empty_filter_state_uses_template_literal(self):
         """REGRESSION: EMPTY_FILTER_STATE_HTML must interpolate SEARCH_ICON_SVG
@@ -2119,16 +2139,16 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertFalse(result['lumonActive'], 'previewTheme(lumon) must NOT move the checkmark - only the swatch reflects a preview')
         self.assertTrue(result['nordStillActive'], 'the checkmark must stay on the real committed theme (Nord) during preview')
 
-    def test_active_theme_checkmark_css_exists(self):
-        self.assertIn('.theme-tile[data-theme-option]::before', CSS_CONTENT,
-                      'CSS must reserve checkmark space on theme tiles only')
-        self.assertIn('.theme-tile[data-theme-option].theme-active::before', CSS_CONTENT,
-                      'CSS must define the active-theme checkmark')
-        block = CSS_CONTENT.split('.theme-tile[data-theme-option].theme-active::before')[1].split('}')[0]
-        self.assertIn("content: '✓'", block,
-                      'Active-theme checkmark content must be ✓')
-        self.assertIn('var(--accent)', block,
-                      'Active-theme checkmark must use the accent color')
+    def test_no_active_theme_checkmark_css(self):
+        """REGRESSION: the border/bold highlight on .theme-active is the sole
+        active-theme indicator - the redundant checkmark ::before (and its
+        empty-placeholder ::before on other tiles) must not come back."""
+        self.assertNotIn('.theme-tile[data-theme-option]::before', CSS_CONTENT,
+                         'Checkmark placeholder space should not be reserved on theme tiles')
+        self.assertNotIn('.theme-tile[data-theme-option].theme-active::before', CSS_CONTENT,
+                         'Active-theme checkmark ::before should not be defined')
+        self.assertIn('.theme-tile[data-theme-option].theme-active { border-color: var(--accent); border-width: 2px; font-weight: 600; }', CSS_CONTENT,
+                      'Active theme must still be indicated via border/bold highlight')
 
     def test_checkmark_space_not_applied_to_help_item(self):
         """REGRESSION: the Help menu item must not reserve checkmark space
@@ -4564,6 +4584,666 @@ class TestInlineHtmlEscaping(unittest.TestCase):
         load_analysis = JS_CONTENT.split('async function loadAnalysis')[1].split('async function')[0]
         self.assertIn('appHeaderFilenameEl.title = currentFileName', load_analysis,
                       'appHeaderFilename must get a title attribute with the unescaped full filename')
+
+
+class TestRenameAnalysis(unittest.TestCase):
+    """Clicking the header filename lets the user rename the analysis's
+    display name in place (POST /api/rename-analysis)."""
+
+    def _setup_js(self, fetch_body=None, fetch_ok=True):
+        # Default mock echoes back the submitted name, matching the real
+        # /api/rename-analysis backend (which returns whatever name was
+        # actually sent, not a canned value) - a fixed fetch_body is only
+        # passed by tests exercising the failure path.
+        response_expr = (
+            f'{fetch_body}' if fetch_body is not None
+            else "{ success: true, name: JSON.parse(opts.body).name }"
+        )
+        return f'''
+            // init()'s own automatic showWelcome() call (kicked off when
+            // socrates.js first loads) fetches /api/analyses and then wipes
+            // #appHeaderFilename's innerHTML as part of showWelcomeUI() -
+            // let it fully settle first so it can't race with (and stomp
+            // on) this test's own DOM/state setup below.
+            await new Promise(r => setTimeout(r, 50));
+            currentMd5 = 'a'.repeat(32);
+            currentFileName = 'original.pcap';
+            var fetchCalls = [];
+            window.fetch = function(url, opts) {{
+                fetchCalls.push({{ url: url, method: opts && opts.method, body: opts && opts.body }});
+                return Promise.resolve({{
+                    ok: {str(fetch_ok).lower()},
+                    json: () => Promise.resolve({response_expr})
+                }});
+            }};
+            document.getElementById('appHeaderFilename').innerHTML = 'original.pcap';
+        '''
+
+    def test_click_replaces_filename_with_prefilled_input(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await startRenameAnalysis();
+            var input = document.querySelector('#appHeaderFilename input');
+            window.__jsdom_result = {
+                inputPresent: input !== null,
+                inputValue: input ? input.value : null
+            };
+        ''')
+        self.assertTrue(result['inputPresent'], 'clicking must replace the filename with an editable input')
+        self.assertEqual(result['inputValue'], 'original.pcap')
+
+    def test_enter_with_new_value_saves_and_updates_header(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await startRenameAnalysis();
+            var input = document.querySelector('#appHeaderFilename input');
+            input.value = 'New Name';
+            input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            await new Promise(r => setTimeout(r, 20));
+            window.__jsdom_result = {
+                renameCalls: fetchCalls.filter(c => c.url === '/api/rename-analysis'),
+                headerText: document.getElementById('appHeaderFilename').textContent,
+                currentFileName: currentFileName,
+                documentTitle: document.title,
+                inputGone: document.querySelector('#appHeaderFilename input') === null
+            };
+        ''')
+        self.assertEqual(len(result['renameCalls']), 1)
+        self.assertEqual(result['renameCalls'][0]['method'], 'POST')
+        self.assertEqual(json.loads(result['renameCalls'][0]['body']), {'md5': 'a' * 32, 'name': 'New Name'})
+        self.assertEqual(result['currentFileName'], 'New Name')
+        self.assertIn('New Name', result['headerText'])
+        self.assertEqual(result['documentTitle'], 'SO-CRATES - New Name')
+        self.assertTrue(result['inputGone'])
+
+    def test_escape_cancels_without_saving(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await startRenameAnalysis();
+            var input = document.querySelector('#appHeaderFilename input');
+            input.value = 'Should Not Save';
+            input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            await new Promise(r => setTimeout(r, 20));
+            window.__jsdom_result = {
+                renameCalls: fetchCalls.filter(c => c.url === '/api/rename-analysis'),
+                currentFileName: currentFileName,
+                headerText: document.getElementById('appHeaderFilename').textContent
+            };
+        ''')
+        self.assertEqual(result['renameCalls'], [], 'Escape must not save')
+        self.assertEqual(result['currentFileName'], 'original.pcap')
+        self.assertIn('original.pcap', result['headerText'])
+
+    def test_blur_commits_the_edit(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await startRenameAnalysis();
+            var input = document.querySelector('#appHeaderFilename input');
+            input.value = 'Renamed On Blur';
+            input.dispatchEvent(new window.FocusEvent('blur'));
+            await new Promise(r => setTimeout(r, 20));
+            window.__jsdom_result = {
+                renameCalls: fetchCalls.filter(c => c.url === '/api/rename-analysis'),
+                currentFileName: currentFileName
+            };
+        ''')
+        self.assertEqual(len(result['renameCalls']), 1, 'blur must commit the edit')
+        self.assertEqual(result['currentFileName'], 'Renamed On Blur')
+
+    def test_unchanged_value_does_not_save(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await startRenameAnalysis();
+            var input = document.querySelector('#appHeaderFilename input');
+            input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            await new Promise(r => setTimeout(r, 20));
+            window.__jsdom_result = { renameCalls: fetchCalls.filter(c => c.url === '/api/rename-analysis') };
+        ''')
+        self.assertEqual(result['renameCalls'], [], 'submitting the same name must not hit the network')
+
+    def test_empty_value_does_not_save(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await startRenameAnalysis();
+            var input = document.querySelector('#appHeaderFilename input');
+            input.value = '   ';
+            input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            await new Promise(r => setTimeout(r, 20));
+            window.__jsdom_result = {
+                renameCalls: fetchCalls.filter(c => c.url === '/api/rename-analysis'),
+                currentFileName: currentFileName
+            };
+        ''')
+        self.assertEqual(result['renameCalls'], [], 'an empty name must not hit the network')
+        self.assertEqual(result['currentFileName'], 'original.pcap')
+
+    def test_failed_rename_shows_toast_and_reverts(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js(fetch_body='{"success": false, "error": "Name cannot be empty"}') + '''
+            await startRenameAnalysis();
+            var input = document.querySelector('#appHeaderFilename input');
+            input.value = 'New Name';
+            input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            await new Promise(r => setTimeout(r, 20));
+            var toast = document.querySelector('.socrates-toast');
+            window.__jsdom_result = {
+                currentFileName: currentFileName,
+                toastText: toast ? toast.textContent : null
+            };
+        ''')
+        self.assertEqual(result['currentFileName'], 'original.pcap', 'a failed rename must revert to the original name')
+        self.assertEqual(result['toastText'], 'Name cannot be empty')
+
+    def test_clicking_while_already_editing_is_a_no_op(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await startRenameAnalysis();
+            var firstInput = document.querySelector('#appHeaderFilename input');
+            firstInput.value = 'typed but not yet saved';
+            await startRenameAnalysis();
+            var inputs = document.querySelectorAll('#appHeaderFilename input');
+            window.__jsdom_result = { inputCount: inputs.length, preservedValue: inputs[0].value };
+        ''')
+        self.assertEqual(result['inputCount'], 1, 'a second click while editing must not create a second input')
+        self.assertEqual(result['preservedValue'], 'typed but not yet saved')
+
+    def test_loadAnalysis_does_not_revert_renamed_display_name(self):
+        """REGRESSION: after renaming an analysis, reopening it from the
+        Previous Analyses list (loadAnalysis()) reverted the header back to
+        the original filename. /api/load-analysis's file_name already comes
+        from _resolve_display_name() (name.txt first - the renamed value),
+        but loadAnalysis() then unconditionally overwrote currentFileName
+        with analysisStatus.meta.extracted (the ORIGINAL upload-time
+        filename, never touched by a rename) whenever that field was
+        present - which per socrates.py's _write_meta() call sites, it
+        always is for a normal upload. That override must be gone; the
+        already-correct, rename-aware file_name from /api/load-analysis
+        must be what's actually used."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url.indexOf('/api/load-analysis') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        success: true, md5: 'a'.repeat(32), file_name: 'My Renamed Analysis'
+                    }) });
+                }
+                if (url.indexOf('/api/status') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        status: 'ready',
+                        meta: { detected_type: 'pcap', extracted: 'original-upload.pcap', original: 'original-upload.pcap', version: 1 }
+                    }) });
+                }
+                if (url.indexOf('/api/stats') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ counts: {}, date_range: {} }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            try { await loadAnalysis('a'.repeat(32)); } catch (e) {}
+            window.__jsdom_result = {
+                currentFileName: currentFileName,
+                headerText: document.getElementById('appHeaderFilename').textContent
+            };
+        ''')
+        self.assertEqual(result['currentFileName'], 'My Renamed Analysis')
+        self.assertIn('My Renamed Analysis', result['headerText'])
+        self.assertNotIn('original-upload.pcap', result['headerText'])
+
+
+class TestAnalysisNotes(unittest.TestCase):
+    """A per-analysis Notes field, separate from rename - opened via a
+    header icon, edited in a modal, saved via POST /api/analysis-notes."""
+
+    def test_notes_modal_skeleton_exists(self):
+        self.assertIn('id="notesModal" onclick="handleNotesBackdropClick(event)"', HTML_CONTENT,
+                      'notesModal must exist with a backdrop-click handler wired up')
+        self.assertIn('id="analysisNotesInput"', HTML_CONTENT,
+                      'notesModal must have a textarea for entering notes')
+        self.assertIn('id="notesSaveBtn" onclick="saveAnalysisNotes()"', HTML_CONTENT,
+                      'notesModal must have a Save button')
+        self.assertIn('id="notesCountHint"', HTML_CONTENT,
+                      'notesModal must show a character-count hint')
+
+    def _setup_js(self, fetch_body=None, fetch_ok=True, initial_notes=''):
+        response_expr = (
+            f'{fetch_body}' if fetch_body is not None
+            else "{ success: true, notes: JSON.parse(opts.body).notes }"
+        )
+        return f'''
+            await new Promise(r => setTimeout(r, 50));
+            currentMd5 = 'a'.repeat(32);
+            currentNotes = {json.dumps(initial_notes)};
+            document.getElementById('appHeaderMeta').innerHTML = notesIconHtml();
+            var fetchCalls = [];
+            window.fetch = function(url, opts) {{
+                fetchCalls.push({{ url: url, method: opts && opts.method, body: opts && opts.body }});
+                return Promise.resolve({{
+                    ok: {str(fetch_ok).lower()},
+                    json: () => Promise.resolve({response_expr})
+                }});
+            }};
+        '''
+
+    def test_show_notes_modal_populates_textarea_without_fetching(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js(initial_notes='Suspected GuLoader') + '''
+            showNotesModal();
+            window.__jsdom_result = {
+                modalOpen: document.getElementById('notesModal').classList.contains('active'),
+                textareaValue: document.getElementById('analysisNotesInput').value,
+                fetchCallCount: fetchCalls.length,
+                hint: document.getElementById('notesCountHint').textContent
+            };
+        ''')
+        self.assertTrue(result['modalOpen'], 'showNotesModal must open the modal')
+        self.assertEqual(result['textareaValue'], 'Suspected GuLoader', 'currentNotes must already be loaded - no fetch needed')
+        self.assertEqual(result['fetchCallCount'], 0, 'opening the modal must not hit the network')
+        self.assertIn('18', result['hint'], 'the count hint must reflect the current text length')
+
+    def test_save_notes_posts_and_updates_current_notes(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            showNotesModal();
+            document.getElementById('analysisNotesInput').value = 'New investigation notes';
+            await saveAnalysisNotes();
+            window.__jsdom_result = {
+                notesCalls: fetchCalls.filter(c => c.url === '/api/analysis-notes'),
+                currentNotes: currentNotes,
+                modalOpen: document.getElementById('notesModal').classList.contains('active')
+            };
+        ''')
+        self.assertEqual(len(result['notesCalls']), 1)
+        self.assertEqual(result['notesCalls'][0]['method'], 'POST')
+        self.assertEqual(json.loads(result['notesCalls'][0]['body']), {'md5': 'a' * 32, 'notes': 'New investigation notes'})
+        self.assertEqual(result['currentNotes'], 'New investigation notes')
+        self.assertFalse(result['modalOpen'], 'a successful save must close the modal')
+
+    def test_save_failure_shows_error_and_keeps_modal_open(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js(fetch_body='{"success": false, "error": "Could not save notes"}') + '''
+            showNotesModal();
+            document.getElementById('analysisNotesInput').value = 'New notes';
+            await saveAnalysisNotes();
+            window.__jsdom_result = {
+                currentNotes: currentNotes,
+                modalOpen: document.getElementById('notesModal').classList.contains('active'),
+                errorText: document.getElementById('notesError').textContent,
+                errorVisible: document.getElementById('notesError').style.display !== 'none'
+            };
+        ''')
+        self.assertEqual(result['currentNotes'], '', 'a failed save must not update currentNotes')
+        self.assertTrue(result['modalOpen'], 'a failed save must not close the modal')
+        self.assertEqual(result['errorText'], 'Could not save notes')
+        self.assertTrue(result['errorVisible'])
+
+    def test_escape_discards_unsaved_edit(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js(initial_notes='original notes') + '''
+            showNotesModal();
+            document.getElementById('analysisNotesInput').value = 'unsaved edit';
+            document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            window.__jsdom_result = {
+                modalOpen: document.getElementById('notesModal').classList.contains('active'),
+                notesCalls: fetchCalls.filter(c => c.url === '/api/analysis-notes'),
+                currentNotes: currentNotes
+            };
+        ''')
+        self.assertFalse(result['modalOpen'], 'Escape must close the modal')
+        self.assertEqual(result['notesCalls'], [], 'Escape must not save')
+        self.assertEqual(result['currentNotes'], 'original notes', 'currentNotes must be untouched by an Escape-cancelled edit')
+
+    def test_cancel_button_discards_unsaved_edit(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js(initial_notes='original notes') + '''
+            showNotesModal();
+            document.getElementById('analysisNotesInput').value = 'unsaved edit';
+            closeNotesModal();
+            window.__jsdom_result = {
+                modalOpen: document.getElementById('notesModal').classList.contains('active'),
+                notesCalls: fetchCalls.filter(c => c.url === '/api/analysis-notes'),
+                currentNotes: currentNotes
+            };
+        ''')
+        self.assertFalse(result['modalOpen'])
+        self.assertEqual(result['notesCalls'], [])
+        self.assertEqual(result['currentNotes'], 'original notes')
+
+    def test_backdrop_click_closes_without_saving(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js(initial_notes='original notes') + '''
+            showNotesModal();
+            handleNotesBackdropClick({ target: document.getElementById('notesModal') });
+            window.__jsdom_result = {
+                modalOpen: document.getElementById('notesModal').classList.contains('active')
+            };
+        ''')
+        self.assertFalse(result['modalOpen'])
+
+    def test_icon_color_reflects_has_notes_state(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentNotes = '';
+            var emptyHtml = notesIconHtml();
+            currentNotes = 'some notes';
+            var filledHtml = notesIconHtml();
+            window.__jsdom_result = { emptyHtml: emptyHtml, filledHtml: filledHtml };
+        ''')
+        self.assertIn('var(--text-muted)', result['emptyHtml'], 'no notes must render in the muted color')
+        self.assertIn('var(--accent)', result['filledHtml'], 'having notes must render in the accent color')
+
+    def test_save_updates_header_icon_state(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            showNotesModal();
+            document.getElementById('analysisNotesInput').value = 'New notes';
+            await saveAnalysisNotes();
+            window.__jsdom_result = {
+                iconHtml: document.getElementById('appHeaderNotesIcon').outerHTML
+            };
+        ''')
+        self.assertIn('var(--accent)', result['iconHtml'], 'the header icon must switch to the has-notes color after saving')
+
+    def test_loadAnalysis_sets_current_notes_from_response(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url.indexOf('/api/load-analysis') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        success: true, md5: 'a'.repeat(32), file_name: 'sample.pcap', notes: 'Loaded notes'
+                    }) });
+                }
+                if (url.indexOf('/api/status') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        status: 'ready',
+                        meta: { detected_type: 'pcap', extracted: 'sample.pcap', original: 'sample.pcap', version: 1 }
+                    }) });
+                }
+                if (url.indexOf('/api/stats') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ counts: {}, date_range: {} }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            try { await loadAnalysis('a'.repeat(32)); } catch (e) {}
+            window.__jsdom_result = {
+                currentNotes: currentNotes,
+                iconHtml: document.getElementById('appHeaderNotesIcon') ? document.getElementById('appHeaderNotesIcon').outerHTML : null
+            };
+        ''')
+        self.assertEqual(result['currentNotes'], 'Loaded notes')
+        self.assertIn('var(--accent)', result['iconHtml'])
+
+    def test_loadAnalysis_defaults_current_notes_to_empty_string(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url.indexOf('/api/load-analysis') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        success: true, md5: 'a'.repeat(32), file_name: 'sample.pcap'
+                    }) });
+                }
+                if (url.indexOf('/api/status') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        status: 'ready',
+                        meta: { detected_type: 'pcap', extracted: 'sample.pcap', original: 'sample.pcap', version: 1 }
+                    }) });
+                }
+                if (url.indexOf('/api/stats') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ counts: {}, date_range: {} }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            try { await loadAnalysis('a'.repeat(32)); } catch (e) {}
+            window.__jsdom_result = { currentNotes: currentNotes };
+        ''')
+        self.assertEqual(result['currentNotes'], '', 'a response with no notes field must default to empty string, not undefined')
+
+
+class TestCopyMd5ToClipboard(unittest.TestCase):
+    """Clicking the MD5 hash in the header copies it to the clipboard."""
+
+    def test_copies_and_shows_toast_on_success(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var written = null;
+            navigator.clipboard = { writeText: function(text) { written = text; return Promise.resolve(); } };
+            await copyMd5ToClipboard('abc123def456');
+            var toast = document.querySelector('.socrates-toast');
+            window.__jsdom_result = { written: written, toastText: toast ? toast.textContent : null };
+        ''')
+        self.assertEqual(result['written'], 'abc123def456')
+        self.assertEqual(result['toastText'], 'MD5 copied to clipboard')
+
+    def test_missing_clipboard_api_shows_toast_no_throw(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            navigator.clipboard = undefined;
+            await copyMd5ToClipboard('abc123def456');
+            var toast = document.querySelector('.socrates-toast');
+            window.__jsdom_result = { toastText: toast ? toast.textContent : null };
+        ''')
+        self.assertEqual(result['toastText'], 'Clipboard access unavailable (requires HTTPS or localhost)')
+
+    def test_write_failure_shows_toast(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            navigator.clipboard = { writeText: function() { return Promise.reject(new Error('denied')); } };
+            await copyMd5ToClipboard('abc123def456');
+            var toast = document.querySelector('.socrates-toast');
+            window.__jsdom_result = { toastText: toast ? toast.textContent : null };
+        ''')
+        self.assertEqual(result['toastText'], 'Could not copy to clipboard')
+
+    def test_header_wires_md5_click_to_copy(self):
+        """Source-level check that loadAnalysis() wires the MD5 span's
+        click handler to copyMd5ToClipboard - copyMd5ToClipboard's own
+        behavior is covered by the tests above."""
+        load_analysis = JS_CONTENT.split('async function loadAnalysis')[1].split('async function')[0]
+        self.assertIn("document.getElementById('appHeaderMd5').onclick = () => copyMd5ToClipboard(currentMd5);", load_analysis)
+
+
+class TestPreviousAnalysesShowDateRange(unittest.TestCase):
+    """REGRESSION: two different analyses renamed to the same display name
+    used to be indistinguishable in the Previous Analyses list. The
+    sample's own date range (an analyst is far more likely to recognize
+    "when" than an MD5 fragment) is now the row's hover tooltip instead of
+    the MD5 - the MD5 is still reachable via the link's href/status-bar
+    URL, and showing it in the tooltip too would just be redundant. Keeping
+    the date range out of the row itself (rather than an inline span next
+    to the name) keeps the list uncluttered."""
+
+    def test_row_tooltip_is_date_range_not_md5(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/analyses') {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { md5: 'aaaaaaaa1111111111111111111111aa', name: 'asdfasdf',
+                          date_range: { min: '2026-01-01T00:00:00', max: '2026-01-01T00:05:00' } },
+                        { md5: 'bbbbbbbb2222222222222222222222bb', name: 'asdfasdf',
+                          date_range: { min: '2026-02-02T00:00:00', max: '2026-02-02T00:00:00' } }
+                    ]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            await showWelcome();
+            var rows = document.querySelectorAll('.previous-analysis-row a');
+            window.__jsdom_result = {
+                rowCount: rows.length,
+                firstText: rows[0].textContent,
+                firstTitle: rows[0].getAttribute('title'),
+                firstHref: rows[0].getAttribute('href'),
+                secondText: rows[1].textContent,
+                secondTitle: rows[1].getAttribute('title')
+            };
+        ''')
+        self.assertEqual(result['rowCount'], 2)
+        self.assertEqual(result['firstText'].strip(), 'asdfasdf', 'the row itself must show only the name - no date range, no MD5')
+        self.assertEqual(result['firstTitle'], '2026-01-01T00:00:00 to 2026-01-01T00:05:00',
+                         'the date range must be the hover tooltip, not the MD5')
+        self.assertIn('aaaaaaaa1111111111111111111111aa', result['firstHref'], 'the MD5 must still be reachable via the href')
+        self.assertEqual(result['secondText'].strip(), 'asdfasdf')
+        self.assertEqual(result['secondTitle'], '2026-02-02T00:00:00')
+        self.assertNotEqual(result['firstTitle'], result['secondTitle'],
+                            'two same-named analyses must still be distinguishable via their tooltip')
+
+    def test_row_tooltip_falls_back_to_md5_when_range_unknown(self):
+        """An analysis still mid-processing (date_range all-null) has no
+        date range to show - the tooltip falls back to the MD5 rather than
+        being left blank, and the row itself shows no stray empty span or
+        the literal text "null"."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/analyses') {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { md5: 'c'.repeat(32), name: 'still-processing', date_range: { min: null, max: null } }
+                    ]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            await showWelcome();
+            var row = document.querySelector('.previous-analysis-row a');
+            window.__jsdom_result = {
+                text: row.textContent,
+                title: row.getAttribute('title'),
+                spanCount: row.querySelectorAll('span').length
+            };
+        ''')
+        self.assertNotIn('null', result['text'])
+        self.assertEqual(result['title'], 'c' * 32, 'tooltip must fall back to the MD5 when there is no date range')
+        self.assertEqual(result['spanCount'], 1, 'only the name span should render - no separate date span')
+
+
+class TestPreviousAnalysesShowNotesIndicator(unittest.TestCase):
+    """An analyst shouldn't have to open every analysis just to see whether
+    notes were previously added - rows with has_notes show a small button,
+    separate from the name/date link, that jumps straight to that
+    analysis's Notes modal."""
+
+    def test_row_shows_notes_button_when_has_notes_true(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/analyses') {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { md5: 'a'.repeat(32), name: 'with-notes', date_range: { min: null, max: null }, has_notes: true }
+                    ]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            await showWelcome();
+            var btn = document.querySelector('.previous-analysis-notes');
+            window.__jsdom_result = {
+                found: btn !== null,
+                html: btn ? btn.outerHTML : null,
+                md5: btn ? btn.dataset.md5 : null
+            };
+        ''')
+        self.assertTrue(result['found'], 'a row with has_notes=true must show a notes button')
+        self.assertEqual(result['md5'], 'a' * 32)
+
+    def test_notes_button_css_matches_reanalyze_button_styling(self):
+        """REGRESSION: the notes button initially had no dedicated CSS rule,
+        so it fell back to the browser's default white button background -
+        it must match .previous-analysis-reanalyze's background/color
+        treatment (including per-theme overrides), not set color inline
+        (which would override the CSS class and break those per-theme
+        overrides)."""
+        self.assertIn('.previous-analysis-notes { background: var(--bg-hover); color: var(--accent); }', CSS_CONTENT)
+        self.assertNotIn('color: var(--accent);" title="View/edit notes"', JS_CONTENT,
+                         'the notes button must not set color inline - that would override the CSS class'
+                         ' theme-specific rules below')
+
+    def test_row_omits_notes_button_when_has_notes_false(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/analyses') {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { md5: 'b'.repeat(32), name: 'no-notes', date_range: { min: null, max: null }, has_notes: false }
+                    ]) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            await showWelcome();
+            window.__jsdom_result = { found: document.querySelector('.previous-analysis-notes') !== null };
+        ''')
+        self.assertFalse(result['found'], 'no notes button should render when has_notes is false')
+
+    def test_clicking_notes_button_opens_analysis_and_notes_modal(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/analyses') {
+                    return Promise.resolve({ json: () => Promise.resolve([
+                        { md5: 'a'.repeat(32), name: 'with-notes', date_range: { min: null, max: null }, has_notes: true }
+                    ]) });
+                }
+                if (url.indexOf('/api/load-analysis') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        success: true, md5: 'a'.repeat(32), file_name: 'with-notes', notes: 'Suspected GuLoader'
+                    }) });
+                }
+                if (url.indexOf('/api/status') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        status: 'ready',
+                        meta: { detected_type: 'pcap', extracted: 'with-notes', original: 'with-notes', version: 1 }
+                    }) });
+                }
+                if (url.indexOf('/api/stats') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ counts: {}, date_range: {} }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            await showWelcome();
+            document.querySelector('.previous-analysis-notes').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 30));
+            window.__jsdom_result = {
+                currentMd5: currentMd5,
+                currentNotes: currentNotes,
+                modalOpen: document.getElementById('notesModal').classList.contains('active'),
+                textareaValue: document.getElementById('analysisNotesInput').value
+            };
+        ''')
+        self.assertEqual(result['currentMd5'], 'a' * 32, 'clicking the notes button must open that analysis')
+        self.assertEqual(result['currentNotes'], 'Suspected GuLoader')
+        self.assertTrue(result['modalOpen'], 'clicking the notes button must open the Notes modal')
+        self.assertEqual(result['textareaValue'], 'Suspected GuLoader')
+
+
+class TestFormatDateRange(unittest.TestCase):
+    """Shared by loadAnalysis() (analysis header) and showWelcome()
+    (Previous Analyses list rows) so both display a sample's date range
+    identically."""
+
+    def _call(self, date_range_js):
+        from tests.jsdom_helper import js_statements
+        return js_statements(f'window.__jsdom_result = {{ text: formatDateRange({date_range_js}) }};')['text']
+
+    def test_single_instant_shown_once(self):
+        self.assertEqual(
+            self._call("{ min: '2026-01-01T00:00:00', max: '2026-01-01T00:00:00' }"),
+            '2026-01-01T00:00:00')
+
+    def test_range_shown_as_min_to_max(self):
+        self.assertEqual(
+            self._call("{ min: '2026-01-01T00:00:00', max: '2026-01-01T00:05:00' }"),
+            '2026-01-01T00:00:00 to 2026-01-01T00:05:00')
+
+    def test_both_null_returns_empty_string(self):
+        self.assertEqual(self._call("{ min: null, max: null }"), '')
+
+    def test_null_input_returns_empty_string(self):
+        self.assertEqual(self._call("null"), '')
+
+    def test_truncates_to_19_chars(self):
+        """ISO timestamps may carry fractional seconds/timezone - only the
+        YYYY-MM-DDTHH:MM:SS portion is shown."""
+        self.assertEqual(
+            self._call("{ min: '2026-01-01T00:00:00.123456Z', max: '2026-01-01T00:00:00.123456Z' }"),
+            '2026-01-01T00:00:00')
 
 
 class TestAdvancedToggleNoMemoryLeak(unittest.TestCase):
@@ -8619,10 +9299,12 @@ class TestRulesModal(unittest.TestCase):
         result = js_statements('''
             // Prevents the page's own auto-init (showWelcome(), still in
             // flight from page load with its own pending fetch) from
-            // racing this test and closing rulesModal via its own
-            // closeOtherMenuModals('helpModal') call during one of
-            // showRulesModal's await points below.
+            // racing this test and closing rulesModal - showWelcome() now
+            // unconditionally closes every modal via closeAllModals(), so
+            // (unlike before) hideHelp alone no longer neutralizes this;
+            // let init()'s own showWelcome() call fully settle first.
             localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
             window.fetch = function(url) {
                 if (url === '/api/rules-info') {
                     return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
@@ -8650,6 +9332,87 @@ class TestRulesModal(unittest.TestCase):
                          'Sigma must not use a different (parentheses) format than Suricata/YARA')
         self.assertEqual(render_fn.count('— updated'), 4,
                          'Suricata, YARA, and Sigma windows + linux must all use the em-dash format (4 total)')
+
+    def test_rules_modal_shows_source_links(self):
+        """Each ruleset section must name its upstream source and link to it,
+        so an analyst can see what they're pulling in before clicking Update."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            // Let init()'s own auto-triggered showWelcome() settle first -
+            // it now unconditionally closes every modal via closeAllModals().
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            var body = document.getElementById('rulesModalBody');
+            var links = {};
+            body.querySelectorAll('a').forEach(function(a) { links[a.textContent] = a.getAttribute('href'); });
+            window.__jsdom_result = { links: links };
+        ''')
+        self.assertEqual(result['links']['(YARA Forge)'], 'https://github.com/YARAHQ/yara-forge')
+        self.assertEqual(result['links']['(SigmaHQ)'], 'https://github.com/SigmaHQ/sigma')
+        self.assertEqual(result['links']['(Emerging Threats Open)'], 'https://rules.emergingthreats.net/')
+
+    def test_isRulesetStale(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var nowSec = Date.now() / 1000;
+            window.__jsdom_result = {
+                fresh: isRulesetStale(nowSec - 3600),
+                justUnderThreshold: isRulesetStale(nowSec - (29 * 86400)),
+                stale: isRulesetStale(nowSec - (31 * 86400)),
+                never: isRulesetStale(null),
+                undef: isRulesetStale(undefined)
+            };
+        ''')
+        self.assertFalse(result['fresh'], 'An hour-old update must not be flagged stale')
+        self.assertFalse(result['justUnderThreshold'], 'An update just under 30 days old must not be flagged stale')
+        self.assertTrue(result['stale'], 'An update over 30 days old must be flagged stale')
+        self.assertTrue(result['never'], 'A null (never updated) epoch must be flagged stale')
+        self.assertTrue(result['undef'], 'An undefined epoch must be flagged stale')
+
+    def test_formatDateSpan_colors_stale_dates(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var nowSec = Date.now() / 1000;
+            window.__jsdom_result = {
+                staleHtml: formatDateSpan(nowSec - (31 * 86400)),
+                freshHtml: formatDateSpan(nowSec - 3600),
+                neverHtml: formatDateSpan(null)
+            };
+        ''')
+        self.assertIn('var(--badge-warning-text)', result['staleHtml'], 'Stale dates must be colored with the warning color')
+        self.assertNotIn('style=', result['freshHtml'], 'Fresh dates must not have any warning styling')
+        self.assertIn('var(--badge-warning-text)', result['neverHtml'], 'A never-updated ruleset must be colored with the warning color')
+        self.assertIn('never', result['neverHtml'], 'A never-updated ruleset must still render the word "never"')
+
+    def test_rules_modal_flags_stale_rulesets(self):
+        """RULES_INFO_RESPONSE's fixture timestamps are all from 1970, so every
+        ruleset section rendered in the real modal must show the stale color."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            // Let init()'s own auto-triggered showWelcome() settle first -
+            // it now unconditionally closes every modal via closeAllModals().
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            var body = document.getElementById('rulesModalBody');
+            window.__jsdom_result = {
+                staleCount: body.querySelectorAll('span[style*="badge-warning-text"]').length
+            };
+        ''')
+        self.assertEqual(result['staleCount'], 4, 'All 4 dates (suricata, yara, sigma windows+linux) must be flagged stale')
 
     def test_triggerRulesetUpdate_posts_ruleset_body(self):
         from tests.jsdom_helper import js_statements
