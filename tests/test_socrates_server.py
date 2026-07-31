@@ -313,6 +313,13 @@ class TestFetchUrlSafely(unittest.TestCase):
                     self.send_header('Content-Length', str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
+                elif self.path == '/redirect-big-body':
+                    body = b'y' * 2000
+                    self.send_response(302)
+                    self.send_header('Location', '/final')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -383,6 +390,20 @@ class TestFetchUrlSafely(unittest.TestCase):
                     f'http://localhost:{self.port}/big', timeout=5, max_size=100
                 )
         self.assertEqual(self._upload_tmp_contents(), [], 'partial download must be cleaned up on size-limit failure')
+
+    def test_redirect_body_size_is_bounded(self):
+        """REGRESSION: the redirect-response body used to be discarded via a
+        bare resp.read() with no size bound at all, unlike the 200 path's
+        chunked read that aborts past max_size - a malicious/compromised
+        server could pair a redirect with an arbitrarily large (or slow-
+        trickling) body and exhaust memory before Location was ever read.
+        The discard must be bounded the same way."""
+        with unittest.mock.patch('socrates.validate_url_safety', return_value=None), \
+             unittest.mock.patch('socrates.resolve_safe_ips', return_value=['127.0.0.1']):
+            with self.assertRaises(server._FileTooLargeError):
+                server._fetch_url_safely(
+                    f'http://localhost:{self.port}/redirect-big-body', timeout=5, max_size=100
+                )
 
     def test_plain_fetch_returns_body(self):
         with unittest.mock.patch('socrates.validate_url_safety', return_value=None), \
@@ -3106,6 +3127,28 @@ bright_magenta = "#D9B9D9"
             self.assertFalse(result[name]['running'], f'{name} must not still be running')
             self.assertIn(marker, result[name]['lines'])
 
+    @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
+    @unittest.mock.patch('socrates.setup_suricata_config')
+    def test_update_rules_exception_populates_error_field(self, mock_suricata):
+        """REGRESSION: _rule_update_state[name]['error'] was initialized to
+        None and never set to anything else, so the frontend's
+        status[name].error-gated toast (see refreshRulesModal() in
+        static/socrates.js) could never actually show an update-failed
+        message - a run that raised still reported done/not-running with
+        error: null, which the frontend reads as success. The except
+        branch in _run_ruleset_update() must populate 'error' too."""
+        mock_suricata.side_effect = RuntimeError('boom')
+
+        status, body = self._post('/api/update-rules', {'ruleset': 'suricata'})
+        self.assertEqual(status, 200)
+
+        status2, body2 = self._get('/api/rule-update-status')
+        self.assertEqual(status2, 200)
+        result = json.loads(body2)
+        self.assertTrue(result['suricata']['done'])
+        self.assertFalse(result['suricata']['running'])
+        self.assertEqual(result['suricata']['error'], 'boom')
+
     def test_update_rules_invalid_ruleset_returns_400(self):
         status, body = self._post('/api/update-rules', {'ruleset': 'not-a-real-ruleset'})
         self.assertEqual(status, 400)
@@ -3684,14 +3727,19 @@ class TestReanalyzeEndpoint(unittest.TestCase):
                       'reanalyze must support log file re-analysis')
 
     def test_reanalyze_excludes_zircolite_artifacts(self):
-        """Verify reanalyze excludes zircolite.log and .zircolite_events.db from file selection."""
+        """Verify reanalyze excludes zircolite.log and .zircolite_events.db
+        from file selection - via the shared _non_artifact_files() helper
+        (also used by _resolve_display_name()), not a hand-rolled
+        duplicate list local to handle_post_reanalyze()."""
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
         reanalyze_section = content.split("def handle_post_reanalyze(self):")[1]
-        self.assertIn("'zircolite.log'", reanalyze_section,
-                      'reanalyze must exclude zircolite.log from non_pcap_files')
-        self.assertIn("'.zircolite_events.db'", reanalyze_section,
-                      'reanalyze must exclude .zircolite_events.db from non_pcap_files')
+        self.assertIn("self._non_artifact_files(dir_path, pcap_file=pcap_file)", reanalyze_section,
+                      'reanalyze must use the shared _non_artifact_files() helper for file selection')
+        self.assertIn("'zircolite.log'", content,
+                      'zircolite.log must be excluded (via FILE_ANALYSIS_ARTIFACTS, checked by _non_artifact_files)')
+        self.assertIn("'.zircolite_events.db'", content,
+                      '.zircolite_events.db must be excluded (via FILE_ANALYSIS_ARTIFACTS, checked by _non_artifact_files)')
 
     def test_reanalyze_returns_409_if_already_processing(self):
         """Verify reanalyze returns 409 when analysis is already in progress."""
@@ -3791,6 +3839,45 @@ class TestSuricataExistingRulesNoInternetMessage(unittest.TestCase):
                       'Must reassure that existing rules are still in place')
         self.assertNotIn('may not have rules to use', output,
                          'Must not print the no-rules warning when rules already exist')
+
+    def test_existing_rules_not_overwritten_by_baked_in_copy_when_offline(self):
+        """REGRESSION: the no-live-update branch used to check
+        baked_in_rules_exist BEFORE rules_exist, so on every startup
+        (network_allowed=False unconditionally, per socrates.py's main())
+        a previously-fetched, larger/fresher suricata.rules on disk would
+        be silently overwritten by the generic baked-in copy via
+        shutil.copytree(..., dirs_exist_ok=True) - destroying a real
+        Docker/Podman deployment's live-updated rules on every single
+        container restart. Existing on-disk rules must take priority."""
+        real_isdir = os.path.isdir
+        real_exists = os.path.exists
+        baked_in_dir = '/usr/share/suricata/rules'
+        baked_in_rules_file = os.path.join(baked_in_dir, 'suricata.rules')
+
+        def fake_isdir(path):
+            return True if path == baked_in_dir else real_isdir(path)
+
+        def fake_exists(path):
+            return True if path == baked_in_rules_file else real_exists(path)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, 'suricata', 'rules')
+            os.makedirs(rules_dir, exist_ok=True)
+            with open(os.path.join(rules_dir, 'suricata.rules'), 'w') as f:
+                f.write('# real rules from a previous live update\n')
+
+            with unittest.mock.patch('suricata_analyzer.has_internet_access', return_value=False), \
+                 unittest.mock.patch('os.path.isdir', side_effect=fake_isdir), \
+                 unittest.mock.patch('os.path.exists', side_effect=fake_exists), \
+                 unittest.mock.patch('shutil.copytree', wraps=shutil.copytree) as mock_copytree:
+                suricata_analyzer.setup_suricata_config(tmpdir, network_allowed=False)
+                for call in mock_copytree.call_args_list:
+                    self.assertNotEqual(call.args[0], baked_in_dir,
+                                         'Must not copy from the baked-in rules dir when rules already exist on disk')
+
+            with open(os.path.join(rules_dir, 'suricata.rules')) as f:
+                self.assertEqual(f.read(), '# real rules from a previous live update\n',
+                                  'Pre-existing rules must survive an offline startup untouched')
 
 
 class _FakeStdout:
@@ -4359,6 +4446,32 @@ class TestYaraScannerModule(unittest.TestCase):
         self.assertEqual(matches[0]['rule_name'], 'Delphi_Random')
         self.assertEqual(matches[0]['tags'], [])
         self.assertEqual(matches[0]['meta'], {'author': '_pusher_', 'date': '2015-08'})
+
+    def test_parse_yara_output_path_with_spaces_uses_known_paths(self):
+        """REGRESSION: the naive last-whitespace-token split truncates any
+        scanned file path containing a space (e.g. a user-uploaded
+        "My Invoice.pdf") - rule names never contain whitespace, but
+        arbitrary uploaded filenames do. known_paths (the exact
+        --scan-list contents) must be used to resolve the real path via
+        longest-suffix match instead."""
+        import yara_analyzer
+        path = '/tmp/uploads/My Invoice.pdf'
+        output = f'TestRule [SUSP] {path}'
+        matches = yara_analyzer._parse_yara_output(output, known_paths=[path])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]['file_path'], path)
+        self.assertEqual(matches[0]['rule_name'], 'TestRule')
+        self.assertEqual(matches[0]['tags'], ['SUSP'])
+
+    def test_parse_yara_output_falls_back_without_known_paths(self):
+        """Without known_paths, behavior is unchanged (last-token split) -
+        this documents the pre-existing limitation for a path with spaces
+        rather than silently fixing it without the caller opting in."""
+        import yara_analyzer
+        output = 'TestRule [SUSP] /tmp/uploads/My Invoice.pdf'
+        matches = yara_analyzer._parse_yara_output(output)
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]['file_path'], 'Invoice.pdf')
 
 
 class TestSetupYaraRulesFreshness(unittest.TestCase):
@@ -5108,6 +5221,31 @@ class TestNonArtifactFiles(unittest.TestCase):
     def test_missing_dir_returns_empty_list(self):
         result = self.handler._non_artifact_files(os.path.join(self.tmpdir, 'does-not-exist'))
         self.assertEqual(result, [])
+
+    def test_legitimately_named_txt_and_json_uploads_are_found(self):
+        """REGRESSION: _non_artifact_files() used to blanket-exclude any
+        .txt/.json/.db-suffixed filename by extension, even though a
+        legitimately-uploaded standalone file can itself have one of
+        those extensions - the exact same directory's file was still
+        correctly found by handle_post_reanalyze()'s own separate,
+        hand-rolled listing (which only excluded exact artifact names,
+        not extensions), so a missing name.txt meant _resolve_display_name()
+        could never fall back to the real filename for such an upload
+        even though reanalyze happily found and used it. Both call sites
+        now share this one helper, so this can no longer disagree."""
+        open(os.path.join(self.tmpdir, 'My Notes.txt'), 'w').close()
+        result = self.handler._non_artifact_files(self.tmpdir)
+        self.assertEqual(result, ['My Notes.txt'],
+                          'a legitimately-uploaded .txt file must be found, not treated as an artifact')
+
+    def test_pcap_file_param_excluded_by_exact_name(self):
+        """An extension-less pcap (detected via magic bytes by
+        _find_pcap_file(), not this function's own PCAP_EXTENSIONS check)
+        must still be excludable by passing its name explicitly."""
+        open(os.path.join(self.tmpdir, 'so-pcap.1234567890'), 'w').close()
+        open(os.path.join(self.tmpdir, 'real-upload.bin'), 'w').close()
+        result = self.handler._non_artifact_files(self.tmpdir, pcap_file='so-pcap.1234567890')
+        self.assertEqual(result, ['real-upload.bin'])
 
 
 if __name__ == '__main__':

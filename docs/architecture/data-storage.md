@@ -7,9 +7,10 @@
     rules/
       suricata.rules       # Downloaded by suricata-update (online) or copied from baked-in image (offline/air-gapped)
     disable.conf
-  zircolite/               # Optional: a pre-existing zircolite.py copy here is used if found, otherwise the
-                           # `zircolite`/`zircolite.py` command on PATH is used (installed via pip, or baked
-                           # into the Docker image at build time - never auto-cloned at runtime)
+  zircolite/               # Optional: the `zircolite`/`zircolite.py` command on PATH (installed via pip,
+                           # or baked into the Docker image at build time) is used first; a pre-existing
+                           # zircolite.py copy here is only a fallback if nothing is found on PATH - never
+                           # auto-cloned at runtime
   sigma-rules/
     windows.json           # Pre-compiled Sigma rules for Windows logs
     linux.json             # Pre-compiled Sigma rules for Linux logs

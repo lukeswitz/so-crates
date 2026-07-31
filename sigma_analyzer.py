@@ -76,7 +76,7 @@ def get_sigma_rules_info(data_dir=None):
             result[ruleset_name] = {'count': None, 'updated': None}
             continue
         try:
-            with open(rules_file, 'r') as f:
+            with open(rules_file, 'r', errors='ignore') as f:
                 data = json.load(f)
             count = len(data) if isinstance(data, list) else None
             result[ruleset_name] = {'count': count, 'updated': os.path.getmtime(rules_file)}

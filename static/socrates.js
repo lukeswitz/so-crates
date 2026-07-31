@@ -841,7 +841,7 @@
         const CALENDAR_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>';
         function getWelcomeHelpContent() { return `
             <p style="color: var(--text-muted); font-size: 0.95rem;">
-                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is ${getUserMaxUploadSizeMB().toLocaleString()}MB (adjustable in Settings).
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is ${getUserMaxUploadSizeMB().toLocaleString()} MB (adjustable in Settings).
             </p>
             <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
                 <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Processing may take a minute or two depending on the size of the file.
@@ -2235,6 +2235,35 @@
             }
         }
 
+        // A manually-installed (non-Docker/Podman) deployment starts with no
+        // rules at all - unlike the container image, which bakes all three
+        // rulesets in and copies them into place before the server ever
+        // accepts a request. Nothing breaks without rules (each analyzer
+        // degrades gracefully), but results are silently emptier than
+        // expected with no indication why - nudge new manual installs at the
+        // Rules modal once, rather than leaving them to discover this only
+        // by noticing an analysis came back oddly empty.
+        async function checkForMissingRules() {
+            try {
+                const resp = await fetch('/api/rules-info');
+                if (!resp.ok) return;
+                const info = await resp.json();
+                const noRules = info.suricata.count === null
+                    && info.yara.count === null
+                    && info.sigma.windows.count === null
+                    && info.sigma.linux.count === null;
+                if (noRules) {
+                    showToast('No rule sets are configured yet — Suricata/YARA/Sigma detections will be empty until you set them up.', {
+                        sticky: true,
+                        actionLabel: 'Open Rules',
+                        onAction: showRulesModal,
+                    });
+                }
+            } catch (e) {
+                // Ignore - not worth surfacing an error over a background nudge
+            }
+        }
+
         const RULESET_LABELS = { suricata: 'Suricata', yara: 'YARA', sigma: 'Sigma' };
 
         let rulesPollInterval = null;
@@ -2259,7 +2288,7 @@
                         </div>
                         <button onclick="triggerRulesetUpdate('${name}')" ${statusEntry.running ? 'disabled' : ''} style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">${statusEntry.running ? 'Updating…' : 'Update'}</button>
                     </div>
-                    ${logText ? `<div class="rule-update-log" data-ruleset="${name}" style="max-height: 120px;">${escapeHtml(logText)}</div>` : ''}
+                    ${logText ? `<div class="rule-update-log" data-ruleset="${name}">${escapeHtml(logText)}</div>` : ''}
                 </div>
             `;
         }
@@ -2268,10 +2297,14 @@
             const suricataText = `${formatRuleCount(info.suricata.count)} — updated ${formatRuleDate(info.suricata.updated)}`;
             const yaraText = `${formatRuleCount(info.yara.count)} — updated ${formatRuleDate(info.yara.updated)}`;
             const sigmaText = `Windows: ${formatRuleCount(info.sigma.windows.count)} — updated ${formatRuleDate(info.sigma.windows.updated)}<br>Linux: ${formatRuleCount(info.sigma.linux.count)} — updated ${formatRuleDate(info.sigma.linux.updated)}`;
+            // Ordered shortest-to-longest output (YARA/Sigma are a couple
+            // lines; Suricata's suricata-update log can run to dozens of
+            // lines) so the two quick summaries are visible without
+            // scrolling past the long, variable-length Suricata log first.
             return (
-                renderRuleSection('suricata', 'Suricata', suricataText, status.suricata) +
                 renderRuleSection('yara', 'YARA', yaraText, status.yara) +
-                renderRuleSection('sigma', 'Sigma', sigmaText, status.sigma)
+                renderRuleSection('sigma', 'Sigma', sigmaText, status.sigma) +
+                renderRuleSection('suricata', 'Suricata', suricataText, status.suricata)
             );
         }
 
@@ -2361,7 +2394,6 @@
             }
         }
 
-        // Single delegated listener for advanced toggle (prevents memory leak from repeated loadAnalysis calls)
         async function toggleDiagram() {
             diagramMode = !diagramMode;
             if (diagramMode) {
@@ -5249,7 +5281,9 @@
                         document.body.classList.remove('file-analysis');
                     }
                     
-                    document.getElementById('appHeaderFilename').innerHTML = `${FILE_ICON_SVG}${escapeHtml(currentFileName)}`;
+                    const appHeaderFilenameEl = document.getElementById('appHeaderFilename');
+                    appHeaderFilenameEl.innerHTML = `${FILE_ICON_SVG}${escapeHtml(currentFileName)}`;
+                    appHeaderFilenameEl.title = currentFileName;
                     document.getElementById('appHeaderMeta').innerHTML = `
                         <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${FOLDER_ICON_SVG}${escapeHtml(currentMd5)}</span>
                         <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${CALENDAR_ICON_SVG}${escapeHtml(dateDisplay)}</span>
@@ -5731,6 +5765,7 @@
                     // Ignore version fetch errors — footer shows placeholder
                 }
                 checkForAppUpdate();
+                checkForMissingRules();
 
                 // Check for file query parameter (backward compatible with ?pcap=)
                 const urlParams = new URLSearchParams(window.location.search);

@@ -195,8 +195,8 @@ def is_host_reachable(host, port, timeout=5):
     Returns True if connection succeeds, False otherwise.
     """
     try:
-        socket.create_connection((host, port), timeout=timeout)
-        return True
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
     except OSError:
         return False
 

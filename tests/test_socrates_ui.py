@@ -99,7 +99,7 @@ class TestHTMLStructure(unittest.TestCase):
         """static/favicon-cga.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_CGA_PATH), 'static/favicon-cga.svg must exist')
 
-    def test_favicon_c64_file_exists(self):
+    def test_favicon_breadbin_blue_file_exists(self):
         """static/favicon-breadbin-blue.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_BREADBIN_BLUE_PATH), 'static/favicon-breadbin-blue.svg must exist')
 
@@ -107,7 +107,7 @@ class TestHTMLStructure(unittest.TestCase):
         """static/favicon-vaporwave.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_VAPORWAVE_PATH), 'static/favicon-vaporwave.svg must exist')
 
-    def test_favicon_winxp_file_exists(self):
+    def test_favicon_luna_blue_file_exists(self):
         """static/favicon-luna-blue.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_LUNA_BLUE_PATH), 'static/favicon-luna-blue.svg must exist')
 
@@ -115,7 +115,7 @@ class TestHTMLStructure(unittest.TestCase):
         """static/favicon-amber.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_AMBER_PATH), 'static/favicon-amber.svg must exist')
 
-    def test_favicon_msdos_file_exists(self):
+    def test_favicon_dos_blue_file_exists(self):
         """static/favicon-dos-blue.svg must exist on disk."""
         self.assertTrue(os.path.exists(FAVICON_DOS_BLUE_PATH), 'static/favicon-dos-blue.svg must exist')
 
@@ -1376,6 +1376,103 @@ class TestThemeAndMenu(unittest.TestCase):
         ''')
         self.assertFalse(result['toastPresent'], 'no filesSkipped must mean no toast')
 
+    def test_checkForMissingRules_shows_sticky_toast_when_all_rulesets_empty(self):
+        """A manually-installed (non-Docker/Podman) deployment starts with
+        zero rules configured for all three engines - unlike the container
+        image, which bakes them all in and copies them into place before
+        the server ever accepts a request. checkForMissingRules() nudges
+        exactly that case with a sticky toast whose action opens the Rules
+        modal."""
+        from tests.jsdom_helper import js_statements
+        empty_rules_info = {
+            'suricata': {'count': None, 'updated': None},
+            'yara': {'count': None, 'updated': None},
+            'sigma': {'windows': {'count': None, 'updated': None}, 'linux': {'count': None, 'updated': None}},
+        }
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(''' + json.dumps(empty_rules_info) + ''') });
+                }
+                return Promise.reject(new Error('unexpected fetch: ' + url));
+            };
+            window.__calledShowRulesModal = false;
+            showRulesModal = function() { window.__calledShowRulesModal = true; };
+
+            await checkForMissingRules();
+            var toast = document.querySelector('.socrates-toast');
+            var presentBeforeClick = toast !== null;
+            var toastText = toast ? toast.textContent : null;
+            var link = toast ? toast.querySelector('a') : null;
+            var linkText = link ? link.textContent : null;
+            if (link) { link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); }
+            window.__jsdom_result = {
+                presentBeforeClick: presentBeforeClick,
+                toastText: toastText,
+                linkText: linkText,
+                calledShowRulesModal: window.__calledShowRulesModal,
+                opacityAfterClick: toast ? toast.style.opacity : null
+            };
+        ''')
+        self.assertTrue(result['presentBeforeClick'], 'toast must appear when all three rulesets have no rules')
+        self.assertIn('No rule sets are configured yet', result['toastText'])
+        self.assertEqual(result['linkText'], 'Open Rules')
+        self.assertTrue(result['calledShowRulesModal'], 'clicking the action link must open the Rules modal')
+        self.assertEqual(result['opacityAfterClick'], '0', 'clicking the action link must start dismissing the toast')
+
+    def test_checkForMissingRules_no_toast_when_container_rules_are_present(self):
+        """The container image bakes in and copies all three rulesets
+        before the server accepts requests, so /api/rules-info already
+        shows real counts - checkForMissingRules() must not fire for that
+        case (no special container-detection needed, since the same
+        rules-info check already distinguishes it)."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.reject(new Error('unexpected fetch: ' + url));
+            };
+            await checkForMissingRules();
+            window.__jsdom_result = { toastPresent: document.querySelector('.socrates-toast') !== null };
+        ''')
+        self.assertFalse(result['toastPresent'], 'no toast when rules are already present')
+
+    def test_checkForMissingRules_no_toast_when_only_some_rulesets_empty(self):
+        """Partial coverage (e.g. Suricata configured but YARA/Sigma not)
+        must not trigger the "no rule sets configured yet" toast - that
+        message is specifically about the fresh-manual-install case where
+        nothing at all is set up."""
+        from tests.jsdom_helper import js_statements
+        partial_rules_info = {
+            'suricata': {'count': 51552, 'updated': 1000.0},
+            'yara': {'count': None, 'updated': None},
+            'sigma': {'windows': {'count': None, 'updated': None}, 'linux': {'count': None, 'updated': None}},
+        }
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(''' + json.dumps(partial_rules_info) + ''') });
+                }
+                return Promise.reject(new Error('unexpected fetch: ' + url));
+            };
+            await checkForMissingRules();
+            window.__jsdom_result = { toastPresent: document.querySelector('.socrates-toast') !== null };
+        ''')
+        self.assertFalse(result['toastPresent'])
+
+    def test_checkForMissingRules_ignores_fetch_failure(self):
+        """A failed /api/rules-info fetch must not throw - this is a
+        best-effort background nudge, not worth surfacing an error over."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function() { return Promise.reject(new Error('network down')); };
+            await checkForMissingRules();
+            window.__jsdom_result = { ok: true };
+        ''')
+        self.assertTrue(result['ok'])
+
     def test_ohmydebn_unknown_theme_toast_is_sticky_with_open_themes_action(self):
         """REGRESSION: this toast reports an unprompted, important change
         (sync got disabled because OhMyDebn named a theme so-crates doesn't
@@ -1749,9 +1846,9 @@ class TestThemeAndMenu(unittest.TestCase):
                         'Light Themes header must appear before Light theme button')
 
     def test_fun_themes_after_light(self):
-        """Fun Themes section (C64, CGA, Hacker, Sguil, Vaporwave, Windows XP)
-        sits after the Light Themes section, matching THEME_GROUP_ORDER =
-        ['dark', 'light', 'fun'] in static/socrates.js."""
+        """Fun Themes section (Breadbin Blue, CGA, Hacker, Sguil, Vaporwave,
+        Luna Blue, and others) sits after the Light Themes section, matching
+        THEME_GROUP_ORDER = ['dark', 'light', 'fun'] in static/socrates.js."""
         from tests.jsdom_helper import js_statements
         grid_html = js_statements('window.__jsdom_result = renderThemesModalGrid();')
         fun_index = grid_html.find('>Fun Themes</div>')
@@ -4458,6 +4555,16 @@ class TestInlineHtmlEscaping(unittest.TestCase):
         self.assertIn("document.title = 'SO-CRATES - ' + currentFileName", load_analysis,
                       'document.title must not HTML-escape the filename')
 
+    def test_header_filename_title_attr_shows_full_name_on_hover(self):
+        """The header filename is truncated with an ellipsis when it's too long
+        for its max-width - a native title attribute lets users hover to see
+        the full name. Like document.title, .title is a plain-text DOM
+        property, so it must be assigned the raw filename, not escapeHtml()'d
+        (which would show literal &amp; etc. in the tooltip)."""
+        load_analysis = JS_CONTENT.split('async function loadAnalysis')[1].split('async function')[0]
+        self.assertIn('appHeaderFilenameEl.title = currentFileName', load_analysis,
+                      'appHeaderFilename must get a title attribute with the unescaped full filename')
+
 
 class TestAdvancedToggleNoMemoryLeak(unittest.TestCase):
     def test_no_inline_addEventListener_for_advancedToggle(self):
@@ -4510,6 +4617,7 @@ class TestNoDeadCode(unittest.TestCase):
             '.file-alert-card',
             '.sigma-alerts-section',
             '.sigma-log-json',
+            '.app-header-menu-sep',
         ]
         for selector in dead_selectors:
             self.assertNotIn(selector, CSS_CONTENT,

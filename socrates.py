@@ -128,6 +128,8 @@ def _run_ruleset_update(name):
             setup_sigma_rules(DATA_DIR, on_progress=on_progress, force=True)
     except Exception as e:
         on_progress(f'Error updating {_RULESET_LABELS[name]} rules: {e}')
+        with _rule_update_lock:
+            _rule_update_state[name]['error'] = f'{e}'
     finally:
         with _rule_update_lock:
             _rule_update_state[name]['done'] = True
@@ -214,7 +216,18 @@ def _fetch_url_safely(url, timeout, max_size, chunk_size=64 * 1024):
 
             if resp.status in (301, 302, 303, 307, 308):
                 location = resp.getheader('Location')
-                resp.read()
+                # Bounded discard, not a bare resp.read() - a malicious or
+                # compromised server could otherwise pair a redirect with an
+                # unbounded (or slow-trickling) body and exhaust memory
+                # before we ever look at Location.
+                total = 0
+                while True:
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_size:
+                        raise _FileTooLargeError('Redirect response body too large')
                 if not location:
                     raise ValueError('Redirect response missing Location header')
                 current_url = urljoin(current_url, location)
@@ -625,19 +638,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return None
         return max(0, offset), max(1, min(limit, config.MAX_QUERY_LIMIT))
 
-    def _non_artifact_files(self, dir_path):
-        """List user files in an analysis dir, excluding PCAPs and pipeline artifacts."""
+    def _non_artifact_files(self, dir_path, pcap_file=None):
+        """List the real user-uploaded file(s) in an analysis dir, excluding
+        PCAPs/ZIPs, dotfiles, and known pipeline-artifact filenames.
+
+        Shared by _resolve_display_name() (display-name fallback) and
+        handle_post_reanalyze() (finding the file to re-run analysis on) -
+        these two used to have separately hand-rolled, drifted versions of
+        this same listing.
+
+        Exact artifact filenames, not a blanket extension exclusion - a
+        user-uploaded log file legitimately ends in .log, and a standalone
+        (non-log) upload can legitimately end in .txt/.json/.db too, and
+        must still be found here. zircolite.log specifically used to slip
+        through an earlier, looser check and could transiently win a
+        directory listing race against the real uploaded file's name.
+
+        pcap_file, if the caller already knows it (e.g. from
+        _find_pcap_file(), which also matches extension-less pcaps via
+        magic bytes - not just this function's own PCAP_EXTENSIONS check),
+        is excluded by exact name too.
+        """
         if not os.path.exists(dir_path):
             return []
-        # Exact artifact filenames (not a blanket '.log' suffix exclusion -
-        # a user-uploaded log file legitimately ends in .log too, and must
-        # still be found here as a display-name fallback before name.txt
-        # exists) - zircolite.log specifically used to slip through this
-        # check and could transiently win a directory listing race against
-        # the real uploaded file's name.
-        exact_artifacts = set(PCAP_ANALYSIS_ARTIFACTS) | set(FILE_ANALYSIS_ARTIFACTS)
+        exact_artifacts = set(PCAP_ANALYSIS_ARTIFACTS) | set(FILE_ANALYSIS_ARTIFACTS) | {'name.txt'}
         return [f for f in os.listdir(dir_path)
-                if not f.lower().endswith(PCAP_EXTENSIONS + ('.zip', '.db', '.json', '.txt', '.phase'))
+                if f != pcap_file
+                and not f.lower().endswith(PCAP_EXTENSIONS + ('.zip',))
                 and not f.startswith('.')
                 and f not in exact_artifacts]
 
@@ -1787,11 +1814,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         _evict_analysis_cache(md5)
 
         pcap_file = _find_pcap_file(dir_path)
-        non_pcap_files = [f for f in os.listdir(dir_path)
-                          if f != pcap_file
-                          and not f.lower().endswith(PCAP_EXTENSIONS + ('.zip',))
-                          and f not in ('eve.json', 'events.db', '.phase', 'yara_matches.json', 'sigma_matches.json', 'name.txt', '.meta', 'zircolite.log', '.zircolite_events.db')
-                          and not f.startswith('.')]
+        non_pcap_files = self._non_artifact_files(dir_path, pcap_file=pcap_file)
 
         # Preserve existing .meta so we can rewrite it after cleanup
         meta_path = os.path.join(dir_path, '.meta')

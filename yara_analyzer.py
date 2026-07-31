@@ -97,7 +97,7 @@ def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, for
                 try:
                     _download_yara_forge_rules(rules_file)
                     on_progress('YARA Forge rules refreshed successfully')
-                except (OSError, urllib.error.URLError) as e:
+                except (OSError, urllib.error.URLError, zipfile.BadZipFile, KeyError) as e:
                     on_progress(f'Warning: could not refresh YARA Forge rules, using cached copy: {e}')
             else:
                 on_progress('No internet access detected — using cached YARA Forge rules')
@@ -123,7 +123,7 @@ def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, for
             _download_yara_forge_rules(rules_file)
             on_progress('YARA Forge rules downloaded successfully')
             return rules_file
-        except (OSError, urllib.error.URLError) as e:
+        except (OSError, urllib.error.URLError, zipfile.BadZipFile, KeyError) as e:
             on_progress(f'Warning: could not download YARA Forge rules: {e}')
     else:
         on_progress('No internet access detected — YARA Forge rules not available')
@@ -162,8 +162,14 @@ def _download_yara_forge_rules(dest_file):
                 os.unlink(tmp)
 
 
-def _run_yara_with_index(rules_file, list_path, filestore_dir=None):
-    """Run YARA against a rules file and return parsed matches."""
+def _run_yara_with_index(rules_file, list_path, filestore_dir=None, known_paths=None):
+    """Run YARA against a rules file and return parsed matches.
+
+    known_paths, if provided, is the exact list of file paths written to
+    list_path (i.e. what --scan-list is scanning) - passed through to
+    _parse_yara_output() so it can resolve each match's file path reliably
+    even when a path contains whitespace.
+    """
     if not os.path.isfile(rules_file):
         return []
 
@@ -194,7 +200,7 @@ def _run_yara_with_index(rules_file, list_path, filestore_dir=None):
         print(f'YARA scan error for {os.path.basename(rules_file)}: {result.stderr.strip()}')
         return []
 
-    return _parse_yara_output(result.stdout, filestore_dir)
+    return _parse_yara_output(result.stdout, filestore_dir, known_paths=known_paths)
 
 
 def _dedup_matches(matches, key_fn):
@@ -247,7 +253,7 @@ def run_yara_scan(filestore_dir, rules_file):
 
     try:
         return _dedup_matches(
-            _run_yara_with_index(rules_file, list_path, filestore_dir),
+            _run_yara_with_index(rules_file, list_path, filestore_dir, known_paths=target_files),
             key_fn=lambda m: (m['rule_name'], m['sha256'])
         )
     finally:
@@ -257,7 +263,7 @@ def run_yara_scan(filestore_dir, rules_file):
             pass
 
 
-def _parse_yara_output(output, filestore_dir=None):
+def _parse_yara_output(output, filestore_dir=None, known_paths=None):
     """Parse YARA CLI output.
 
     YARA output formats (depending on flags):
@@ -268,19 +274,27 @@ def _parse_yara_output(output, filestore_dir=None):
 
     Tags contain only simple identifiers (no '=').
     Metadata contains key=value pairs.
+
+    known_paths, if provided, is the exact set of file paths --scan-list
+    was given - used to resolve each line's file path by longest-suffix
+    match against that known set, falling back to the last
+    whitespace-delimited token only if nothing matches. The naive
+    last-token split silently truncates any path containing whitespace
+    (e.g. a user-uploaded "My Invoice.pdf"), which matters here since rule
+    names never contain whitespace but arbitrary uploaded filenames do.
     """
+    sorted_known_paths = sorted(set(known_paths or ()), key=len, reverse=True)
     matches = []
     for line in output.strip().split('\n'):
         line = line.strip()
         if not line:
             continue
 
-        # Try to extract file path (last token)
         parts = line.split()
         if len(parts) < 2:
             continue
 
-        file_path = parts[-1]
+        file_path = next((p for p in sorted_known_paths if line.endswith(p)), None) or parts[-1]
         if filestore_dir:
             # Use commonpath to prevent directory traversal via path manipulation
             try:
@@ -456,7 +470,7 @@ def scan_single_file(file_path, rules_file):
             return (m['rule_name'], file_sha256)
 
         matches = _dedup_matches(
-            _run_yara_with_index(rules_file, list_path),
+            _run_yara_with_index(rules_file, list_path, known_paths=[file_path]),
             key_fn=dedup_and_fix
         )
         return matches, file_sha256, file_md5, file_sha1, metadata

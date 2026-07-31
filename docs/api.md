@@ -391,6 +391,12 @@ or for log files:
 {"status": "processing", "md5": "<hash>", "phase": "logs"}
 ```
 
+If the upload was a ZIP archive containing more than one supported file, only the first is analyzed (a PCAP takes priority; otherwise the first non-hidden file) and every response above gains a `filesSkipped` field with the count of files that were dropped:
+
+```json
+{"status": "processing", "md5": "<hash>", "phase": "network", "filesSkipped": 2}
+```
+
 **Response (already analyzed):**
 ```json
 {"status": "ready", "md5": "<hash>"}
@@ -455,7 +461,7 @@ or, if analysis (Suricata/YARA/Zircolite) failed:
 
 The `phase` field reflects the current analysis stage (`network`, `logs`, or `files`), or an empty string if no phase file exists yet. `meta` is present whenever `.meta` exists for the analysis and omitted otherwise (including on the `error` response). Same "no 404 for a well-formed-but-nonexistent MD5" caveat as `GET /api/status` applies here too.
 
-**Ready detection:** For PCAPs, checks that `eve.json` exists and `events.db` is present. For other files, checks that `events.db` exists.
+**Ready detection:** the same check for every file type - `events.db` exists and no `.phase` file is still present (`events.db` is created the instant ingest starts, well before it finishes, so its existence alone isn't sufficient; `.phase` stays set for exactly that ingest window).
 
 ---
 

@@ -45,6 +45,18 @@ ruleset plus "Update All", streaming live progress. Startup now only does
 the fast local bootstrap (no network) and prints a message pointing users
 at the new Rules modal instead of the old startup rule-check.
 
+A manually-installed (non-Docker/Podman) deployment starts with zero
+rules configured for all three engines — unlike the container image,
+which bakes them all in and copies them into place before the server
+ever accepts a request. Nothing breaks without rules (every analyzer
+degrades gracefully — Suricata still parses full flow/protocol data with
+just no alerts; YARA/Sigma attempt an on-demand background download on
+the first real upload if internet is available), but there was
+previously no indication to a new manual-install user that anything was
+missing. A one-time sticky toast now appears on first load if
+`/api/rules-info` shows no rules for all three engines, with an "Open
+Rules" link straight to the Rules modal.
+
 ### About modal and manual update checks
 
 A new "About" entry in the gear menu opens a modal with the current
@@ -95,6 +107,201 @@ and `_download_rule_file` used to write straight into the destination
 file, which would have corrupted an already-good cached copy if a refresh
 failed partway through. Both now write to a temp file and rename
 atomically into place.
+
+### Smaller Docker image
+
+The Docker image is roughly 130MB smaller, from two fixes found by
+inspecting `podman history` and the actual contents of the Zircolite git
+clone:
+
+- The venv copied in from the builder stage (`COPY --from=zircolite-builder
+  ... /usr/local/lib/zircolite-venv`) was followed by a separate `chown -R`
+  to give the app user ownership. On an overlay filesystem, a `chown -R`
+  over a directory copied in from another stage forces a full copy-up of
+  every file just to change ownership metadata — doubling that layer's
+  size. Fixed by using `COPY --chown=1000:1000` directly instead.
+- The Zircolite git clone was copied into the final image wholesale, but
+  `sigma_analyzer.py` only ever uses `zircolite.py`, the `zircolite/`
+  package, and `config/config.yaml` from it — the clone's own bundled
+  `rules/` (unused; SO-CRATES bakes in its own Sigma rules separately),
+  `gui/`, `pics/`, `tests/`, `docs/`, and `templates/` directories were
+  pure dead weight. Pruned in the builder stage before the final `COPY`,
+  shrinking that copy from ~53MB to under 1MB.
+- The `unzip` package is now only needed at build time (to extract the
+  YARA Forge release archive) — the app itself parses ZIP uploads with
+  Python's own `zipfile` module — so it's no longer installed in the
+  final image.
+
+Also fixed: the Dockerfile's `COPY` line for top-level `.py` modules was
+missing `ohmydebn_colors.py` (added earlier this session), which made the
+container fail at import time. The regression test that's meant to catch
+this (`test_dockerfile_copies_socrates_files`) used its own
+hand-maintained file list that had the same gap — it now dynamically
+checks every `.py` file actually in the repo root against the Dockerfile
+instead.
+
+### Quieter startup, and a friendlier pointer to the Rules modal
+
+Startup no longer prints "No internet access detected — using baked-in
+Suricata rules" or "Baked-in rules copied successfully" — since startup
+never touches the network by design (see "Rule updates moved to an
+on-demand Rules modal", above), that message no longer reflects an actual
+check and was just noise every time. The old "Rule updates are now
+managed from the web interface..." line is now a friendlier tip: "Tip! If
+you want to check for rule updates, click the menu in the upper-corner
+and then select Rules."
+
+### Rules modal readability
+
+- The modal now grows up to 1550px / 95% of viewport width and 92% of
+  viewport height (up from a fixed 900px), and each ruleset's log box no
+  longer has its own small fixed height — it sizes to its content, so the
+  modal itself is the only scrollable region instead of three separate,
+  cramped inner scrollbars. On a large enough screen, a full
+  `suricata-update` run is visible with no scrollbars at all.
+- Log lines now wrap instead of forcing a horizontal scrollbar on long
+  lines (e.g. `suricata-update`'s "Writing rules to ..." summary line).
+- Sections are now ordered YARA, Sigma, Suricata (shortest output to
+  longest) instead of Suricata first, so the two quick rule-count
+  summaries are visible without scrolling past Suricata's much longer,
+  variable-length update log.
+
+### Header filename tooltip
+
+The analysis header's filename is truncated with an ellipsis when it's
+too long to fit — hovering it now shows the full filename via a native
+tooltip.
+
+### Reliability and security fixes
+
+- **Critical: JPEGs (and other file types) misclassified as PE
+  executables.** `exif_analyzer.py`'s category detection ran a loose
+  substring check (`'pe' in file_type.lower()`) before its more reliable
+  MIME-type checks — `"JPEG"`.lower() contains the substring `"pe"` (from
+  "j-**pe**-g"), so every JPEG silently lost its image-specific EXIF
+  fields to the executable-metadata branch instead. Reordered so the
+  reliable MIME-type checks run first.
+- **FTS5 search index could drift from `file_metadata.json`.** The file
+  metadata merge path relied on a stale comment claiming FTS5's
+  external-content table auto-updates on a plain `UPDATE` of the content
+  table — it doesn't. Fixed with an explicit
+  `INSERT INTO events_fts(events_fts, rowid, json_data) VALUES('delete',
+  ...)` plus re-insert.
+- **Suricata rule updates now fall back to baked-in/existing rules if
+  `suricata-update` itself fails**, not just when the initial internet
+  reachability probe fails — a proxy blocking the real rule mirrors, a
+  cert error, or a full disk could previously leave Suricata with no
+  rules at all despite "internet access" having been detected.
+- Multiple frontend `fetch()` call sites built URLs by interpolating the
+  current file's MD5 directly into a query string without
+  `encodeURIComponent` — swept all of them (previously only
+  `buildStreamUrl()`/`buildSearchQuery()` encoded correctly).
+- A ZIP upload containing more than one supported file only ever
+  analyzes the first one found; the count of skipped files is now
+  surfaced as a toast instead of being silent data loss the user has no
+  way to notice.
+- `_validate_stream_params` now returns its HTTP status code explicitly
+  instead of callers guessing 400 vs. 404 by substring-matching the
+  error message text.
+- Removed dead code: the `reachable_check` parameter on
+  `setup_yara_rules`/`setup_sigma_rules`, the `_check_reachable()` helper
+  duplicated in both `yara_analyzer.py` and `sigma_analyzer.py`, and
+  `validators.make_reachability_checker()` — all unused after an earlier
+  refactor moved rule updates to independent per-ruleset background
+  threads.
+
+### Pre-release review pass
+
+A full source/docs review ahead of this release turned up several more
+issues:
+
+- **Critical: baked-in Suricata rules silently overwrote a previously
+  fetched, better ruleset on every single restart.** The no-live-update
+  branch of `setup_suricata_config()` checked for the baked-in rules copy
+  *before* checking whether rules already existed on disk — and since
+  every server startup calls this with `network_allowed=False`
+  unconditionally, a real Docker/Podman deployment with a persistent
+  `/data` volume would have its live-updated `suricata.rules` reverted
+  back to the generic baked-in snapshot on every restart, with no
+  progress message logged. Fixed by checking existing on-disk rules
+  first, matching the priority order already used by the (correct)
+  update-failure fallback a few lines above.
+- `_fetch_url_safely()`'s redirect-following path read a redirect
+  response's body with a bare, unbounded `resp.read()` — unlike the
+  200-response path, which streams in bounded chunks and aborts once the
+  configured max size is exceeded. Since this function fetches
+  attacker/analyst-supplied URLs, a malicious or compromised server could
+  pair a redirect with an arbitrarily large or slow-trickling body and
+  exhaust memory before `Location` was ever read. Now bounded the same
+  way as the 200 path.
+- `setup_yara_rules()`'s refresh-failure fallback only caught
+  `(OSError, urllib.error.URLError)`, but the download helper can also
+  raise `zipfile.BadZipFile` (a truncated, rate-limited, or HTML-error
+  response that isn't actually a zip) or `KeyError` (if the expected
+  member is ever renamed upstream) — neither is an `OSError` subclass, so
+  both escaped the fallback entirely and turned a routine "check for
+  updates" refresh into a whole-file-analysis failure despite a perfectly
+  good cached copy sitting on disk. Both exceptions are now caught too.
+- `get_sigma_rules_info()`'s docstring promises it never raises, but it
+  opened its cached rules file in plain text mode with no `errors`
+  handling — unlike its YARA/Suricata siblings, which both use
+  `errors='ignore'`. Invalid bytes in a corrupted cached file raised
+  `UnicodeDecodeError` instead of the documented graceful fallback,
+  breaking the entire Rules-info panel (Suricata and YARA included) for
+  a problem in just one ruleset's file. Fixed to match its siblings.
+- `_run_ruleset_update()`'s `except` branch logged a failed update to the
+  progress log but never set `_rule_update_state[name]['error']` — always
+  `None` — so the frontend's error-vs-success toast (`status[name].error
+  ? '... update error: ...' : '... rules updated'`) could never actually
+  show a failure: a ruleset update that raised still reported success.
+- `is_host_reachable()` never closed the socket it opened to test
+  reachability — masked by CPython's refcounting GC, but a real resource
+  leak (and the source of `ResourceWarning: unclosed <socket.socket...>`
+  noise seen in test runs). Now uses a `with` block.
+- Clicking a column header inside an Aggregation Tables mini-panel
+  (e.g. the "Count"/"Value" headers) silently re-sorted the unrelated
+  main data table underneath it, with zero visual feedback in the panel
+  itself — `.agg-table th` had `cursor: pointer` copy-pasted from the
+  real sortable table's header style, so the app's own delegated
+  click-to-sort handler (which only skips headers with `cursor: default`)
+  treated it as sortable. Fixed by giving aggregation-table headers
+  `cursor: default`.
+- A YARA match's `file_path` field was silently truncated for any scanned
+  filename containing a space (e.g. a user-uploaded `My Invoice.pdf`) —
+  the CLI output parser took the last whitespace-delimited token as the
+  path, which only ever worked because rule names never contain
+  whitespace while arbitrary uploaded filenames can. Currently harmless
+  in practice (the SHA256 used elsewhere is always independently
+  recomputed from the file's bytes, and nothing reads this field back
+  out of the database), but a real landmine for the next caller that
+  does. Fixed by resolving each match's path against the exact set of
+  paths passed to `--scan-list` (which the app always already knows)
+  instead of a naive split, falling back to the old behavior only if
+  nothing in that known set matches.
+- `_non_artifact_files()` (the display-name fallback used when `name.txt`
+  is missing) and `handle_post_reanalyze()`'s file-selection logic used
+  to be two separately hand-rolled, drifted implementations of "the real
+  uploaded file in this analysis directory, minus pipeline artifacts" —
+  the former blanket-excluded any `.txt`/`.json`/`.db`-suffixed filename
+  by extension, so a legitimately-uploaded standalone file with one of
+  those extensions could never be found as a display-name fallback, even
+  though reanalyze's own separate listing (extension-agnostic, exact
+  artifact names only) happily found and re-analyzed that exact same
+  file. Consolidated into one shared helper so the two can no longer
+  silently disagree.
+- A handful of docs pages had drifted from the current source: a stale
+  "seven test files" list in the architecture docs (now ten, with the
+  three newest ones added), a reversed description of Zircolite's
+  PATH-vs-bundled-copy lookup priority, a stale "auto-cloned on first
+  run" claim about Zircolite that hasn't been true since it started being
+  baked into the Docker image, a missing `filesSkipped` field in the
+  `/api/upload` response docs, and an incorrect description of
+  `POST /api/check-status`'s readiness check (it's the same check for
+  every file type, not a PCAP-vs-other distinction). The security docs
+  now also mention the non-root container user and startup's
+  zero-network-calls guarantee. `AGENTS.md`'s hardcoded theme list/count
+  (last accurate at 25 themes) was replaced with a pointer to the real
+  `THEMES` registry, which now has 32.
 
 ## 3.0.0
 

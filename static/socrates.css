@@ -1111,8 +1111,8 @@
         #helpModal .modal-content { max-width: 700px; }
         #helpModal.wide .modal-content { max-width: 850px; }
         #helpModalBody { max-height: 60vh; overflow-y: auto; }
-        #rulesModal .modal-content { max-width: 900px; }
-        .rule-update-log { font-family: monospace; font-size: 0.85rem; white-space: pre; max-height: 400px; overflow: auto; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 12px; color: var(--text-primary); }
+        #rulesModal .modal-content { max-width: 1550px; width: 95vw; max-height: 92vh; }
+        .rule-update-log { font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 12px; color: var(--text-primary); }
         #fileInfoContainer { margin-bottom: 20px; }
         .container { width: 100%; padding: 20px; box-sizing: border-box; padding-bottom: 80px; padding-top: 56px; }
         header { background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); padding: 30px; border-radius: 12px; margin-bottom: 20px; border: 1px solid var(--border-color); }
@@ -1181,8 +1181,7 @@
         .agg-close { background: none; border: none; color: var(--text-muted); font-size: 1rem; cursor: pointer; line-height: 1; padding: 0 4px; margin-left: 8px; }
         .agg-close:hover { color: var(--badge-danger-text); }
         .agg-table table { width: 100%; table-layout: auto; border-collapse: collapse; font-size: 0.9rem; }
-        .agg-table th { text-align: left; padding: 12px; background: var(--bg-tertiary); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .agg-table th:hover { background: var(--bg-hover); }
+        .agg-table th { text-align: left; padding: 12px; background: var(--bg-tertiary); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); cursor: default; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .agg-table td { padding: 12px; background: transparent; border-bottom: 1px solid var(--border-color); }
         .agg-table tr { cursor: pointer; }
         .agg-table tr:hover { background: var(--bg-tertiary); }
@@ -1312,7 +1311,6 @@
         .app-header-menu-item { display: flex; align-items: center; gap: 8px; padding: 10px 14px; color: var(--text-primary); font-size: 0.9rem; cursor: pointer; border: none; background: none; width: 100%; text-align: left; white-space: nowrap; }
         .app-header-menu-item:hover { background: var(--bg-tertiary); }
         .app-header-menu-header { display: flex; align-items: center; padding: 12px 14px 4px 14px; color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; cursor: default; pointer-events: none; background: transparent; }
-        .app-header-menu-sep { border-top: 1px solid var(--border-color); margin: 4px 0; }
         .theme-tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; padding: 4px 14px 16px 14px; }
         .theme-tile { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 12px; color: var(--text-primary); font-size: 0.9rem; cursor: pointer; border: 1px solid var(--border-color); background: var(--bg-primary); border-radius: 8px; text-align: center; }
         .theme-tile:hover { background: var(--bg-tertiary); border-color: var(--interactive-highlight, var(--accent)); }

@@ -313,6 +313,28 @@ class TestValidatorsLogDetection(unittest.TestCase):
         self.assertFalse(validators.is_log_file_by_extension('test.exe'))
 
 
+class TestGetSigmaRulesInfoNeverRaises(unittest.TestCase):
+    def test_invalid_utf8_does_not_raise(self):
+        """REGRESSION: get_sigma_rules_info()'s docstring promises it never
+        raises, falling back to None fields if a cached rules file fails to
+        parse - but it opened its file in plain text mode (default
+        encoding), unlike get_yara_rules_info()/get_suricata_rules_info()
+        which both use errors='ignore'. Invalid UTF-8 bytes in a corrupted
+        cached windows.json/linux.json raised UnicodeDecodeError instead,
+        which - since GET /api/rules-info has no per-handler try/except -
+        broke the entire Rules-info response for all three rulesets, not
+        just the corrupted one."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, 'sigma-rules')
+            os.makedirs(rules_dir, exist_ok=True)
+            with open(os.path.join(rules_dir, 'windows.json'), 'wb') as f:
+                f.write(b'\xff\xfe[{"bad": "utf8"')
+
+            result = sigma_analyzer.get_sigma_rules_info(data_dir=tmpdir)
+
+        self.assertEqual(result['windows'], {'count': None, 'updated': None})
+
+
 class TestSetupSigmaRulesFreshness(unittest.TestCase):
     def _make_stale_rules(self, tmpdir):
         import time

@@ -175,6 +175,18 @@ def get_suricata_rules_info(data_dir=None):
 
 
 def setup_suricata_config(data_dir=None, enable_arp=False, on_progress=print, network_allowed=True):
+    """Ensure Suricata is configured and has rules available.
+
+    Priority when network_allowed and internet is reachable: run
+    suricata-update, falling back to existing on-disk rules or the
+    baked-in copy if the update itself fails.
+
+    Priority otherwise (including every server startup, which always
+    calls this with network_allowed=False): existing on-disk rules take
+    priority over the baked-in copy, since this path runs unconditionally
+    on every restart - checking the baked-in copy first would silently
+    overwrite a previously-fetched, larger/fresher ruleset every time.
+    """
     if data_dir is None:
         data_dir = os.path.expanduser('~/socrates-data')
     suricata_dir = os.path.join(data_dir, 'suricata')
@@ -287,14 +299,20 @@ def setup_suricata_config(data_dir=None, enable_arp=False, on_progress=print, ne
                     on_progress(f'Warning: could not copy baked-in rules: {e}')
             else:
                 on_progress("Warning: suricata-update failed and no fallback rules are available")
+    elif rules_exist:
+        # Rules already on disk (e.g. from a previous run's live update, in a
+        # persistent DATA_DIR volume) take priority over the generic
+        # baked-in snapshot - this runs unconditionally on every startup
+        # (network_allowed=False), so checking baked_in_rules_exist first
+        # here would silently overwrite a previously-fetched, larger/fresher
+        # ruleset with the baked-in copy on every single restart.
+        if network_allowed:
+            on_progress("No internet access — using existing Suricata rules from a previous run")
     elif baked_in_rules_exist:
         try:
             shutil.copytree(baked_in_rules_dir, suricata_rules_dir, dirs_exist_ok=True)
         except OSError as e:
             on_progress(f'Warning: could not copy baked-in rules: {e}')
-    elif rules_exist:
-        if network_allowed:
-            on_progress("No internet access and no baked-in rules found — using existing Suricata rules from a previous run")
     else:
         on_progress("Warning: no baked-in rules found and no internet access — Suricata may not have rules to use")
 

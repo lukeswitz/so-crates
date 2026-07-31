@@ -11,7 +11,9 @@ All analyzed files are stored in `~/socrates-data/`. Each analysis gets a subdir
     rules/
       suricata.rules       # Downloaded by suricata-update (online) or copied from baked-in image (offline/air-gapped)
     disable.conf
-  zircolite/               # Zircolite source (auto-cloned on first run if not present)
+  zircolite/               # Optional: only a fallback zircolite.py copy for manual installs; the app looks
+                           # for `zircolite`/`zircolite.py` on PATH first (installed via pip, or baked into
+                           # the Docker image at build time) - never auto-cloned at runtime
   sigma-rules/
     windows.json           # Pre-compiled Sigma rules for Windows logs
     linux.json             # Pre-compiled Sigma rules for Linux logs
