@@ -4012,6 +4012,48 @@ class TestSuricataUpdateFailureFallsBack(unittest.TestCase):
         self.assertTrue(any('Falling back to baked-in Suricata rules' in m for m in messages), messages)
 
 
+class TestNetworkAllowedFalseDoesNotClaimNoInternet(unittest.TestCase):
+    """REGRESSION: with no cached rules and no baked-in rules dir, the
+    final warning used to say "no internet access" unconditionally -
+    including when network_allowed=False (e.g. server startup, which
+    never checks reachability at all by design). A real user on a
+    machine WITH internet access saw this exact message at startup and
+    reasonably assumed something was broken. The message must now
+    distinguish "we checked and it failed" from "we didn't check"."""
+
+    def test_network_allowed_false_does_not_say_no_internet(self):
+        messages = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            suricata_analyzer.setup_suricata_config(tmpdir, on_progress=messages.append, network_allowed=False)
+        self.assertFalse(any('no internet' in m.lower() for m in messages), messages)
+        self.assertIn('WARNING! No Suricata rules found', messages)
+
+    @unittest.mock.patch('suricata_analyzer.has_internet_access')
+    def test_network_allowed_true_and_unreachable_still_says_no_internet(self, mock_internet):
+        mock_internet.return_value = False
+        messages = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            suricata_analyzer.setup_suricata_config(tmpdir, on_progress=messages.append, network_allowed=True)
+        self.assertTrue(any('no internet' in m.lower() for m in messages), messages)
+
+
+class TestStartupTipAlwaysPrinted(unittest.TestCase):
+    """The startup "Tip! ... click the menu ... select Rules." line
+    always prints, regardless of whether any ruleset warned about
+    missing rules - a WARNING! line states a fact (no rules found), not
+    an instruction, so the Tip is what actually tells the user what to
+    do about it (and is equally relevant to container users whose baked-in
+    rules might just be outdated)."""
+
+    def test_tip_print_is_unconditional(self):
+        with open(SERVER_FILE, 'r') as f:
+            content = f.read()
+        main_body = content.split('def main():')[1]
+        self.assertIn('print("Tip! To check for rule updates', main_body)
+        self.assertNotIn('missing_rules_warned', main_body,
+                          'the Tip must not be conditionally gated')
+
+
 class TestSuricataArpStaysDisabledByDefault(unittest.TestCase):
     @unittest.mock.patch('suricata_analyzer.has_internet_access')
     def test_setup_suricata_config_does_not_enable_arp_by_default(self, mock_internet):

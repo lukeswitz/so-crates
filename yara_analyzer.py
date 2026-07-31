@@ -99,8 +99,10 @@ def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, for
                     on_progress('YARA Forge rules refreshed successfully')
                 except (OSError, urllib.error.URLError, zipfile.BadZipFile, KeyError) as e:
                     on_progress(f'Warning: could not refresh YARA Forge rules, using cached copy: {e}')
-            else:
+            elif network_allowed:
                 on_progress('No internet access detected — using cached YARA Forge rules')
+            else:
+                on_progress('Using cached YARA Forge rules')
         elif network_allowed:
             on_progress('YARA Forge rules already present — using cached rules')
         return rules_file
@@ -125,8 +127,10 @@ def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, for
             return rules_file
         except (OSError, urllib.error.URLError, zipfile.BadZipFile, KeyError) as e:
             on_progress(f'Warning: could not download YARA Forge rules: {e}')
-    else:
+    elif network_allowed:
         on_progress('No internet access detected — YARA Forge rules not available')
+    else:
+        on_progress('WARNING! No YARA rules found')
 
     return None
 

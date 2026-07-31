@@ -428,5 +428,31 @@ class TestSetupSigmaRulesFreshness(unittest.TestCase):
             self.assertFalse(os.path.exists(dest + '.new'), 'temp file must be cleaned up')
 
 
+class TestNetworkAllowedFalseDoesNotClaimNoInternet(unittest.TestCase):
+    """REGRESSION: with no cached copy and no baked-in file, the final
+    "not available" message per ruleset used to say "No internet access
+    detected" unconditionally - including when network_allowed=False
+    (e.g. server startup, which never checks reachability at all by
+    design). A real user on a machine WITH internet access saw this
+    exact message at startup and reasonably assumed something was
+    broken. The message must now distinguish "we checked and it failed"
+    from "we didn't check"."""
+
+    def test_network_allowed_false_does_not_say_no_internet(self):
+        messages = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sigma_analyzer.setup_sigma_rules(tmpdir, on_progress=messages.append, network_allowed=False)
+        self.assertFalse(any('no internet' in m.lower() for m in messages), messages)
+        self.assertIn('WARNING! No Sigma rules (windows) found', messages)
+        self.assertIn('WARNING! No Sigma rules (linux) found', messages)
+
+    def test_network_allowed_true_and_unreachable_still_says_no_internet(self):
+        messages = []
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             unittest.mock.patch('sigma_analyzer.is_host_reachable', return_value=False):
+            sigma_analyzer.setup_sigma_rules(tmpdir, on_progress=messages.append, network_allowed=True)
+        self.assertTrue(any('no internet' in m.lower() for m in messages), messages)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -133,8 +133,10 @@ def setup_sigma_rules(data_dir=None, on_progress=print, network_allowed=True, fo
                         on_progress(f'Sigma rules ({ruleset_name}) refreshed successfully')
                     except (OSError, urllib.error.URLError) as e:
                         on_progress(f'Warning: could not refresh Sigma rules ({ruleset_name}), using cached copy: {e}')
-                else:
+                elif network_allowed:
                     on_progress(f'No internet access detected — using cached Sigma rules ({ruleset_name})')
+                else:
+                    on_progress(f'Using cached Sigma rules ({ruleset_name})')
             elif network_allowed:
                 on_progress(f'Sigma rules ({ruleset_name}) already present — using cached rules')
             result[ruleset_name] = rules_file
@@ -158,8 +160,10 @@ def setup_sigma_rules(data_dir=None, on_progress=print, network_allowed=True, fo
                 continue
             except (OSError, urllib.error.URLError) as e:
                 on_progress(f'Warning: could not download Sigma rules ({ruleset_name}): {e}')
-        else:
+        elif network_allowed:
             on_progress(f'No internet access detected — Sigma rules ({ruleset_name}) not available')
+        else:
+            on_progress(f'WARNING! No Sigma rules ({ruleset_name}) found')
 
     return result
 

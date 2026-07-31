@@ -313,8 +313,10 @@ def setup_suricata_config(data_dir=None, enable_arp=False, on_progress=print, ne
             shutil.copytree(baked_in_rules_dir, suricata_rules_dir, dirs_exist_ok=True)
         except OSError as e:
             on_progress(f'Warning: could not copy baked-in rules: {e}')
-    else:
+    elif network_allowed:
         on_progress("Warning: no baked-in rules found and no internet access — Suricata may not have rules to use")
+    else:
+        on_progress("WARNING! No Suricata rules found")
 
 
 def spawn_suricata(dir_path, pcap_path, suricata_config_path=None, data_dir=None):

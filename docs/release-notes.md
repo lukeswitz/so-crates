@@ -57,6 +57,25 @@ missing. A one-time sticky toast now appears on first load if
 `/api/rules-info` shows no rules for all three engines, with an "Open
 Rules" link straight to the Rules modal.
 
+**Fixed a real report from this exact scenario**: the five "not
+available"/"using cached" progress messages across all three engines
+said "No internet access detected" unconditionally in their `else`
+branch — which is reached both when a reachability check genuinely
+failed *and* when `network_allowed=False` (server startup, which never
+checks reachability at all by design, so it can't block on a slow or
+unreachable mirror). A user on a machine with real internet access saw
+this at every startup and reasonably suspected a bug. Each message now
+distinguishes the two cases: "no internet access" is only ever printed
+when a reachability check actually ran and failed; the startup
+(never-checked) case instead prints a short, consistent
+`WARNING! No <ruleset> rules found` for whichever ruleset(s) are
+missing. These warnings state a fact, not an instruction — the startup
+banner's existing "Tip! ... click the menu in the upper-right corner
+and then select Rules." line (always printed, not just when something's
+missing, since it's equally useful for a container install whose
+baked-in rules might just be outdated) is what tells the user what to
+do about it.
+
 ### About modal and manual update checks
 
 A new "About" entry in the gear menu opens a modal with the current

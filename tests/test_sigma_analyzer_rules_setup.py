@@ -32,11 +32,16 @@ class TestSetupSigmaRulesForceNoNetwork(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_force_with_fresh_cache_and_no_network_reports_progress(self):
+        """REGRESSION: this message must not claim "no internet access" -
+        network_allowed=False means the caller opted out of checking
+        (e.g. server startup), not that a reachability check actually
+        failed."""
         messages = []
         sigma_analyzer.setup_sigma_rules(
             self.tmpdir, on_progress=messages.append, network_allowed=False, force=True)
         self.assertTrue(messages, 'on_progress must be called even when force=True, cache is fresh, and offline')
-        self.assertTrue(any('no internet' in m.lower() for m in messages), messages)
+        self.assertTrue(any('using cached' in m.lower() for m in messages), messages)
+        self.assertFalse(any('no internet' in m.lower() for m in messages), messages)
         # Each ruleset gets its own named message, not a single generic one.
         for ruleset_name in sigma_analyzer.ZIRCOLITE_RULES_URLS:
             self.assertTrue(any(ruleset_name in m for m in messages), (ruleset_name, messages))

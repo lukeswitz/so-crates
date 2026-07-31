@@ -32,11 +32,17 @@ class TestSetupYaraRulesForceNoNetwork(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_force_with_fresh_cache_and_no_network_reports_progress(self):
+        """REGRESSION: this message must not claim "no internet access" -
+        network_allowed=False means the caller opted out of checking
+        (e.g. server startup), not that a reachability check actually
+        failed. See TestNetworkAllowedFalseDoesNotClaimNoInternet for the
+        dedicated check of that distinction."""
         messages = []
         yara_analyzer.setup_yara_rules(
             self.tmpdir, on_progress=messages.append, network_allowed=False, force=True)
         self.assertTrue(messages, 'on_progress must be called even when force=True, cache is fresh, and offline')
-        self.assertTrue(any('no internet' in m.lower() for m in messages), messages)
+        self.assertTrue(any('using cached' in m.lower() for m in messages), messages)
+        self.assertFalse(any('no internet' in m.lower() for m in messages), messages)
 
 
 class TestRefreshFallsBackToCacheOnBadDownload(unittest.TestCase):
@@ -84,6 +90,37 @@ class TestRefreshFallsBackToCacheOnBadDownload(unittest.TestCase):
 
         self.assertEqual(result, self.rules_file, 'must fall back to the cached rules file, not raise')
         self.assertTrue(any('warning' in m.lower() for m in messages), messages)
+
+
+class TestNetworkAllowedFalseDoesNotClaimNoInternet(unittest.TestCase):
+    """REGRESSION: with no cached copy and no baked-in file, the final
+    "not available" message used to say "No internet access detected"
+    unconditionally - including when network_allowed=False (e.g. server
+    startup, which never checks reachability at all by design). A real
+    user on a machine WITH internet access saw this exact message at
+    startup and reasonably assumed something was broken. The message
+    must now distinguish "we checked and it failed" from "we didn't
+    check"."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_network_allowed_false_does_not_say_no_internet(self):
+        messages = []
+        yara_analyzer.setup_yara_rules(
+            self.tmpdir, on_progress=messages.append, network_allowed=False)
+        self.assertFalse(any('no internet' in m.lower() for m in messages), messages)
+        self.assertIn('WARNING! No YARA rules found', messages)
+
+    def test_network_allowed_true_and_unreachable_still_says_no_internet(self):
+        messages = []
+        with unittest.mock.patch('yara_analyzer.is_host_reachable', return_value=False):
+            yara_analyzer.setup_yara_rules(
+                self.tmpdir, on_progress=messages.append, network_allowed=True)
+        self.assertTrue(any('no internet' in m.lower() for m in messages), messages)
 
 
 if __name__ == '__main__':
