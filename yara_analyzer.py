@@ -109,11 +109,9 @@ def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, for
 
     # Baked-in rules (Docker image)
     if os.path.isfile(BAKED_IN_YARA_FILE):
-        on_progress('Copying baked-in YARA Forge rules...')
         os.makedirs(os.path.dirname(rules_file), exist_ok=True)
         try:
             shutil.copy2(BAKED_IN_YARA_FILE, rules_file)
-            on_progress('Baked-in YARA Forge rules ready')
             return rules_file
         except OSError as e:
             on_progress(f'Warning: could not copy baked-in rules: {e}')

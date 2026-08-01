@@ -849,6 +849,7 @@
         const FOLDER_OPEN_ICON_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="2 13 6 9 10 13"></polyline></svg>';
         const DOWN_ARROW_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>';
         const CHECKMARK_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        const X_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
         const LIGHTBULB_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-7 7c0 2.5 1.5 4.5 3 6h8c1.5-1.5 3-3.5 3-6a7 7 0 0 0-7-7z"/></svg>';
         const SEARCH_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
         const CALENDAR_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>';
@@ -878,24 +879,27 @@
                         <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Packet Capture</strong></td>
                         <td style="padding: 8px 12px;">.pcap, .pcapng, .cap, .trace</td>
                         <td style="padding: 8px 12px;">Suricata</td>
-                        <td style="padding: 8px 12px;">Emerging Threats Open</td>
+                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Emerging Threats Open</a></td>
                     </tr>
                     <tr style="border-bottom: 1px solid var(--bg-tertiary);">
                         <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Logs</strong></td>
                         <td style="padding: 8px 12px;">.evtx, .json, .jsonl, .csv, .xml, .log</td>
                         <td style="padding: 8px 12px;">Zircolite</td>
-                        <td style="padding: 8px 12px;">SigmaHQ</td>
+                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">SigmaHQ</a></td>
                     </tr>
                     <tr>
                         <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Binary / Other</strong></td>
                         <td style="padding: 8px 12px;">.exe, .dll, .elf, .pdf, etc.</td>
                         <td style="padding: 8px 12px;">YARA</td>
-                        <td style="padding: 8px 12px;">YARA Forge</td>
+                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">YARA Forge</a></td>
                     </tr>
                 </tbody>
             </table>
             <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 8px; margin-bottom: 0;">
                 Any of the above file types can be uploaded inside a .zip archive to automatically extract and analyze the first supported file found.
+            </p>
+            <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Want more fun? Try one of our fun <a href="#" onclick="event.preventDefault(); showThemesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">themes</a>!
             </p>
         `; }
         const WELCOME_FEATURES_HTML = `
@@ -1830,7 +1834,7 @@
 
             const helpModal = document.getElementById('helpModal');
             if (isWelcome) {
-                modalTitle.textContent = 'Welcome to SO-CRATES!';
+                modalTitle.innerHTML = 'Welcome to <a href="#" onclick="event.preventDefault(); showAboutModal();" style="color: var(--accent); text-decoration: underline;">SO-CRATES</a>!';
                 modalBody.innerHTML = getWelcomeHelpContent();
                 checkboxContainer.style.display = 'flex';
                 checkbox.checked = safeStorageGet(localStorage, 'socrates_hideHelp') !== 'true';
@@ -2319,6 +2323,26 @@
 
         let rulesPollInterval = null;
         let rulesPrevRunning = { suricata: false, yara: false, sigma: false };
+        // Client-side only (the server doesn't track a start timestamp) -
+        // set the moment a ruleset is first observed running (either just
+        // triggered, or already in flight when the modal is (re)opened) and
+        // cleared once it's no longer running. Good enough for an
+        // approximate elapsed-time display; reopening mid-update just
+        // starts the count from the reopen, not the true start.
+        let ruleUpdateStartTimes = { suricata: null, yara: null, sigma: null };
+        // Log box is collapsed by default (during and after an update) -
+        // "View Log" reveals it on demand rather than always showing the
+        // raw streaming output, which read as noisy for a plain progress
+        // indicator. Persists across poll ticks until explicitly toggled.
+        let ruleLogExpanded = { suricata: false, yara: false, sigma: false };
+        // 'success' | 'error' | null - set only on an observed running->done
+        // transition (same signal the completion toast uses), never from the
+        // server's default idle state ({running: false, done: true, error:
+        // null} even before anything has ever been triggered) - otherwise
+        // every ruleset would show a false checkmark on first load.
+        let ruleLastResult = { suricata: null, yara: null, sigma: null };
+        let lastRulesInfo = null;
+        let lastRulesStatus = null;
 
         function formatRuleCount(count) {
             return (count === null || count === undefined) ? 'no rules found' : count.toLocaleString() + ' rules';
@@ -2350,22 +2374,51 @@
             suricata: { label: 'Emerging Threats Open', url: 'https://rules.emergingthreats.net/' },
         };
 
-        function renderRuleSection(name, label, countText, statusEntry) {
+        function formatElapsed(seconds) {
+            if (seconds < 60) return `${seconds}s`;
+            return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+        }
+
+        function renderRuleSection(name, label, countText, statusEntry, isLast) {
             const logText = statusEntry.lines.join('\n');
             const source = RULESET_SOURCES[name];
+            const expanded = ruleLogExpanded[name];
+            const startTime = ruleUpdateStartTimes[name];
+            const lastResult = ruleLastResult[name];
+            const resultIcon = !statusEntry.running && lastResult
+                ? `<span style="color: ${lastResult === 'error' ? 'var(--badge-danger-text)' : 'var(--badge-success-text)'};" title="${lastResult === 'error' ? 'Last update failed' : 'Last update succeeded'}">${lastResult === 'error' ? X_ICON_SVG : CHECKMARK_ICON_SVG}</span>`
+                : '';
+            const progressLine = statusEntry.running
+                ? `<div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
+                       <span style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center;"><span class="rule-spinner"></span>Updating… ${startTime ? formatElapsed(Math.max(0, Math.round((Date.now() - startTime) / 1000))) : ''}</span>
+                       ${logText ? `<button onclick="toggleRuleLog('${name}')" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">${expanded ? 'Hide Log' : 'View Log'}</button>` : ''}
+                   </div>`
+                : (logText ? `<div style="margin-top: 8px;"><button onclick="toggleRuleLog('${name}')" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">${expanded ? 'Hide Log' : 'View Log'}</button></div>` : '');
+            const sectionDivider = isLast ? '' : 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--bg-hover);';
             return `
-                <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--bg-hover);">
+                <div style="${sectionDivider}">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 10px;">
                         <div>
                             <strong style="color: var(--text-bright);">${label}</strong>
                             <a href="${source.url}" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.8rem; margin-left: 6px;">(${source.label})</a>
                             <div style="color: var(--text-muted); font-size: 0.9rem;">${countText}</div>
                         </div>
-                        <button onclick="triggerRulesetUpdate('${name}')" ${statusEntry.running ? 'disabled' : ''} style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">${statusEntry.running ? 'Updating…' : 'Update'}</button>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            ${resultIcon}
+                            <button onclick="triggerRulesetUpdate('${name}')" ${statusEntry.running ? 'disabled' : ''} style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">${statusEntry.running ? 'Updating…' : 'Update'}</button>
+                        </div>
                     </div>
-                    ${logText ? `<div class="rule-update-log" data-ruleset="${name}">${escapeHtml(logText)}</div>` : ''}
+                    ${progressLine}
+                    ${expanded && logText ? `<div class="rule-update-log" data-ruleset="${name}">${escapeHtml(logText)}</div>` : ''}
                 </div>
             `;
+        }
+
+        function toggleRuleLog(name) {
+            ruleLogExpanded[name] = !ruleLogExpanded[name];
+            if (lastRulesInfo && lastRulesStatus) {
+                renderRulesModalBodyIntoDom(lastRulesInfo, lastRulesStatus);
+            }
         }
 
         function renderRulesModalBody(info, status) {
@@ -2377,10 +2430,33 @@
             // lines) so the two quick summaries are visible without
             // scrolling past the long, variable-length Suricata log first.
             return (
-                renderRuleSection('yara', 'YARA', yaraText, status.yara) +
-                renderRuleSection('sigma', 'Sigma', sigmaText, status.sigma) +
-                renderRuleSection('suricata', 'Suricata', suricataText, status.suricata)
+                renderRuleSection('yara', 'YARA', yaraText, status.yara, false) +
+                renderRuleSection('sigma', 'Sigma', sigmaText, status.sigma, false) +
+                renderRuleSection('suricata', 'Suricata', suricataText, status.suricata, true)
             );
+        }
+
+        // Replacing innerHTML wholesale on every poll tick would otherwise
+        // reset each log box's scroll position to the top every ~2s
+        // indefinitely (polling never stops while the modal is open) -
+        // keyed by ruleset name (not index) since a ruleset's log box only
+        // exists once it has lines, so the set of visible boxes can change
+        // between ticks. Factored out from refreshRulesModal so
+        // toggleRuleLog() can re-render from the last-fetched data
+        // instantly, without waiting on a fresh fetch just to flip a
+        // View/Hide Log button.
+        function renderRulesModalBodyIntoDom(info, status) {
+            const modalBody = document.getElementById('rulesModalBody');
+            const scrollPositions = {};
+            modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
+                scrollPositions[el.dataset.ruleset] = el.scrollTop;
+            });
+            modalBody.innerHTML = renderRulesModalBody(info, status);
+            modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
+                if (el.dataset.ruleset in scrollPositions) {
+                    el.scrollTop = scrollPositions[el.dataset.ruleset];
+                }
+            });
         }
 
         // Polls while the modal is open (stops on close) rather than
@@ -2397,30 +2473,22 @@
                 const info = await infoResp.json();
                 const status = await statusResp.json();
                 ['suricata', 'yara', 'sigma'].forEach(function(name) {
+                    if (status[name].running && !ruleUpdateStartTimes[name]) {
+                        ruleUpdateStartTimes[name] = Date.now();
+                    } else if (!status[name].running) {
+                        ruleUpdateStartTimes[name] = null;
+                    }
                     if (rulesPrevRunning[name] && !status[name].running) {
+                        ruleLastResult[name] = status[name].error ? 'error' : 'success';
                         showToast(status[name].error
                             ? (RULESET_LABELS[name] + ' update error: ' + status[name].error)
                             : (RULESET_LABELS[name] + ' rules updated'));
                     }
                     rulesPrevRunning[name] = status[name].running;
                 });
-                // Replacing innerHTML wholesale on every poll tick would
-                // otherwise reset each log box's scroll position to the
-                // top every ~2s indefinitely (polling never stops while the
-                // modal is open) - keyed by ruleset name (not index) since
-                // a ruleset's log box only exists once it has lines, so the
-                // set of visible boxes can change between ticks.
-                const modalBody = document.getElementById('rulesModalBody');
-                const scrollPositions = {};
-                modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
-                    scrollPositions[el.dataset.ruleset] = el.scrollTop;
-                });
-                modalBody.innerHTML = renderRulesModalBody(info, status);
-                modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
-                    if (el.dataset.ruleset in scrollPositions) {
-                        el.scrollTop = scrollPositions[el.dataset.ruleset];
-                    }
-                });
+                lastRulesInfo = info;
+                lastRulesStatus = status;
+                renderRulesModalBodyIntoDom(info, status);
                 const anyRunning = ['suricata', 'yara', 'sigma'].some(n => status[n].running);
                 document.getElementById('updateAllRulesBtn').disabled = anyRunning;
             } catch (e) {

@@ -77,9 +77,25 @@ yet); the tooltip falls back to the MD5 in that case.
 Suricata/YARA/Sigma rule updates no longer block server startup. A new
 "Rules" entry in the gear menu opens a modal showing each ruleset's current
 rule count and last-updated time, with an independent "Update" button per
-ruleset plus "Update All", streaming live progress. Startup now only does
-the fast local bootstrap (no network) and prints a message pointing users
-at the new Rules modal instead of the old startup rule-check.
+ruleset plus "Update All". Startup now only does the fast local bootstrap
+(no network) and prints a message pointing users at the new Rules modal
+instead of the old startup rule-check.
+
+While an update runs, a small spinner and an elapsed-time counter (`Updating…
+45s`) show it's actively working, instead of the raw update log dumping
+straight into the modal — that log (Suricata's `suricata-update` run in
+particular can be dozens of lines) read as noisy for what's meant to be a
+simple progress indicator. The actual log is still there for anyone who
+wants it: a "View Log" toggle reveals it on demand, both while an update is
+running and after it finishes, and "Hide Log" collapses it again without
+losing the underlying output (still fetched via the same polling `/api/rule-
+update-status` calls either way). Once an update finishes, a green checkmark
+or red X appears next to that ruleset's Update button reflecting whether it
+succeeded — a persistent complement to the existing completion toast, which
+is easy to miss if you're not looking right when it fires. The icon only
+appears after an update has actually run this session (never on first load,
+before anything's been triggered), so it can't be mistaken for a stale
+success/failure from a prior visit.
 
 A manually-installed (non-Docker/Podman) deployment starts with zero
 rules configured for all three engines — unlike the container image,

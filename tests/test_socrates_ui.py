@@ -9480,14 +9480,20 @@ class TestRulesModal(unittest.TestCase):
             await refreshRulesModal();
             var bodyWhileRunning = document.getElementById('rulesModalBody').innerHTML;
             await refreshRulesModal();
+            var bodyAfterDoneCollapsed = document.getElementById('rulesModalBody').textContent;
+            toggleRuleLog('suricata');
             window.__jsdom_result = {
                 showedUpdatingWhileRunning: bodyWhileRunning.indexOf('Updating') >= 0,
-                bodyAfterDone: document.getElementById('rulesModalBody').textContent,
+                hasViewLogWhileCollapsed: bodyAfterDoneCollapsed.indexOf('View Log') >= 0,
+                logHiddenWhileCollapsed: bodyAfterDoneCollapsed.indexOf('Suricata rules updated successfully') === -1,
+                bodyAfterExpand: document.getElementById('rulesModalBody').textContent,
                 toastShown: document.querySelector('.socrates-toast') !== null
             };
         ''')
         self.assertTrue(result['showedUpdatingWhileRunning'], 'the running ruleset must show an in-progress indicator')
-        self.assertIn('Suricata rules updated successfully', result['bodyAfterDone'])
+        self.assertTrue(result['hasViewLogWhileCollapsed'], 'a "View Log" toggle must be offered once done')
+        self.assertTrue(result['logHiddenWhileCollapsed'], 'the raw log must stay collapsed by default, not shown inline')
+        self.assertIn('Suricata rules updated successfully', result['bodyAfterExpand'], 'toggleRuleLog() must reveal the log text on demand')
         self.assertTrue(result['toastShown'], 'a toast must fire once a running->done transition is observed')
 
     def test_refresh_preserves_log_scroll_position_across_re_renders(self):
@@ -9508,6 +9514,7 @@ class TestRulesModal(unittest.TestCase):
                 return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(running_status) + ''') });
             };
             await refreshRulesModal();
+            toggleRuleLog('suricata');
             var logBox = document.querySelector('.rule-update-log[data-ruleset="suricata"]');
             logBox.scrollTop = 42;
             await refreshRulesModal();
