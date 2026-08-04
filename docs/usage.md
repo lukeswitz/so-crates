@@ -25,7 +25,7 @@ After analysis completes, the UI displays different views depending on the file 
 - **Search** — full-text search across all event data using SQLite FTS5 (falls back to `LIKE` if FTS5 is unavailable)
 - **Filtering** — apply filters by clicking aggregation values; filter chips show active filters; filters persist across all tabs and the Sankey diagram
 
-**For log files (`.evtx`, `.json`, `.csv`, `.xml`, `.log`):**
+**For log files (`.evtx`, `.json`, `.jsonl`, `.csv`, `.xml`, `.log`):**
 
 - **Sigma Alerts** — detections matched by Sigma rules, with severity, MITRE techniques, and rule metadata
 - **Log Events** — all parsed log events with dynamic column discovery based on the actual data
@@ -44,3 +44,13 @@ Click any row in a data table to expand it, then:
 - **ASCII Transcript** — view decoded TCP/UDP payload as readable text
 - **Hexdump** — view per-packet hex dumps with collapsible packet headers
 - **Download PCAP** — carve that specific stream into a standalone `.pcap` file
+
+## Gear Menu
+
+The gear icon in the upper-right corner opens a menu with five entries:
+
+- **Help** — the welcome/help modal, including a link to this documentation site
+- **Settings** — upload size, query result limit, and other user-configurable preferences
+- **Themes** — browse and apply themes; see [Themes](themes.md)
+- **Rules** — check the current rule count and last-updated time for Suricata, YARA, and Sigma, and trigger an update for one ruleset (or all three) with live progress. Rule updates are not run automatically at startup — this modal is the only way to refresh them after the initial install
+- **About** — current version, links to this documentation site and the GitHub repo, and an opt-in "Check GitHub for newer releases" setting with a manual "Check Now" button

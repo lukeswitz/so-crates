@@ -16,7 +16,7 @@ import urllib.request
 
 import config
 from db import import_log_events
-from validators import is_host_reachable
+from validators import is_host_reachable, is_file_stale
 
 ZIRCOLITE_RULES_URLS = {
     'windows': 'https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_windows_merged.json',
@@ -60,13 +60,56 @@ def _zircolite_config():
     return None
 
 
-def setup_sigma_rules(data_dir=None):
+def get_sigma_rules_info(data_dir=None):
+    """Return {'windows': {'count': int|None, 'updated': epoch|None},
+    'linux': {...}} - each Sigma ruleset file is a plain JSON array of rule
+    objects, so len(json.load(f)) gives the count directly (verified
+    against the real files). Never raises - None fields per-ruleset if that
+    file doesn't exist or fails to parse."""
+    if data_dir is None:
+        data_dir = os.path.expanduser('~/socrates-data')
+    rules_dir = os.path.join(data_dir, config.SIGMA_RULES_SUBDIR)
+    result = {}
+    for ruleset_name in ZIRCOLITE_RULES_URLS:
+        rules_file = os.path.join(rules_dir, f'{ruleset_name}.json')
+        if not os.path.isfile(rules_file):
+            result[ruleset_name] = {'count': None, 'updated': None}
+            continue
+        try:
+            with open(rules_file, 'r', errors='ignore') as f:
+                data = json.load(f)
+            count = len(data) if isinstance(data, list) else None
+            result[ruleset_name] = {'count': count, 'updated': os.path.getmtime(rules_file)}
+        except (OSError, json.JSONDecodeError):
+            result[ruleset_name] = {'count': None, 'updated': None}
+    return result
+
+
+def setup_sigma_rules(data_dir=None, on_progress=print, network_allowed=True, force=False):
     """Ensure Sigma (Zircolite JSON) rules are available.
 
     Priority:
-    1. Cached rules in ~/socrates-data/sigma-rules/
+    1. Cached rules in ~/socrates-data/sigma-rules/ -- each ruleset
+       refreshed in place if older than config.RULES_MAX_AGE_HOURS and
+       internet is reachable; falls back to the stale copy on any refresh
+       failure rather than leaving rules unavailable.
     2. Baked-in rules in /usr/share/sigma-rules (Docker)
     3. Download from Zircolite-Rules-v2 if internet is available
+
+    on_progress: callable receiving one progress-message string at a time
+    (defaults to print - callers that want to capture/stream progress
+    instead of just logging to stdout pass their own).
+
+    network_allowed: when False, skips reachability checks and any
+    download entirely, using only what's already cached/baked-in (used at
+    server startup so it never blocks on the network; callers that want
+    on-demand refresh pass True, the default).
+
+    force: when True, checks for an update even if the cached copy isn't
+    stale yet - used by the on-demand "check for rule updates" action, so
+    it actually checks rather than just reporting the cached copy as fine
+    because the 24h cache window hasn't expired. Has no effect if there's
+    no cached copy to begin with or if network_allowed is False.
 
     Returns dict mapping 'windows'/'linux' to file path, or None for each.
     """
@@ -81,6 +124,21 @@ def setup_sigma_rules(data_dir=None):
 
         # Already downloaded/cached
         if os.path.isfile(rules_file):
+            stale = is_file_stale(rules_file, config.RULES_MAX_AGE_HOURS)
+            if force or stale:
+                if network_allowed and is_host_reachable('github.com', 443, timeout=5):
+                    on_progress(f'Checking Sigma rules ({ruleset_name}) for updates...')
+                    try:
+                        _download_rule_file(url, rules_file)
+                        on_progress(f'Sigma rules ({ruleset_name}) refreshed successfully')
+                    except (OSError, urllib.error.URLError) as e:
+                        on_progress(f'Warning: could not refresh Sigma rules ({ruleset_name}), using cached copy: {e}')
+                elif network_allowed:
+                    on_progress(f'No internet access detected — using cached Sigma rules ({ruleset_name})')
+                else:
+                    on_progress(f'Using cached Sigma rules ({ruleset_name})')
+            elif network_allowed:
+                on_progress(f'Sigma rules ({ruleset_name}) already present — using cached rules')
             result[ruleset_name] = rules_file
             continue
 
@@ -92,29 +150,54 @@ def setup_sigma_rules(data_dir=None):
                 result[ruleset_name] = rules_file
                 continue
             except OSError as e:
-                print(f'Warning: could not copy baked-in Sigma rules: {e}')
+                on_progress(f'Warning: could not copy baked-in Sigma rules: {e}')
 
         # Try to download
-        if is_host_reachable('github.com', 443, timeout=5):
+        if network_allowed and is_host_reachable('github.com', 443, timeout=5):
             try:
                 _download_rule_file(url, rules_file)
                 result[ruleset_name] = rules_file
                 continue
             except (OSError, urllib.error.URLError) as e:
-                print(f'Warning: could not download Sigma rules ({ruleset_name}): {e}')
+                on_progress(f'Warning: could not download Sigma rules ({ruleset_name}): {e}')
+        elif network_allowed:
+            on_progress(f'No internet access detected — Sigma rules ({ruleset_name}) not available')
         else:
-            print('No internet access detected — Sigma rules not available')
+            on_progress(f'WARNING! No Sigma rules ({ruleset_name}) found')
 
     return result
 
 
 def _download_rule_file(url, dest_file):
-    """Download a single rule file from URL to dest_file."""
+    """Download a single rule file from URL to dest_file.
+
+    Writes to a temp file and atomically renames into place, so a refresh
+    that overwrites an already-good cached copy (see setup_sigma_rules)
+    never leaves a truncated/partial file behind if the download fails
+    partway through - the prior cached copy stays intact until the new
+    one is fully written.
+    """
     os.makedirs(os.path.dirname(dest_file), exist_ok=True)
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=config.RULES_DOWNLOAD_TIMEOUT) as resp:
-        with open(dest_file, 'wb') as f:
-            f.write(resp.read())
+    tmp_dest = dest_file + '.new'
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=config.RULES_DOWNLOAD_TIMEOUT) as resp:
+            body = resp.read()
+        try:
+            json.loads(body)
+        except json.JSONDecodeError as e:
+            # A transient bad response (rate-limit/outage page, truncated-
+            # but-200 body) must not silently replace a good cached
+            # ruleset - raised as OSError so it lands in the same
+            # fall-back-to-cached-copy handling callers already have for
+            # download failures, rather than needing a new except clause.
+            raise OSError(f'downloaded rules file is not valid JSON: {e}') from e
+        with open(tmp_dest, 'wb') as f:
+            f.write(body)
+        os.replace(tmp_dest, dest_file)
+    finally:
+        if os.path.exists(tmp_dest):
+            os.unlink(tmp_dest)
 
 
 def _detect_log_type(log_path):
@@ -231,9 +314,20 @@ def run_zircolite(log_path, rules_file, output_json, output_db=None):
     except subprocess.TimeoutExpired:
         print(f'Zircolite timed out after {config.SIGMA_RUN_TIMEOUT}s')
         return False, None
-    except (subprocess.CalledProcessError, OSError) as e:
+    except OSError as e:
         print(f'Zircolite execution error: {e}')
         return False, None
+
+
+def _safe_int_port(value):
+    """A single malformed/non-numeric SourcePort or DestinationPort value
+    anywhere in a Zircolite import must not abort the entire batch - fail
+    closed to 0 (matching the existing "falsy -> 0" default) for that one
+    field instead of raising ValueError out of the whole import loop."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def import_zircolite_logs(zircolite_db_path, events_db_path):
@@ -285,9 +379,9 @@ def import_zircolite_logs(zircolite_db_path, events_db_path):
                 'event_type': 'log',
                 'timestamp': timestamp,
                 'src_ip': src_ip,
-                'src_port': int(src_port) if src_port else 0,
+                'src_port': _safe_int_port(src_port),
                 'dest_ip': dest_ip,
-                'dest_port': int(dest_port) if dest_port else 0,
+                'dest_port': _safe_int_port(dest_port),
                 'protocol': protocol,
                 'app_proto': app_proto,
                 'json_data': clean_dict,

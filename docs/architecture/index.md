@@ -33,6 +33,7 @@ A stdlib-only Python HTTP server (`http.server.SimpleHTTPRequestHandler`). Handl
 | `sigma_analyzer.py` | Zircolite/Sigma orchestration: log type detection, running Zircolite, parsing and importing results into SQLite |
 | `file_analyzer.py` | Lightweight binary file metadata: hashes, Shannon entropy, extracted strings; delegates to `exif_analyzer.py` |
 | `exif_analyzer.py` | EXIF/media metadata extraction via `exiftool` subprocess |
+| `ohmydebn_colors.py` | Derives a full SO-CRATES theme from an OhMyDebn/Aether color palette (`colors.toml` or `alacritty.toml`), for the theme-sync feature |
 | `config.py` | Centralized application constants: size limits, timeouts, thresholds |
 
 ### Request Flow

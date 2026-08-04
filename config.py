@@ -42,11 +42,20 @@ SIGMA_RUN_TIMEOUT = 300                    # 5 minutes max for Zircolite log ana
 ZIRCOLITE_VERSION = '3.7.1'
 SIGMA_RULES_SUBDIR = 'sigma-rules'
 
+# Rules freshness
+# YARA Forge ships weekly and Zircolite-Rules-v2 ships daily, so this is a
+# deliberately conservative shared ceiling rather than matching either
+# cadence exactly - it just bounds how far a cached copy can drift before
+# the next server startup tries to refresh it.
+RULES_MAX_AGE_HOURS = 24
+
 # Uploads
 UPLOAD_TMP_SUBDIR = 'upload-tmp'
 
 # Search / analysis limits
 MAX_SEARCH_TERM_LENGTH = 200               # characters
+MAX_DISPLAY_NAME_LENGTH = 255               # characters - user-renamed analysis display name
+MAX_NOTES_LENGTH = 10000                    # characters - user-entered analysis notes
 HASH_CHUNK_SIZE = 65536                    # bytes for incremental hashing
 MAX_STRINGS_READ_SIZE = 2 * 1024 * 1024    # 2 MB cap for string extraction
 MAX_ENTROPY_READ_SIZE = 10 * 1024 * 1024   # 10 MB cap for entropy calculation

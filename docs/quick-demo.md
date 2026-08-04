@@ -2,7 +2,7 @@
 
 The fastest way to try SO-CRATES is with our online interactive demo:
 
-[https://securityonion.net/socrates-demo](https://securityonion.net/socrates-demo)
+[https://so-crates.org/demo](https://so-crates.org/demo)
 
 Please note the following:
 

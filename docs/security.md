@@ -9,3 +9,5 @@
 - Upload size ceiling (5,000 MB hard max, user-adjustable up to that from a 1,000 MB default) and an upfront disk-space check before accepting an upload
 - Generic error messages (no internal details leaked)
 - Content-Security-Policy header (`default-src 'self'`, restricting scripts/styles/images/connections/forms to the app's own origin) on every response — `'unsafe-inline'` is allowed for scripts and styles, a deliberate tradeoff for the app's inline-`onclick`/inline-`style` UI architecture
+- The Docker/Podman image runs as a non-root user (`USER 1000:1000`), not root
+- Startup makes zero network calls of any kind (rule setup at boot only uses baked-in rules or whatever's already cached on disk) — it can never hang or block on a slow or unreachable rule mirror; refreshing rules over the network is an explicit, on-demand action from the Rules modal (gear menu → Rules) instead

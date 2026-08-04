@@ -19,6 +19,19 @@
             return escapeHtml(jsEscaped);
         }
 
+        // Shared by loadAnalysis() (the analysis header) and showWelcome()
+        // (the Previous Analyses list) so both render a sample's own event
+        // date range identically. Returns '' if neither bound is known
+        // (e.g. an analysis still mid-processing, with no events.db yet).
+        function formatDateRange(dateRange) {
+            const min = dateRange && dateRange.min;
+            const max = dateRange && dateRange.max;
+            if (!min && !max) return '';
+            return min && min === max
+                ? min.slice(0, 19)
+                : `${min?.slice(0, 19) || ''} to ${max?.slice(0, 19) || ''}`;
+        }
+
         function safeStorageGet(storage, key) {
             try { return storage.getItem(key); } catch (e) { return null; }
         }
@@ -63,15 +76,19 @@
             sguil: { label: 'Sguil', group: 'fun' },
             hacker: { label: 'Hacker', group: 'fun' },
             cga: { label: 'CGA', group: 'fun' },
-            c64: { label: 'C64', group: 'fun' },
+            'breadbin-blue': { label: 'Breadbin Blue', group: 'fun' },
             vaporwave: { label: 'Vaporwave', group: 'fun' },
+            'digital-frontier': { label: 'Digital Frontier', group: 'fun' },
+            'retro-handheld': { label: 'Retro Handheld', group: 'fun' },
             'matte-black': { label: 'Matte Black', group: 'dark' },
             'tokyo-night': { label: 'Tokyo Night', group: 'dark' },
             'retro-82': { label: 'Retro 82', group: 'dark' },
             'ethereal': { label: 'Ethereal', group: 'dark' },
             'lumon': { label: 'Lumon', group: 'dark' },
             'catppuccin': { label: 'Catppuccin', group: 'dark' },
+            'ohmydebn': { label: 'OhMyDebn', group: 'dark' },
             'catppuccin-latte': { label: 'Catppuccin Latte', group: 'light' },
+            'flexoki-light': { label: 'Flexoki Light', group: 'light' },
             'everforest': { label: 'Everforest', group: 'dark' },
             'gruvbox': { label: 'Gruvbox', group: 'dark' },
             'hackerman': { label: 'Hackerman', group: 'dark' },
@@ -83,12 +100,33 @@
             'rose-pine': { label: 'Rose Pine', group: 'light' },
             'vantablack': { label: 'Vantablack', group: 'dark' },
             'white': { label: 'White', group: 'light' },
+            'luna-blue': { label: 'Luna Blue', group: 'fun' },
+            'amber': { label: 'Amber CRT', group: 'fun' },
+            'dos-blue': { label: 'DOS Blue', group: 'fun' },
+        };
+
+        // Mirrors the keydown easter-egg checks below (kept separate rather
+        // than driving both from one loop, since the keydown handler is
+        // already tested against its literal source text) - used only to
+        // display each Fun theme's code while hovering it in the themes
+        // modal, not to detect the codes themselves.
+        const THEME_CHEAT_CODES = {
+            hacker: '31337',
+            sguil: 'sguil',
+            cga: 'cga',
+            'breadbin-blue': 'bread',
+            vaporwave: 'vapor',
+            'luna-blue': 'luna',
+            amber: 'amber',
+            'dos-blue': 'dos',
+            'digital-frontier': 'digit',
+            'retro-handheld': 'retro',
         };
 
         const THEME_GROUP_LABELS = { dark: 'Dark Themes', fun: 'Fun Themes', light: 'Light Themes' };
         const THEME_GROUP_ORDER = ['dark', 'light', 'fun'];
 
-        // Menu/hotkey cycle order: group by section (Dark, Fun, Light),
+        // Menu/hotkey cycle order: group by section (Dark, Light, Fun),
         // alphabetical by label within each section.
         const THEME_MENU_ORDER = THEME_GROUP_ORDER.flatMap(group =>
             Object.keys(THEMES)
@@ -102,10 +140,34 @@
 
         let menuBaseTheme = null;
 
+        // data-theme marker for a theme synthesized at runtime from an
+        // OhMyDebn/Aether palette (see applyCustomTheme()) rather than one
+        // of THEMES's hand-built CSS blocks. Not itself a THEMES key - never
+        // manually selectable, only ever reached via OhMyDebn sync.
+        const OHMYDEBN_CUSTOM_THEME = 'ohmydebn-custom';
+
+        // Full set of CSS custom properties a synthesized theme sets inline
+        // via applyCustomTheme() - kept in one place so setTheme() can clear
+        // them all when switching back to a real, CSS-block-backed theme.
+        const CUSTOM_THEME_CSS_VARS = [
+            '--accent', '--help-icon-color', '--accent-hover',
+            '--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-hover', '--bg-hover-light',
+            '--border-color', '--bg-drop-active', '--badge-bg-neutral',
+            '--text-primary', '--text-bright', '--text-muted',
+            '--tag-gray-text', '--tag-red-text', '--badge-danger-text',
+            '--tag-green-text', '--badge-success-text', '--badge-warning-text',
+            '--tag-blue-text', '--tag-purple-text', '--tag-orange-text',
+            '--danger-bg', '--modal-backdrop',
+        ];
+
         function setTheme(themeName) {
             const valid = Object.prototype.hasOwnProperty.call(THEMES, themeName);
             if (!valid) return;
             const html = document.documentElement;
+            // Clear any inline properties left over from a previously
+            // synthesized OhMyDebn custom theme, so they don't linger on
+            // top of this real theme's CSS block.
+            CUSTOM_THEME_CSS_VARS.forEach(function(name) { html.style.removeProperty(name); });
             if (themeName === 'dark') {
                 html.removeAttribute('data-theme');
             } else {
@@ -115,26 +177,133 @@
             updateThemeMenu();
             updateCodeRain();
             updateFavicon();
-            // If the menu is open, treat this as the new baseline so a later
-            // close/revert does not undo the change.
-            const dropdown = document.getElementById('appHeaderMenuDropdown');
-            if (dropdown && dropdown.classList.contains('active')) {
+            // If the themes modal is open, treat this as the new baseline so
+            // a later close/revert does not undo the change, and keep the
+            // preview iframe in sync - otherwise changing the theme some
+            // other way while the modal is open (the 't' hotkey, a cheat
+            // code) would leave the preview showing a stale theme while the
+            // real page and the grid's checkmark have already moved on.
+            const themesModal = document.getElementById('themesModal');
+            if (themesModal && themesModal.classList.contains('active')) {
                 menuBaseTheme = themeName;
+                previewTheme(themeName);
             }
         }
 
+        // Applies a theme synthesized server-side from an OhMyDebn/Aether
+        // palette (see /api/theme's customColors, derived by
+        // ohmydebn_colors.py) for a theme THEMES has no CSS block for.
+        // Deliberately does not persist to localStorage['socrates-theme']:
+        // the inline properties this sets only exist in this page's live
+        // DOM, so restoring the marker on next load with no colors behind
+        // it yet (before the sync poll's first tick resolves) would be
+        // worse than the brief default-theme flash of just not persisting
+        // it at all - only ever reachable via sync anyway, never manually.
+        function applyCustomTheme(colors) {
+            const html = document.documentElement;
+            html.setAttribute('data-theme', OHMYDEBN_CUSTOM_THEME);
+            Object.keys(colors).forEach(function(name) {
+                html.style.setProperty(name, colors[name]);
+            });
+            updateThemeMenu();
+            updateCodeRain();
+            updateFavicon();
+        }
+
+        // Real app markup/classes (.app-header, .stats-grid, .stat-card)
+        // reusing the real stylesheet, rendered in an isolated iframe
+        // document so previewing a theme never touches the real page's
+        // document.documentElement. Loaded once via srcdoc (relative URLs
+        // in srcdoc resolve against the parent document's URL, so
+        // static/socrates.css resolves the same way it does for the real
+        // page) and then just has its data-theme attribute toggled per
+        // hover - cheap, and avoids booting a second full copy of the app
+        // (which loading the real socrates.html in an iframe would mean:
+        // re-running init(), restarting the OhMyDebn theme-sync poll, etc.
+        // just for a hover preview).
+        const THEME_PREVIEW_SRCDOC = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="static/socrates.css">
+<style>
+  html, body { overflow: hidden; }
+  .app-header { position: static; border-bottom: none; }
+  .preview-container { padding: 12px 14px; }
+  .preview-stats-grid { grid-template-columns: repeat(3, 1fr); margin-bottom: 0; }
+</style>
+</head>
+<body>
+  <div class="app-header">
+    <div class="app-header-left">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <span class="app-logo-text" style="color: var(--text-bright); font-weight: 700;">SO-CRATES</span>
+      <span class="app-header-filename">sample.pcap</span>
+    </div>
+  </div>
+  <div class="preview-container">
+    <div class="stats-grid preview-stats-grid">
+      <div class="stat-card tab-active">
+        <div class="stat-number">128</div>
+        <div class="stat-label">Alerts</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">4,502</div>
+        <div class="stat-label">Flows</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">37</div>
+        <div class="stat-label">DNS</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+        let themePreviewFrameReady = false;
+
+        // Only ever touches the isolated preview iframe's own document,
+        // never the real page's document.documentElement. Hovering across a
+        // packed grid of ~26 tiles with no debounce would otherwise mean a
+        // full-page, high-contrast recolor on every mouseenter - exactly
+        // the large-area rapid-flash pattern WCAG 2.3.1 (Three Flashes or
+        // Below Threshold) exists to prevent. Scoping the change to this
+        // small, separate document keeps it well under that "large area"
+        // threshold regardless of how fast the cursor moves. commitTheme()
+        // (click) is the only path that still changes the real theme.
         function previewTheme(themeName) {
             const valid = Object.prototype.hasOwnProperty.call(THEMES, themeName);
             if (!valid) return;
-            const html = document.documentElement;
-            if (themeName === 'dark') {
-                html.removeAttribute('data-theme');
-            } else {
-                html.setAttribute('data-theme', themeName);
+            const frame = document.getElementById('themePreviewFrame');
+            const frameDoc = frame && frame.contentDocument;
+            if (frameDoc && frameDoc.documentElement) {
+                frameDoc.documentElement.setAttribute('data-theme', themeName);
             }
-            updateCodeRain();
-            updateFavicon();
-            updateThemeMenu();
+            updateThemeCheatCodeHint(themeName);
+        }
+
+        // "Previewing <name>" always shows, confirming what the preview
+        // panel currently displays (hover target, or the resting/baseline
+        // theme once nothing is hovered). The trailing "- Cheat code: X"
+        // part only applies to Fun themes, so its own space is reserved via
+        // visibility (not display) rather than the whole line, so the
+        // modal doesn't jump as that part appears/disappears while hovering
+        // across Fun vs. other themes.
+        function updateThemeCheatCodeHint(themeName) {
+            const label = document.getElementById('themePreviewingLabel');
+            const codePart = document.getElementById('themeCheatCodePart');
+            if (!label || !codePart) return;
+            label.textContent = THEMES[themeName].label;
+            const code = THEME_CHEAT_CODES[themeName];
+            if (code) {
+                codePart.querySelector('code').textContent = code;
+                codePart.style.visibility = 'visible';
+            } else {
+                codePart.style.visibility = 'hidden';
+            }
         }
 
         function revertTheme() {
@@ -143,9 +312,96 @@
             }
         }
 
+        // Applies the theme for real (unlike previewTheme(), which only
+        // touches the isolated preview iframe) but deliberately does not
+        // close the themes modal - lets someone click through several
+        // themes in a row, actually seeing the real app repaint each time,
+        // without reopening the picker. Each click is still a single,
+        // deliberate user-initiated action (not a rapid/incidental trigger
+        // like hover), so this doesn't reintroduce the flash-risk pattern
+        // previewTheme() was built to avoid. Escape/the close button/
+        // backdrop click remain the ways to actually close the modal.
         function commitTheme(themeName) {
             setTheme(themeName);
-            closeMenu();
+        }
+
+        // Polls /api/theme (populated from OHMYDEBN_THEME_DIR server-side,
+        // e.g. when launched via ohmydebn-socrates-run) and, if the user
+        // has opted in, applies
+        // whatever theme OhMyDebn last switched to. Off by default so a
+        // background desktop-theme change never repaints an open analysis
+        // session without the user asking for it. The server only loosely
+        // validates the theme name, so setTheme() -- which rejects anything
+        // not in THEMES -- remains the real gate for that path; customColors
+        // (see applyCustomTheme()) is validated server-side instead.
+        let themeSyncInterval = null;
+
+        // Track what was last actually applied via sync, independently of
+        // each other and of the DOM's data-theme attribute. A synthesized
+        // custom theme always stamps the same OHMYDEBN_CUSTOM_THEME marker
+        // regardless of which palette is behind it, so comparing against
+        // getCurrentTheme() can't tell "same colors, don't reapply" from
+        // "different colors, need reapply" - only a fingerprint of the
+        // colors themselves can. The two files driving these (theme name
+        // vs. colors.toml) are independent and not guaranteed to change in
+        // lockstep, so the customColors branch below is checked on its own
+        // and never gated on data.theme being present/valid.
+        let lastSyncedThemeName = null;
+        let lastSyncedColorsFingerprint = null;
+
+        async function pollOhmydebnTheme() {
+            if (document.hidden) return;
+            if (safeStorageGet(localStorage, 'socrates_syncThemeWithOS') !== 'true') return;
+            try {
+                const resp = await fetch('/api/theme');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const knownTheme = data.theme && Object.prototype.hasOwnProperty.call(THEMES, data.theme);
+                if (knownTheme) {
+                    if (data.theme !== lastSyncedThemeName) {
+                        setTheme(data.theme);
+                        showToast('Changed SO-CRATES theme to ' + THEMES[data.theme].label + ' to match OhMyDebn');
+                        lastSyncedThemeName = data.theme;
+                        lastSyncedColorsFingerprint = null;
+                    }
+                } else if (data.customColors) {
+                    const fingerprint = JSON.stringify(data.customColors);
+                    if (fingerprint !== lastSyncedColorsFingerprint) {
+                        applyCustomTheme(data.customColors);
+                        showToast(data.theme
+                            ? 'Generated color palette from OhMyDebn theme ' + data.theme
+                            : 'Generated a color palette from OhMyDebn');
+                        lastSyncedColorsFingerprint = fingerprint;
+                        lastSyncedThemeName = null;
+                    }
+                } else if (data.theme && data.theme !== lastSyncedThemeName) {
+                    // A theme name was reported, but it's neither a known
+                    // THEMES key nor backed by a usable palette. Leaving
+                    // sync on would just repeat this same no-op every poll
+                    // with no visible sign anything is wrong, so turn sync
+                    // off and fall back to Midnight instead of silently
+                    // ignoring it forever.
+                    safeStorageSet(localStorage, 'socrates_syncThemeWithOS', 'false');
+                    const syncCheckbox = document.getElementById('syncThemeWithOS');
+                    if (syncCheckbox) syncCheckbox.checked = false;
+                    updateThemePickerVisibility();
+                    setTheme('dark');
+                    showToast('OhMyDebn reported an unknown theme - sync disabled and reverted to Midnight.', {
+                        sticky: true,
+                        actionLabel: 'Open Themes',
+                        onAction: function() { showThemesModal(); }
+                    });
+                    lastSyncedThemeName = data.theme;
+                }
+            } catch (e) {
+                // Ignore -- next poll will retry.
+            }
+        }
+
+        function startThemeSync() {
+            if (themeSyncInterval) return;
+            pollOhmydebnTheme();
+            themeSyncInterval = setInterval(pollOhmydebnTheme, 1000);
         }
 
         function toggleTheme() {
@@ -162,7 +418,7 @@
             // hover previews too (setTheme/previewTheme both call this), so
             // the checkmark always matches what is on screen.
             const current = getCurrentTheme();
-            const items = document.querySelectorAll('.app-header-menu-item[data-theme-option]');
+            const items = document.querySelectorAll('[data-theme-option]');
             items.forEach(function(item) {
                 const isActive = item.getAttribute('data-theme-option') === current;
                 item.classList.toggle('theme-active', isActive);
@@ -177,19 +433,6 @@
         const GEAR_ICON_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
 
         function renderGearMenu() {
-            let themeSections = '';
-            for (const group of THEME_GROUP_ORDER) {
-                themeSections += `<div class="app-header-menu-header">${THEME_GROUP_LABELS[group]}</div>`;
-                for (const key of THEME_MENU_ORDER.filter(k => THEMES[k].group === group)) {
-                    themeSections += `
-                        <button class="app-header-menu-item" data-theme-option="${key}"
-                                onmouseenter="previewTheme('${key}')"
-                                onmouseleave="revertTheme()"
-                                onclick="commitTheme('${key}')">
-                            <span>${THEMES[key].label}</span>
-                        </button>`;
-                }
-            }
             return `
                 <div class="app-header-menu">
                     <button class="app-header-menu-btn" onclick="toggleMenu()" title="Menu" id="appHeaderMenuBtn">
@@ -204,10 +447,38 @@
                             <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></span>
                             <span>Settings</span>
                         </button>
-                        <div class="app-header-menu-sep"></div>
-                        ${themeSections}
+                        <button class="app-header-menu-item" onclick="showThemesModal(); closeMenu();">
+                            <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg></span>
+                            <span>Themes</span>
+                        </button>
+                        <button class="app-header-menu-item" onclick="showRulesModal(); closeMenu();">
+                            <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></span>
+                            <span>Rules</span>
+                        </button>
+                        <button class="app-header-menu-item" onclick="showAboutModal(); closeMenu();">
+                            <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                            <span>About</span>
+                        </button>
                     </div>
                 </div>`;
+        }
+
+        function renderThemesModalGrid() {
+            let html = '';
+            for (const group of THEME_GROUP_ORDER) {
+                html += `<div class="app-header-menu-header">${THEME_GROUP_LABELS[group]}</div><div class="theme-tile-grid">`;
+                for (const key of THEME_MENU_ORDER.filter(k => THEMES[k].group === group)) {
+                    html += `
+                        <button class="theme-tile" data-theme-option="${key}"
+                                onmouseenter="previewTheme('${key}')"
+                                onmouseleave="revertTheme()"
+                                onclick="commitTheme('${key}')">
+                            <span>${THEMES[key].label}</span>
+                        </button>`;
+                }
+                html += `</div>`;
+            }
+            return html;
         }
 
         // Subtle code-rain background for Hacker theme.
@@ -306,6 +577,13 @@
             const theme = getCurrentTheme();
             // Every theme except dark/light has a matching
             // static/favicon-<theme>.svg; dark and light use the plain one.
+            // The synthesized OhMyDebn custom theme has no favicon of its
+            // own (colors vary per palette) - reuse the hand-built
+            // "OhMyDebn" theme's favicon as the closest branding match.
+            if (theme === OHMYDEBN_CUSTOM_THEME) {
+                link.href = 'static/favicon-ohmydebn.svg';
+                return;
+            }
             link.href = (theme === 'dark' || theme === 'light')
                 ? 'static/favicon.svg'
                 : `static/favicon-${theme}.svg`;
@@ -323,22 +601,157 @@
         function toggleMenu() {
             const dropdown = document.getElementById('appHeaderMenuDropdown');
             if (!dropdown) return;
-            const willOpen = !dropdown.classList.contains('active');
             dropdown.classList.toggle('active');
-            if (willOpen) {
-                menuBaseTheme = getCurrentTheme();
-            } else {
-                // Closing without a commit reverts any preview.
-                revertTheme();
-                menuBaseTheme = null;
-            }
         }
 
         function closeMenu() {
             const dropdown = document.getElementById('appHeaderMenuDropdown');
             if (dropdown) dropdown.classList.remove('active');
+        }
+
+        function showThemesModal() {
+            closeOtherMenuModals('themesModal');
+            document.getElementById('themesModalBody').innerHTML = renderThemesModalGrid();
+            updateThemeMenu();
+            // getCurrentTheme() can be the synthesized OHMYDEBN_CUSTOM_THEME
+            // marker (reachable if sync was on, applied a custom palette,
+            // then got turned off - the picker becomes visible again while
+            // that marker is still the applied theme). previewTheme()/
+            // revertTheme() both gate on the theme being a real THEMES key,
+            // so a marker baseline would silently no-op every hover/revert
+            // in this modal - fall back to 'dark' instead.
+            const currentTheme = getCurrentTheme();
+            menuBaseTheme = Object.prototype.hasOwnProperty.call(THEMES, currentTheme) ? currentTheme : 'dark';
+            document.getElementById('syncThemeWithOS').checked = safeStorageGet(localStorage, 'socrates_syncThemeWithOS') === 'true';
+            // Hidden by default - only shown if OHMYDEBN_THEME_DIR is set
+            // server-side AND its theme.name is currently readable, so this never shows a
+            // control that can't do anything (e.g. not launched via
+            // ohmydebn-socrates-run). Never blocks the modal on this check
+            // (mirrors showSettingsModal()'s /api/limits fetch) - defaults
+            // to hidden on any fetch failure too, since "can't confirm it
+            // works" should fail closed, not show a maybe-broken toggle.
+            const syncContainer = document.getElementById('syncThemeWithOSContainer');
+            syncContainer.style.display = 'none';
+            updateThemePickerVisibility();
+            fetch('/api/theme-sync-available').then(r => r.json()).then(data => {
+                syncContainer.style.display = data.available ? 'block' : 'none';
+                updateThemePickerVisibility();
+            }).catch(() => {});
+            const frame = document.getElementById('themePreviewFrame');
+            if (!themePreviewFrameReady) {
+                frame.addEventListener('load', function() {
+                    themePreviewFrameReady = true;
+                    previewTheme(menuBaseTheme);
+                }, { once: true });
+                frame.srcdoc = THEME_PREVIEW_SRCDOC;
+            } else {
+                previewTheme(menuBaseTheme);
+            }
+            document.getElementById('themesModal').classList.add('active');
+        }
+
+        function closeThemesModal() {
+            document.getElementById('themesModal').classList.remove('active');
             revertTheme();
             menuBaseTheme = null;
+        }
+
+        function handleThemesBackdropClick(event) {
+            if (event.target === document.getElementById('themesModal')) {
+                closeThemesModal();
+            }
+        }
+
+        // Applies immediately on toggle, unlike the numeric Settings
+        // fields which need a "Save" click - the themes modal has no save
+        // step for anything else (theme clicks apply instantly too), so a
+        // deferred-until-Save toggle here would be an inconsistent trap
+        // (easy to check the box, forget to save, and have it silently not
+        // take effect).
+        function handleSyncThemeWithOSChange(checkbox) {
+            safeStorageSet(localStorage, 'socrates_syncThemeWithOS', String(checkbox.checked));
+            if (checkbox.checked) {
+                // Re-enabling sync must reassert OhMyDebn's theme even if it
+                // hasn't changed since sync was last on - otherwise a theme
+                // picked manually while sync was off (now possible again
+                // since the picker is visible when sync is disabled) would
+                // stay applied indefinitely, since pollOhmydebnTheme()'s
+                // dedup check would see the same theme/colors as last time
+                // and treat it as "nothing to do."
+                lastSyncedThemeName = null;
+                lastSyncedColorsFingerprint = null;
+                pollOhmydebnTheme();
+            }
+            updateThemePickerVisibility();
+        }
+
+        // While sync is on, OhMyDebn owns the theme - any tile the user
+        // clicks here would just get stomped by the next poll (at most a
+        // second later), so the picker is hidden rather than left clickable
+        // and quietly ineffective. Gated on syncContainer's own visibility
+        // (not just the checkbox) so a stale "checked" value from
+        // localStorage can't hide the picker on a machine where the sync
+        // feature isn't even available server-side.
+        function updateThemePickerVisibility() {
+            const syncContainer = document.getElementById('syncThemeWithOSContainer');
+            const syncAvailable = syncContainer.style.display !== 'none';
+            const enabled = syncAvailable && document.getElementById('syncThemeWithOS').checked;
+            document.getElementById('themePickerControls').style.display = enabled ? 'none' : '';
+            document.getElementById('themeSyncActiveNotice').style.display = enabled ? 'block' : 'none';
+        }
+
+        // Shared by the opt-in automatic check (silent) and the manual
+        // "Check Now" button (which reports the result via toast) - hits
+        // /api/version-check and flips on the footer badge if an update is
+        // available. Returns the parsed {currentVersion, latestVersion,
+        // updateAvailable} on success, or null on any failure (network
+        // error, non-2xx, bad JSON) - the endpoint itself can't distinguish
+        // "checked, no update" from "the check failed", so neither can this.
+        async function _fetchAndApplyVersionCheck() {
+            try {
+                const resp = await fetch('/api/version-check');
+                if (!resp.ok) return null;
+                const data = await resp.json();
+                const badge = document.getElementById('footerUpdateBadge');
+                if (badge && data.updateAvailable) {
+                    badge.style.display = 'inline';
+                }
+                return data;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // Opt-in only (checked before ever fetching, same as
+        // pollOhmydebnTheme()) - unlike the YARA/Sigma/Suricata rule
+        // freshness checks, a stale app version doesn't silently degrade
+        // the correctness of the current analysis, so there's no harm in
+        // requiring explicit consent rather than checking automatically.
+        // One-shot per page load (called once from init()), not polled -
+        // the running app version can't change while the tab is open.
+        async function checkForAppUpdate() {
+            if (safeStorageGet(localStorage, 'socrates_checkForUpdates') !== 'true') return;
+            await _fetchAndApplyVersionCheck();
+        }
+
+        // Manual "Check Now" button in Settings - bypasses the opt-in gate
+        // (an explicit click IS the consent) and, unlike the silent
+        // automatic check, always reports the result via toast so clicking
+        // the button visibly does something even when there's nothing new.
+        async function checkForAppUpdateNow() {
+            const data = await _fetchAndApplyVersionCheck();
+            if (!data) {
+                showToast('Could not check for updates - try again later');
+            } else if (data.updateAvailable) {
+                showToast('Update available: v' + data.latestVersion);
+            } else {
+                showToast("You're on the latest version");
+            }
+        }
+
+        function handleCheckForUpdatesChange(checkbox) {
+            safeStorageSet(localStorage, 'socrates_checkForUpdates', String(checkbox.checked));
+            if (checkbox.checked) checkForAppUpdate();
         }
 
         document.addEventListener('click', function(e) {
@@ -436,12 +849,15 @@
         const FOLDER_OPEN_ICON_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="2 13 6 9 10 13"></polyline></svg>';
         const DOWN_ARROW_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>';
         const CHECKMARK_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        const X_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
         const LIGHTBULB_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-7 7c0 2.5 1.5 4.5 3 6h8c1.5-1.5 3-3.5 3-6a7 7 0 0 0-7-7z"/></svg>';
         const SEARCH_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
         const CALENDAR_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>';
+        const NOTES_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M14 3v4a1 1 0 0 0 1 1h4"></path><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"></path><line x1="9" y1="9" x2="10" y2="9"></line><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>';
+        const NOTES_MAX_LENGTH = 10000;
         function getWelcomeHelpContent() { return `
             <p style="color: var(--text-muted); font-size: 0.95rem;">
-                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is ${getUserMaxUploadSizeMB().toLocaleString()}MB (adjustable in Settings).
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is ${getUserMaxUploadSizeMB().toLocaleString()} MB (adjustable in <a href="#" onclick="event.preventDefault(); showSettingsModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Settings</a>).
             </p>
             <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
                 <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Processing may take a minute or two depending on the size of the file.
@@ -463,24 +879,27 @@
                         <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Packet Capture</strong></td>
                         <td style="padding: 8px 12px;">.pcap, .pcapng, .cap, .trace</td>
                         <td style="padding: 8px 12px;">Suricata</td>
-                        <td style="padding: 8px 12px;">Emerging Threats Open</td>
+                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Emerging Threats Open</a></td>
                     </tr>
                     <tr style="border-bottom: 1px solid var(--bg-tertiary);">
                         <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Logs</strong></td>
                         <td style="padding: 8px 12px;">.evtx, .json, .jsonl, .csv, .xml, .log</td>
                         <td style="padding: 8px 12px;">Zircolite</td>
-                        <td style="padding: 8px 12px;">SigmaHQ</td>
+                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">SigmaHQ</a></td>
                     </tr>
                     <tr>
                         <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Binary / Other</strong></td>
                         <td style="padding: 8px 12px;">.exe, .dll, .elf, .pdf, etc.</td>
                         <td style="padding: 8px 12px;">YARA</td>
-                        <td style="padding: 8px 12px;">YARA Forge</td>
+                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">YARA Forge</a></td>
                     </tr>
                 </tbody>
             </table>
             <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 8px; margin-bottom: 0;">
                 Any of the above file types can be uploaded inside a .zip archive to automatically extract and analyze the first supported file found.
+            </p>
+            <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Want more fun? Try one of our fun <a href="#" onclick="event.preventDefault(); showThemesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">themes</a>!
             </p>
         `; }
         const WELCOME_FEATURES_HTML = `
@@ -1329,6 +1748,8 @@
                     openReanalyzeModal(md5, name);
                 } else if (action === 'delete') {
                     openDeleteAnalysis(md5, name);
+                } else if (action === 'notes') {
+                    openAnalysisNotesFromList(md5);
                 }
             }
         });
@@ -1381,7 +1802,30 @@
             return true;
         }
 
+        // Help/Settings/Themes are all full-viewport overlays sharing the
+        // same .modal z-index, so if one is already open when another is
+        // triggered (e.g. the gear menu is still reachable while the
+        // Themes modal is showing), the newer one can render behind the
+        // older one depending on DOM order rather than on top of it -
+        // opening one visibly does nothing while the other is still
+        // technically .active underneath. Closing any other open menu
+        // modal before showing a new one keeps at most one active at a
+        // time, which sidesteps the stacking ambiguity entirely. Guarded
+        // per-modal (not an unconditional close-everything) because
+        // closeHelpModal() has real side effects (persisting the "show
+        // again" checkbox state) that must only fire if Help was actually
+        // open.
+        function closeOtherMenuModals(exceptId) {
+            const closers = { helpModal: closeHelpModal, settingsModal: closeSettingsModal, themesModal: closeThemesModal, rulesModal: closeRulesModal, aboutModal: closeAboutModal, notesModal: closeNotesModal };
+            Object.keys(closers).forEach(function(id) {
+                if (id === exceptId) return;
+                const modal = document.getElementById(id);
+                if (modal && modal.classList.contains('active')) closers[id]();
+            });
+        }
+
         function showHelpModal() {
+            closeOtherMenuModals('helpModal');
             const isWelcome = document.getElementById('inputBoxes').style.display !== 'none';
             const modalTitle = document.getElementById('helpModalTitle');
             const modalBody = document.getElementById('helpModalBody');
@@ -1390,7 +1834,7 @@
 
             const helpModal = document.getElementById('helpModal');
             if (isWelcome) {
-                modalTitle.textContent = 'Welcome to SO-CRATES!';
+                modalTitle.innerHTML = 'Welcome to <a href="#" onclick="event.preventDefault(); showAboutModal();" style="color: var(--accent); text-decoration: underline;">SO-CRATES</a>!';
                 modalBody.innerHTML = getWelcomeHelpContent();
                 checkboxContainer.style.display = 'flex';
                 checkbox.checked = safeStorageGet(localStorage, 'socrates_hideHelp') !== 'true';
@@ -1435,6 +1879,7 @@
         }
 
         function showSettingsModal() {
+            closeOtherMenuModals('settingsModal');
             const input = document.getElementById('maxQueryLimitInput');
             const hint = document.getElementById('settingsHint');
             const errorEl = document.getElementById('settingsError');
@@ -1469,6 +1914,27 @@
         function handleSettingsBackdropClick(event) {
             if (event.target === document.getElementById('settingsModal')) {
                 closeSettingsModal();
+            }
+        }
+
+        function showAboutModal() {
+            closeOtherMenuModals('aboutModal');
+            document.getElementById('checkForUpdates').checked = safeStorageGet(localStorage, 'socrates_checkForUpdates') === 'true';
+            fetch('/api/version').then(r => r.json()).then(data => {
+                if (data.version) {
+                    document.getElementById('aboutVersion').textContent = data.version;
+                }
+            }).catch(() => {});
+            document.getElementById('aboutModal').classList.add('active');
+        }
+
+        function closeAboutModal() {
+            document.getElementById('aboutModal').classList.remove('active');
+        }
+
+        function handleAboutBackdropClick(event) {
+            if (event.target === document.getElementById('aboutModal')) {
+                closeAboutModal();
             }
         }
 
@@ -1537,6 +2003,7 @@
         
         async function showWelcome() {
             document.title = 'SO-CRATES - Welcome';
+            closeAllModals();
             if (window.location.search.includes('file=') || window.location.search.includes('pcap=')) {
                 history.replaceState({}, '', window.location.pathname);
             }
@@ -1554,13 +2021,36 @@
                 const analyses = await resp.json();
                 previousAnalysisCount = analyses.length;
                 if (analyses.length > 0) {
-                    previousHtml = analyses.map(a => 
-                        `<div class="previous-analysis-row" style="display: flex; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border-color);">
-                            <a href="?file=${escapeHtml(a.md5)}" onclick="event.preventDefault(); loadAnalysis('${escapeJsString(a.md5)}');" style="color: var(--accent); text-decoration: none; flex: 1;">${FOLDER_ICON_SVG}${escapeHtml(a.name)}</a>
+                    previousHtml = analyses.map(a => {
+                        // The MD5 is still reachable via the link's
+                        // href/status-bar URL - showing it in the hover
+                        // tooltip too would be redundant. An analyst is far
+                        // more likely to recognize the sample's own date
+                        // range at a glance than an MD5 fragment, so that's
+                        // the tooltip instead; keeping it out of the row
+                        // itself (rather than an inline span) keeps the row
+                        // uncluttered.
+                        const dateText = formatDateRange(a.date_range);
+                        const rowTitle = dateText || a.md5;
+                        // Bare presence signal (no content preview) - the row
+                        // is already tight with name + date + action buttons,
+                        // so this just answers "does this one have notes?"
+                        // without an analyst having to open it to check. It's
+                        // its own button (not nested in the name/date link)
+                        // so clicking it can jump straight to that analysis's
+                        // Notes modal instead of just the normal overview.
+                        const notesButtonHtml = a.has_notes
+                            ? `<button data-md5="${escapeHtml(a.md5)}" data-action="notes" class="previous-analysis-notes" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="View/edit notes">${NOTES_ICON_SVG}</button>`
+                            : '';
+                        return `<div class="previous-analysis-row" style="display: flex; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border-color);">
+                            <a href="?file=${escapeHtml(a.md5)}" onclick="event.preventDefault(); loadAnalysis('${escapeJsString(a.md5)}');" style="color: var(--accent); text-decoration: none; flex: 1; display: flex; align-items: baseline; gap: 8px; overflow: hidden;" title="${escapeHtml(rowTitle)}">
+                                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${FOLDER_ICON_SVG}${escapeHtml(a.name)}</span>
+                            </a>
+                            ${notesButtonHtml}
                             <button data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="reanalyze" class="previous-analysis-reanalyze" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="Re-analyze">${REFRESH_ICON_SVG}</button>
                             <button class="previous-analysis-delete" data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="delete" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px;" title="Delete">${DELETE_ICON_SVG}</button>
-                        </div>`
-                    ).join('');
+                        </div>`;
+                    }).join('');
                 } else {
                     previousHtml = '<span style="color: var(--bg-hover-light);">No previous analyses available</span>';
                 }
@@ -1628,11 +2118,29 @@
             document.getElementById('pcapUrl').value = lastSampleUrl;
         }
         
+        // Shared by the Escape handler and showWelcome() (leaving the
+        // analysis view entirely should not leave a stale modal floating on
+        // top of it - Notes is the sharpest case since it's tied to the
+        // specific analysis being left, but none of these belong open once
+        // there's no longer an analysis page under them).
+        function closeAllModals() {
+            closeMenu();
+            closeHelpModal();
+            closeThemesModal();
+            closeSettingsModal();
+            closeErrorModal();
+            closeDeleteModal();
+            closeDeleteAllModal();
+            closeReanalyzeModal();
+            closeRulesModal();
+            closeAboutModal();
+            closeNotesModal();
+        }
+
         let keyBuffer = '';
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
-                closeMenu();
-                closeHelpModal();
+                closeAllModals();
             }
             if (e.key === '?' && !e.ctrlKey && !e.altKey && !e.metaKey && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
                 e.preventDefault();
@@ -1643,12 +2151,15 @@
                 toggleTheme();
             }
             // Easter eggs: type "31337" for Hacker theme, "sguil" for Sguil
-            // theme, "cga" for CGA theme, "c64" for C64 theme, or "vapor" for
-            // Vaporwave theme. Checked with endsWith() rather
-            // than === since the buffer holds the last 5 keys typed
-            // session-wide - a code shorter than 5 characters (like "cga")
-            // would otherwise only ever match in the first few keystrokes
-            // after page load, when the buffer hasn't filled up yet.
+            // theme, "cga" for CGA theme, "bread" for Breadbin Blue theme,
+            // "vapor" for Vaporwave theme, "luna" for Luna Blue theme,
+            // "amber" for Amber CRT theme, "dos" for DOS Blue theme, "digit"
+            // for Digital Frontier theme, or "retro" for Retro Handheld
+            // theme. Checked with endsWith() rather than === since the
+            // buffer holds the last 5 keys typed session-wide - a code
+            // shorter than 5 characters (like "cga") would otherwise only
+            // ever match in the first few keystrokes after page load, when
+            // the buffer hasn't filled up yet.
             const tag = e.target.tagName;
             const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable;
             if (!isTyping && e.key.length === 1) {
@@ -1674,10 +2185,10 @@
                     showToast('Switched to CGA theme.');
                     keyBuffer = '';
                 }
-                if (keyBuffer.endsWith('c64')) {
+                if (keyBuffer.endsWith('bread')) {
                     e.preventDefault();
-                    setTheme('c64');
-                    showToast('Switched to C64 theme.');
+                    setTheme('breadbin-blue');
+                    showToast('Switched to Breadbin Blue theme.');
                     keyBuffer = '';
                 }
                 if (keyBuffer.endsWith('vapor')) {
@@ -1686,23 +2197,346 @@
                     showToast('Switched to Vaporwave theme.');
                     keyBuffer = '';
                 }
+                if (keyBuffer.endsWith('luna')) {
+                    e.preventDefault();
+                    setTheme('luna-blue');
+                    showToast('Switched to Luna Blue theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('amber')) {
+                    e.preventDefault();
+                    setTheme('amber');
+                    showToast('Switched to Amber CRT theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('dos')) {
+                    e.preventDefault();
+                    setTheme('dos-blue');
+                    showToast('Switched to DOS Blue theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('digit')) {
+                    e.preventDefault();
+                    setTheme('digital-frontier');
+                    showToast('Switched to Digital Frontier theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('retro')) {
+                    e.preventDefault();
+                    setTheme('retro-handheld');
+                    showToast('Switched to Retro Handheld theme.');
+                    keyBuffer = '';
+                }
             }
         });
 
-        function showToast(message) {
+        // opts.sticky: skip the auto-dismiss timeout entirely - the toast
+        // stays until the user clicks it. For messages that report an
+        // unprompted, important state change (not the routine "Switched to
+        // X theme" toasts), a fixed few-second timeout is a bad fit: the
+        // user may not even be looking at the screen when it fires, and a
+        // longer message needs more time to read than a short one -
+        // rather than guess a duration, just wait for acknowledgement.
+        // opts.actionLabel/opts.onAction: optional inline link shown after
+        // the message; clicking it dismisses the toast and runs onAction.
+        function showToast(message, opts) {
+            opts = opts || {};
             document.querySelectorAll('.socrates-toast').forEach(t => t.remove());
             const toast = document.createElement('div');
             toast.className = 'socrates-toast';
-            toast.textContent = message;
             toast.style.cssText = 'position: fixed; bottom: 20px; right: 20px; background: var(--bg-secondary); color: var(--accent); border: 1px solid var(--accent); padding: 12px 20px; border-radius: 6px; font-family: inherit; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: opacity 0.5s;';
-            document.body.appendChild(toast);
-            setTimeout(function() {
+
+            const text = document.createElement('span');
+            text.textContent = message;
+            toast.appendChild(text);
+
+            function dismiss() {
                 toast.style.opacity = '0';
                 setTimeout(function() { toast.remove(); }, 500);
-            }, 2000);
+            }
+
+            if (opts.actionLabel && opts.onAction) {
+                const link = document.createElement('a');
+                link.href = '#';
+                link.textContent = opts.actionLabel;
+                link.style.cssText = 'margin-left: 12px; color: var(--accent); text-decoration: underline; font-weight: 600;';
+                link.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dismiss();
+                    opts.onAction();
+                };
+                toast.appendChild(link);
+            }
+
+            document.body.appendChild(toast);
+
+            if (opts.sticky) {
+                toast.style.cursor = 'pointer';
+                toast.addEventListener('click', dismiss);
+            } else {
+                setTimeout(dismiss, 2000);
+            }
         }
-        
-        // Single delegated listener for advanced toggle (prevents memory leak from repeated loadAnalysis calls)
+
+        // Only one file from a multi-file ZIP is ever analyzed (the first
+        // PCAP, or the first non-hidden file if there's no PCAP) - the
+        // server reports how many others were dropped so this isn't
+        // silent data loss the user has no way to notice.
+        function notifyIfFilesSkipped(result) {
+            if (result && result.filesSkipped) {
+                const plural = result.filesSkipped === 1 ? 'file was' : 'files were';
+                showToast(`${result.filesSkipped} additional ${plural} in the ZIP and not analyzed`, { sticky: true });
+            }
+        }
+
+        // A manually-installed (non-Docker/Podman) deployment starts with no
+        // rules at all - unlike the container image, which bakes all three
+        // rulesets in and copies them into place before the server ever
+        // accepts a request. Nothing breaks without rules (each analyzer
+        // degrades gracefully), but results are silently emptier than
+        // expected with no indication why - nudge new manual installs at the
+        // Rules modal once, rather than leaving them to discover this only
+        // by noticing an analysis came back oddly empty.
+        async function checkForMissingRules() {
+            try {
+                const resp = await fetch('/api/rules-info');
+                if (!resp.ok) return;
+                const info = await resp.json();
+                const noRules = info.suricata.count === null
+                    && info.yara.count === null
+                    && info.sigma.windows.count === null
+                    && info.sigma.linux.count === null;
+                if (noRules) {
+                    showToast('No rule sets are configured yet — Suricata/YARA/Sigma detections will be empty until you set them up.', {
+                        sticky: true,
+                        actionLabel: 'Open Rules',
+                        onAction: showRulesModal,
+                    });
+                }
+            } catch (e) {
+                // Ignore - not worth surfacing an error over a background nudge
+            }
+        }
+
+        const RULESET_LABELS = { suricata: 'Suricata', yara: 'YARA', sigma: 'Sigma' };
+
+        let rulesPollInterval = null;
+        let rulesPrevRunning = { suricata: false, yara: false, sigma: false };
+        // Client-side only (the server doesn't track a start timestamp) -
+        // set the moment a ruleset is first observed running (either just
+        // triggered, or already in flight when the modal is (re)opened) and
+        // cleared once it's no longer running. Good enough for an
+        // approximate elapsed-time display; reopening mid-update just
+        // starts the count from the reopen, not the true start.
+        let ruleUpdateStartTimes = { suricata: null, yara: null, sigma: null };
+        // Log box is collapsed by default (during and after an update) -
+        // "View Log" reveals it on demand rather than always showing the
+        // raw streaming output, which read as noisy for a plain progress
+        // indicator. Persists across poll ticks until explicitly toggled.
+        let ruleLogExpanded = { suricata: false, yara: false, sigma: false };
+        // 'success' | 'error' | null - set only on an observed running->done
+        // transition (same signal the completion toast uses), never from the
+        // server's default idle state ({running: false, done: true, error:
+        // null} even before anything has ever been triggered) - otherwise
+        // every ruleset would show a false checkmark on first load.
+        let ruleLastResult = { suricata: null, yara: null, sigma: null };
+        let lastRulesInfo = null;
+        let lastRulesStatus = null;
+
+        function formatRuleCount(count) {
+            return (count === null || count === undefined) ? 'no rules found' : count.toLocaleString() + ' rules';
+        }
+
+        function formatRuleDate(epoch) {
+            return epoch ? new Date(epoch * 1000).toLocaleString() : 'never';
+        }
+
+        const RULES_STALE_DAYS = 30;
+
+        function isRulesetStale(epoch) {
+            return !epoch || (Date.now() - epoch * 1000) > RULES_STALE_DAYS * 86400000;
+        }
+
+        // Flags an "updated" date as stale (or missing) so an analyst
+        // notices at a glance without having to do the date math themselves.
+        function formatDateSpan(epoch) {
+            const style = isRulesetStale(epoch) ? ' style="color: var(--badge-warning-text);"' : '';
+            return `<span${style}>${formatRuleDate(epoch)}</span>`;
+        }
+
+        // Canonical source for each ruleset - same projects/links listed in
+        // docs/credits.md - shown in the Rules modal so an analyst knows
+        // what they're pulling in before clicking Update.
+        const RULESET_SOURCES = {
+            yara: { label: 'YARA Forge', url: 'https://github.com/YARAHQ/yara-forge' },
+            sigma: { label: 'SigmaHQ', url: 'https://github.com/SigmaHQ/sigma' },
+            suricata: { label: 'Emerging Threats Open', url: 'https://rules.emergingthreats.net/' },
+        };
+
+        function formatElapsed(seconds) {
+            if (seconds < 60) return `${seconds}s`;
+            return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+        }
+
+        function renderRuleSection(name, label, countText, statusEntry, isLast) {
+            const logText = statusEntry.lines.join('\n');
+            const source = RULESET_SOURCES[name];
+            const expanded = ruleLogExpanded[name];
+            const startTime = ruleUpdateStartTimes[name];
+            const lastResult = ruleLastResult[name];
+            const resultIcon = !statusEntry.running && lastResult
+                ? `<span style="color: ${lastResult === 'error' ? 'var(--badge-danger-text)' : 'var(--badge-success-text)'};" title="${lastResult === 'error' ? 'Last update failed' : 'Last update succeeded'}">${lastResult === 'error' ? X_ICON_SVG : CHECKMARK_ICON_SVG}</span>`
+                : '';
+            const progressLine = statusEntry.running
+                ? `<div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
+                       <span style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center;"><span class="rule-spinner"></span>Updating… ${startTime ? formatElapsed(Math.max(0, Math.round((Date.now() - startTime) / 1000))) : ''}</span>
+                       ${logText ? `<button onclick="toggleRuleLog('${name}')" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">${expanded ? 'Hide Log' : 'View Log'}</button>` : ''}
+                   </div>`
+                : (logText ? `<div style="margin-top: 8px;"><button onclick="toggleRuleLog('${name}')" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">${expanded ? 'Hide Log' : 'View Log'}</button></div>` : '');
+            const sectionDivider = isLast ? '' : 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--bg-hover);';
+            return `
+                <div style="${sectionDivider}">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 10px;">
+                        <div>
+                            <strong style="color: var(--text-bright);">${label}</strong>
+                            <a href="${source.url}" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.8rem; margin-left: 6px;">(${source.label})</a>
+                            <div style="color: var(--text-muted); font-size: 0.9rem;">${countText}</div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            ${resultIcon}
+                            <button onclick="triggerRulesetUpdate('${name}')" ${statusEntry.running ? 'disabled' : ''} style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">${statusEntry.running ? 'Updating…' : 'Update'}</button>
+                        </div>
+                    </div>
+                    ${progressLine}
+                    ${expanded && logText ? `<div class="rule-update-log" data-ruleset="${name}">${escapeHtml(logText)}</div>` : ''}
+                </div>
+            `;
+        }
+
+        function toggleRuleLog(name) {
+            ruleLogExpanded[name] = !ruleLogExpanded[name];
+            if (lastRulesInfo && lastRulesStatus) {
+                renderRulesModalBodyIntoDom(lastRulesInfo, lastRulesStatus);
+            }
+        }
+
+        function renderRulesModalBody(info, status) {
+            const suricataText = `${formatRuleCount(info.suricata.count)} — updated ${formatDateSpan(info.suricata.updated)}`;
+            const yaraText = `${formatRuleCount(info.yara.count)} — updated ${formatDateSpan(info.yara.updated)}`;
+            const sigmaText = `Windows: ${formatRuleCount(info.sigma.windows.count)} — updated ${formatDateSpan(info.sigma.windows.updated)}<br>Linux: ${formatRuleCount(info.sigma.linux.count)} — updated ${formatDateSpan(info.sigma.linux.updated)}`;
+            // Ordered shortest-to-longest output (YARA/Sigma are a couple
+            // lines; Suricata's suricata-update log can run to dozens of
+            // lines) so the two quick summaries are visible without
+            // scrolling past the long, variable-length Suricata log first.
+            return (
+                renderRuleSection('yara', 'YARA', yaraText, status.yara, false) +
+                renderRuleSection('sigma', 'Sigma', sigmaText, status.sigma, false) +
+                renderRuleSection('suricata', 'Suricata', suricataText, status.suricata, true)
+            );
+        }
+
+        // Replacing innerHTML wholesale on every poll tick would otherwise
+        // reset each log box's scroll position to the top every ~2s
+        // indefinitely (polling never stops while the modal is open) -
+        // keyed by ruleset name (not index) since a ruleset's log box only
+        // exists once it has lines, so the set of visible boxes can change
+        // between ticks. Factored out from refreshRulesModal so
+        // toggleRuleLog() can re-render from the last-fetched data
+        // instantly, without waiting on a fresh fetch just to flip a
+        // View/Hide Log button.
+        function renderRulesModalBodyIntoDom(info, status) {
+            const modalBody = document.getElementById('rulesModalBody');
+            const scrollPositions = {};
+            modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
+                scrollPositions[el.dataset.ruleset] = el.scrollTop;
+            });
+            modalBody.innerHTML = renderRulesModalBody(info, status);
+            modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
+                if (el.dataset.ruleset in scrollPositions) {
+                    el.scrollTop = scrollPositions[el.dataset.ruleset];
+                }
+            });
+        }
+
+        // Polls while the modal is open (stops on close) rather than
+        // continuing in the background like the old single-job modal did -
+        // three independent completion timers isn't worth the complexity;
+        // the jobs themselves keep running server-side regardless, and
+        // reopening the modal always reflects current truth.
+        async function refreshRulesModal() {
+            try {
+                const [infoResp, statusResp] = await Promise.all([
+                    fetch('/api/rules-info'),
+                    fetch('/api/rule-update-status'),
+                ]);
+                const info = await infoResp.json();
+                const status = await statusResp.json();
+                ['suricata', 'yara', 'sigma'].forEach(function(name) {
+                    if (status[name].running && !ruleUpdateStartTimes[name]) {
+                        ruleUpdateStartTimes[name] = Date.now();
+                    } else if (!status[name].running) {
+                        ruleUpdateStartTimes[name] = null;
+                    }
+                    if (rulesPrevRunning[name] && !status[name].running) {
+                        ruleLastResult[name] = status[name].error ? 'error' : 'success';
+                        showToast(status[name].error
+                            ? (RULESET_LABELS[name] + ' update error: ' + status[name].error)
+                            : (RULESET_LABELS[name] + ' rules updated'));
+                    }
+                    rulesPrevRunning[name] = status[name].running;
+                });
+                lastRulesInfo = info;
+                lastRulesStatus = status;
+                renderRulesModalBodyIntoDom(info, status);
+                const anyRunning = ['suricata', 'yara', 'sigma'].some(n => status[n].running);
+                document.getElementById('updateAllRulesBtn').disabled = anyRunning;
+            } catch (e) {
+                // Ignore -- next poll will retry.
+            }
+        }
+
+        async function showRulesModal() {
+            closeOtherMenuModals('rulesModal');
+            document.getElementById('rulesModal').classList.add('active');
+            await refreshRulesModal();
+            if (!rulesPollInterval) {
+                rulesPollInterval = setInterval(refreshRulesModal, 2000);
+            }
+        }
+
+        function closeRulesModal() {
+            document.getElementById('rulesModal').classList.remove('active');
+            if (rulesPollInterval) {
+                clearInterval(rulesPollInterval);
+                rulesPollInterval = null;
+            }
+        }
+
+        function handleRulesBackdropClick(event) {
+            if (event.target === document.getElementById('rulesModal')) {
+                closeRulesModal();
+            }
+        }
+
+        async function triggerRulesetUpdate(name) {
+            await fetch('/api/update-rules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ruleset: name }),
+            });
+            await refreshRulesModal();
+            // Only (re)start polling if the modal is still open - closing it
+            // (Escape/backdrop/close button) while this fetch/refresh was
+            // still in flight already cleared rulesPollInterval, and restarting
+            // it here unconditionally would leak an indefinite background
+            // poll of a hidden modal.
+            const rulesModal = document.getElementById('rulesModal');
+            if (!rulesPollInterval && rulesModal && rulesModal.classList.contains('active')) {
+                rulesPollInterval = setInterval(refreshRulesModal, 2000);
+            }
+        }
+
         async function toggleDiagram() {
             diagramMode = !diagramMode;
             if (diagramMode) {
@@ -3833,8 +4667,13 @@
         // script evaluations, same reason as currentFilters/advancedMode below.
         var truncatedTypes = new Set();
         let eventTypes = [];
-        let currentMd5 = '';
-        let currentFileName = '';
+        // NOTE: these must stay `var` (not let/const) so they attach to the
+        // global object - the JSDOM test harness assigns/reads them via
+        // separate script evaluations, same reason as truncatedTypes above
+        // and currentFilters/advancedMode below.
+        var currentMd5 = '';
+        var currentFileName = '';
+        var currentNotes = '';
         // NOTE: these must stay `var` (not let/const) so they attach to the
         // global object — the JSDOM test harness and inline handlers assign
         // them via separate script evaluations.
@@ -3886,8 +4725,8 @@
                 ? `&order_by=${encodeURIComponent(getColumnsForType(eventType)[currentSort.colIndex])}&sort_dir=${currentSort.asc ? 'asc' : 'desc'}`
                 : '';
             const [rowsResp, countResp] = await Promise.all([
-                fetch(`/api/events?md5=${currentMd5}${typeParam}&offset=${offset}&limit=${CONFIG.TABLE_PAGE_SIZE}${qParam}${sortParam}&t=${Date.now()}`),
-                fetch(`/api/count?md5=${currentMd5}${typeParam}${qParam}&t=${Date.now()}`)
+                fetch(`/api/events?md5=${encodeURIComponent(currentMd5)}${typeParam}&offset=${offset}&limit=${CONFIG.TABLE_PAGE_SIZE}${qParam}${sortParam}&t=${Date.now()}`),
+                fetch(`/api/count?md5=${encodeURIComponent(currentMd5)}${typeParam}${qParam}&t=${Date.now()}`)
             ]);
             const items = await rowsResp.json();
             const { count } = await countResp.json();
@@ -3899,8 +4738,8 @@
             const qParam = buildSearchQuery();
             const offset = (currentPage - 1) * CONFIG.TABLE_PAGE_SIZE;
             const [rowsResp, countResp] = await Promise.all([
-                fetch(`/api/sigma-alerts?md5=${currentMd5}&offset=${offset}&limit=${CONFIG.TABLE_PAGE_SIZE}${qParam}&t=${Date.now()}`),
-                fetch(`/api/sigma-count?md5=${currentMd5}${qParam}&t=${Date.now()}`)
+                fetch(`/api/sigma-alerts?md5=${encodeURIComponent(currentMd5)}&offset=${offset}&limit=${CONFIG.TABLE_PAGE_SIZE}${qParam}&t=${Date.now()}`),
+                fetch(`/api/sigma-count?md5=${encodeURIComponent(currentMd5)}${qParam}&t=${Date.now()}`)
             ]);
             const items = await rowsResp.json();
             const { count } = await countResp.json();
@@ -3913,7 +4752,7 @@
         async function fetchSankeyData(eventType) {
             const qParam = buildSearchQuery();
             const typeParam = (eventType && eventType !== 'all') ? `&type=${eventType}` : '';
-            const resp = await fetch(`/api/sankey-data?md5=${currentMd5}${typeParam}${qParam}&t=${Date.now()}`);
+            const resp = await fetch(`/api/sankey-data?md5=${encodeURIComponent(currentMd5)}${typeParam}${qParam}&t=${Date.now()}`);
             return await resp.json();
         }
 
@@ -3985,7 +4824,7 @@
         async function fetchAggregationData(eventType) {
             const qParam = buildSearchQuery();
             const typeParam = (eventType && eventType !== 'all') ? `&type=${eventType}` : '';
-            const resp = await fetch(`/api/aggregation-data?md5=${currentMd5}${typeParam}${qParam}&t=${Date.now()}`);
+            const resp = await fetch(`/api/aggregation-data?md5=${encodeURIComponent(currentMd5)}${typeParam}${qParam}&t=${Date.now()}`);
             return await resp.json();
         }
 
@@ -4019,8 +4858,8 @@
             if (eventType === 'all') {
                 if (allEvents.length > 0) return;
                 const [resp, countResp] = await Promise.all([
-                    fetch(`/api/events?md5=${currentMd5}&limit=${getUserQueryLimit()}${qParam}&t=${Date.now()}`),
-                    fetch(`/api/count?md5=${currentMd5}${qParam}&t=${Date.now()}`)
+                    fetch(`/api/events?md5=${encodeURIComponent(currentMd5)}&limit=${getUserQueryLimit()}${qParam}&t=${Date.now()}`),
+                    fetch(`/api/count?md5=${encodeURIComponent(currentMd5)}${qParam}&t=${Date.now()}`)
                 ]);
                 allEvents = await resp.json();
                 const { count } = await countResp.json();
@@ -4033,8 +4872,8 @@
             const countEndpoint = eventType === 'sigmaalert' ? '/api/sigma-count' : '/api/count';
             const typeParam = eventType === 'sigmaalert' ? '' : `&type=${eventType}`;
             const [resp, countResp] = await Promise.all([
-                fetch(`${endpoint}?md5=${currentMd5}${typeParam}&limit=${limit}${qParam}&t=${Date.now()}`),
-                fetch(`${countEndpoint}?md5=${currentMd5}${typeParam}${qParam}&t=${Date.now()}`)
+                fetch(`${endpoint}?md5=${encodeURIComponent(currentMd5)}${typeParam}&limit=${limit}${qParam}&t=${Date.now()}`),
+                fetch(`${countEndpoint}?md5=${encodeURIComponent(currentMd5)}${typeParam}${qParam}&t=${Date.now()}`)
             ]);
             tabDataCache[eventType] = await resp.json();
             const { count } = await countResp.json();
@@ -4051,8 +4890,8 @@
         async function fetchBinaryEvents(qParam) {
             const q = qParam || '';
             const [fileAlertsResp, fileInfoResp] = await Promise.all([
-                fetch(`/api/events?md5=${currentMd5}&type=filealerts&limit=${getUserQueryLimit()}${q}&t=${Date.now()}`),
-                fetch(`/api/events?md5=${currentMd5}&type=fileinfo&limit=1${q}&t=${Date.now()}`)
+                fetch(`/api/events?md5=${encodeURIComponent(currentMd5)}&type=filealerts&limit=${getUserQueryLimit()}${q}&t=${Date.now()}`),
+                fetch(`/api/events?md5=${encodeURIComponent(currentMd5)}&type=fileinfo&limit=1${q}&t=${Date.now()}`)
             ]);
             const [fileAlerts, fileInfo] = await Promise.all([fileAlertsResp.json(), fileInfoResp.json()]);
             return [...fileInfo, ...fileAlerts];
@@ -4368,8 +5207,8 @@
         // scalable fetch).
         async function _fetchLogAnalysisCounts(qParam) {
             const [logResp, sigmaResp] = await Promise.all([
-                fetch(`/api/count?md5=${currentMd5}&type=log${qParam || ''}&t=${Date.now()}`),
-                fetch(`/api/sigma-count?md5=${currentMd5}${qParam || ''}&t=${Date.now()}`)
+                fetch(`/api/count?md5=${encodeURIComponent(currentMd5)}&type=log${qParam || ''}&t=${Date.now()}`),
+                fetch(`/api/sigma-count?md5=${encodeURIComponent(currentMd5)}${qParam || ''}&t=${Date.now()}`)
             ]);
             const { count: logCount } = await logResp.json();
             const { count: sigmaCount } = await sigmaResp.json();
@@ -4415,8 +5254,8 @@
                 const qParam = buildSearchQuery();
 
                 const [statsResp, baseStatsResp] = await Promise.all([
-                    fetch('/api/stats?md5=' + currentMd5 + qParam + '&t=' + Date.now()),
-                    fetch('/api/stats?md5=' + currentMd5 + '&t=' + Date.now())
+                    fetch('/api/stats?md5=' + encodeURIComponent(currentMd5) + qParam + '&t=' + Date.now()),
+                    fetch('/api/stats?md5=' + encodeURIComponent(currentMd5) + '&t=' + Date.now())
                 ]);
                 const statsCounts = (await statsResp.json()).counts;
                 const baseStatsCounts = (await baseStatsResp.json()).counts;
@@ -4517,10 +5356,161 @@
             }
         }
 
+        // Click-to-rename for the header filename. Only one edit can be
+        // active at a time (guarded by the existing <input> check below),
+        // and blur commits the edit (matching common rename-in-place UIs
+        // like a file manager) while Escape cancels it.
+        async function copyMd5ToClipboard(md5) {
+            // navigator.clipboard requires a secure context (HTTPS, or the
+            // browser's localhost/127.0.0.1/::1 loopback exception) - a
+            // real LAN deployment reached over plain http:// (a common way
+            // to reach a container's published port from another machine)
+            // won't have it at all, so fail with a clear toast rather than
+            // a silent no-op either way.
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                showToast('Clipboard access unavailable (requires HTTPS or localhost)');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(md5);
+                showToast('MD5 copied to clipboard');
+            } catch (e) {
+                showToast('Could not copy to clipboard');
+            }
+        }
+
+        async function startRenameAnalysis() {
+            const el = document.getElementById('appHeaderFilename');
+            if (!el || el.querySelector('input')) return;
+
+            const originalName = currentFileName;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'app-header-filename-input';
+            input.value = originalName;
+            input.maxLength = 255;
+            el.onclick = null;
+            el.style.cursor = 'default';
+            el.innerHTML = '';
+            el.appendChild(input);
+            input.focus();
+            input.select();
+
+            let finished = false;
+            async function finish(save) {
+                if (finished) return;
+                finished = true;
+                const newValue = input.value.trim();
+                if (save && newValue && newValue !== originalName) {
+                    try {
+                        const resp = await fetch('/api/rename-analysis', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ md5: currentMd5, name: newValue })
+                        });
+                        const result = await resp.json();
+                        if (resp.ok && result.success) {
+                            currentFileName = result.name;
+                            document.title = 'SO-CRATES - ' + currentFileName;
+                        } else {
+                            showToast(result.error || 'Could not rename analysis');
+                        }
+                    } catch (e) {
+                        showToast('Could not rename analysis');
+                    }
+                }
+                el.innerHTML = `${FILE_ICON_SVG}${escapeHtml(currentFileName)}`;
+                el.title = currentFileName;
+                el.style.cursor = 'pointer';
+                el.onclick = startRenameAnalysis;
+            }
+
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+                else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+            });
+            input.addEventListener('blur', function() { finish(true); });
+            input.addEventListener('click', function(e) { e.stopPropagation(); });
+        }
+
+        // Cheap "has notes" signal in the header, without opening the modal.
+        function notesIconHtml() {
+            const color = currentNotes ? 'var(--accent)' : 'var(--text-muted)';
+            const title = currentNotes ? 'View/edit notes' : 'Add notes';
+            return `<span id="appHeaderNotesIcon" onclick="showNotesModal()" style="cursor: pointer; white-space: nowrap; color: ${color};" title="${title}">${NOTES_ICON_SVG}</span>`;
+        }
+
+        function updateNotesCountHint() {
+            const textarea = document.getElementById('analysisNotesInput');
+            document.getElementById('notesCountHint').textContent =
+                `${textarea.value.length.toLocaleString()} / ${NOTES_MAX_LENGTH.toLocaleString()}`;
+        }
+
+        function showNotesModal() {
+            closeOtherMenuModals('notesModal');
+            const textarea = document.getElementById('analysisNotesInput');
+            textarea.maxLength = NOTES_MAX_LENGTH;
+            textarea.value = currentNotes;
+            textarea.oninput = updateNotesCountHint;
+            document.getElementById('notesError').style.display = 'none';
+            updateNotesCountHint();
+            document.getElementById('notesModal').classList.add('active');
+            textarea.focus();
+        }
+
+        function closeNotesModal() {
+            document.getElementById('notesModal').classList.remove('active');
+        }
+
+        function handleNotesBackdropClick(event) {
+            if (event.target === document.getElementById('notesModal')) {
+                closeNotesModal();
+            }
+        }
+
+        async function saveAnalysisNotes() {
+            const textarea = document.getElementById('analysisNotesInput');
+            const errorEl = document.getElementById('notesError');
+            const saveBtn = document.getElementById('notesSaveBtn');
+            errorEl.style.display = 'none';
+            saveBtn.disabled = true;
+            try {
+                const resp = await fetch('/api/analysis-notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ md5: currentMd5, notes: textarea.value })
+                });
+                const result = await resp.json();
+                if (resp.ok && result.success) {
+                    currentNotes = result.notes;
+                    const iconEl = document.getElementById('appHeaderNotesIcon');
+                    if (iconEl) iconEl.outerHTML = notesIconHtml();
+                    closeNotesModal();
+                } else {
+                    errorEl.textContent = result.error || 'Could not save notes';
+                    errorEl.style.display = 'block';
+                }
+            } catch (e) {
+                errorEl.textContent = 'Could not save notes';
+                errorEl.style.display = 'block';
+            } finally {
+                saveBtn.disabled = false;
+            }
+        }
+
+        // Lets the notes icon in the Previous Analyses list jump straight to
+        // that analysis's Notes modal, instead of just the normal overview -
+        // loadAnalysis() must finish first so currentMd5/currentNotes (and
+        // the DOM the modal reads from) reflect the newly-opened analysis.
+        async function openAnalysisNotesFromList(md5) {
+            await loadAnalysis(md5);
+            showNotesModal();
+        }
+
         async function loadAnalysis(md5) {
             const gen = bumpFetchGeneration();
             try {
-                const resp = await fetch('/api/load-analysis?md5=' + md5);
+                const resp = await fetch('/api/load-analysis?md5=' + encodeURIComponent(md5));
                 const result = await resp.json();
                 if (isStaleFetch(gen)) return;
 
@@ -4533,6 +5523,7 @@
                 if (result.success) {
                     currentMd5 = md5;
                     currentFileName = result.file_name || md5;
+                    currentNotes = result.notes || '';
                     document.title = 'SO-CRATES - ' + currentFileName;
                     const urlParams = new URLSearchParams(window.location.search);
                     urlParams.set('file', md5);
@@ -4555,7 +5546,7 @@
                     
                     showLoading('Loading events...');
                     
-                    const statsResp = await fetch('/api/stats?md5=' + md5 + '&t=' + Date.now());
+                    const statsResp = await fetch('/api/stats?md5=' + encodeURIComponent(md5) + '&t=' + Date.now());
                     const statsData = await statsResp.json();
                     if (isStaleFetch(gen)) return;
                     eventStats = statsData.counts;
@@ -4565,21 +5556,13 @@
                     // eventTypes should not include 'all' - it's added separately by buildStats()
                     eventTypes = types;
 
-                    const { min: rangeMin, max: rangeMax } = statsData.date_range;
-                    const dateDisplay = rangeMin && rangeMin === rangeMax
-                        ? rangeMin.slice(0, 19)
-                        : `${rangeMin?.slice(0, 19) || ''} to ${rangeMax?.slice(0, 19) || ''}`;
+                    const dateDisplay = formatDateRange(statsData.date_range);
 
                     // Fetch analysis metadata for routing (supports ZIP uploads)
-                    const statusResp = await fetch('/api/status?md5=' + md5 + '&t=' + Date.now());
+                    const statusResp = await fetch('/api/status?md5=' + encodeURIComponent(md5) + '&t=' + Date.now());
                     const analysisStatus = await statusResp.json();
                     const detectedType = analysisStatus.meta?.detected_type || detectFileType(currentFileName);
-                    
-                    // Update filename to extracted inner name if available
-                    if (analysisStatus.meta?.extracted) {
-                        currentFileName = analysisStatus.meta.extracted;
-                    }
-                    
+
                     const isPcap = detectedType === 'pcap';
                     const isLogFile = detectedType === 'log';
                     const isFileOnly = !isPcap;
@@ -4590,11 +5573,17 @@
                         document.body.classList.remove('file-analysis');
                     }
                     
-                    document.getElementById('appHeaderFilename').innerHTML = `${FILE_ICON_SVG}${escapeHtml(currentFileName)}`;
+                    const appHeaderFilenameEl = document.getElementById('appHeaderFilename');
+                    appHeaderFilenameEl.innerHTML = `${FILE_ICON_SVG}${escapeHtml(currentFileName)}`;
+                    appHeaderFilenameEl.title = currentFileName;
+                    appHeaderFilenameEl.style.cursor = 'pointer';
+                    appHeaderFilenameEl.onclick = startRenameAnalysis;
                     document.getElementById('appHeaderMeta').innerHTML = `
-                        <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${FOLDER_ICON_SVG}${escapeHtml(currentMd5)}</span>
+                        <span id="appHeaderMd5" style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; cursor: pointer;" title="Click to copy">${FOLDER_ICON_SVG}${escapeHtml(currentMd5)}</span>
                         <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${CALENDAR_ICON_SVG}${escapeHtml(dateDisplay)}</span>
+                        ${notesIconHtml()}
                     `;
+                    document.getElementById('appHeaderMd5').onclick = () => copyMd5ToClipboard(currentMd5);
                     document.getElementById('appHeaderRight').innerHTML = renderGearMenu();
                     updateThemeMenu();
                     showAnalysisUI();
@@ -4716,6 +5705,7 @@
                 });
                 const result = await resp.json();
                 clearInterval(downloadInterval);
+                notifyIfFilesSkipped(result);
 
                 if (result.status === 'processing') {
                     await checkStatus(result.md5, result.phase || 'network');
@@ -4765,6 +5755,7 @@
                     fileInput.value = '';
                     return;
                 }
+                notifyIfFilesSkipped(result);
 
                 if (result.status === 'ready') {
                     hideLoading();
@@ -4894,6 +5885,12 @@
         function closeErrorModal() {
             document.getElementById('errorModal').classList.remove('active');
         }
+
+        function handleErrorBackdropClick(event) {
+            if (event.target.id === 'errorModal') {
+                closeErrorModal();
+            }
+        }
         
         async function confirmDelete() {
             if (!pendingDelete) return;
@@ -4975,7 +5972,7 @@
         async function openReanalyzeModal(md5, name) {
             let phase = 'files';
             try {
-                const resp = await fetch('/api/status?md5=' + md5 + '&t=' + Date.now());
+                const resp = await fetch('/api/status?md5=' + encodeURIComponent(md5) + '&t=' + Date.now());
                 const status = await resp.json();
                 const detectedType = status.meta?.detected_type || detectFileType(name);
                 if (detectedType === 'log') phase = 'logs';
@@ -5048,6 +6045,7 @@
                 updateThemeMenu();
                 updateCodeRain();
                 updateFavicon();
+                startThemeSync();
 
                 // Fetch and display version from server
                 try {
@@ -5062,6 +6060,8 @@
                 } catch(verErr) {
                     // Ignore version fetch errors — footer shows placeholder
                 }
+                checkForAppUpdate();
+                checkForMissingRules();
 
                 // Check for file query parameter (backward compatible with ?pcap=)
                 const urlParams = new URLSearchParams(window.location.search);

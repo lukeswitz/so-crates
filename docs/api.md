@@ -16,7 +16,31 @@ Redirects to `/socrates.html`.
 
 Returns the running SO-CRATES version.
 
-**Response:** `{"version": "3.0.0"}`
+**Response:** `{"version": "3.1.0"}`
+
+---
+
+### `GET /api/version-check`
+
+Checks GitHub's releases API for a newer SO-CRATES version. Only ever called by the frontend if the user has opted in (the "Check GitHub for newer releases" checkbox in the About modal, or its manual "Check Now" button) - never fetched automatically otherwise.
+
+**Response:** `{"currentVersion": "<version>", "latestVersion": <string or null>, "updateAvailable": <boolean>}` - `latestVersion`/`updateAvailable` stay `null`/`false` on any failure to reach GitHub (never surfaces an error to the caller).
+
+---
+
+### `GET /api/theme`
+
+Reads the active OhMyDebn theme's name and color palette, for the opt-in "Sync theme with OS" feature. A no-op (`theme`/`customColors` both `null`) unless the `OHMYDEBN_THEME_DIR` environment variable is set.
+
+**Response:** `{"theme": <string or null>, "customColors": <object or null>}` - `theme` is the raw theme name (from `<OHMYDEBN_THEME_DIR>/current/theme.name`) if it's set and passes a loose name-format check, else `null`. `customColors` is a set of ~25 CSS custom-property name/hex-value pairs synthesized from the theme's `colors.toml`/`alacritty.toml` palette (see [Themes](themes.md)), or `null` if no theme directory is configured or no palette could be derived.
+
+---
+
+### `GET /api/theme-sync-available`
+
+Tells the frontend whether the "Sync theme with OS" toggle could ever do anything, so it isn't shown as a dead control on deployments not launched via OhMyDebn.
+
+**Response:** `{"available": <boolean>}` - `true` iff `OHMYDEBN_THEME_DIR` is set and its `current/theme.name` file is currently readable (regardless of whether its *contents* are valid - that's `/api/theme`'s concern).
 
 ---
 
@@ -90,6 +114,34 @@ Returns total event count, optionally filtered by type or search query.
 Returns server-enforced limits the client should respect (e.g. when validating the user-configurable query-limit setting).
 
 **Response:** `{"maxQueryLimit": <number>, "maxUploadSize": <number>}` - `MAX_QUERY_LIMIT` (100,000 by default) and `MAX_UPLOAD_SIZE` in bytes (5,000 MB by default); both are hard ceilings that any client-requested override (`limit=`, or the `X-Max-Upload-Size` upload header) is clamped to server-side, regardless of what the client requests.
+
+---
+
+### `GET /api/rules-info`
+
+Returns on-disk rule counts and last-updated times for all three rulesets, for the Rules modal (gear menu > Rules). Purely a snapshot of what's currently on disk - no job/update state involved (that's `/api/rule-update-status`'s job).
+
+**Response:** `{"suricata": {"count": <number or null>, "updated": <epoch or null>}, "yara": {"count": <number or null>, "updated": <epoch or null>}, "sigma": {"windows": {"count": ..., "updated": ...}, "linux": {"count": ..., "updated": ...}}}` - fields are `null` if that ruleset has never been set up.
+
+---
+
+### `GET /api/rule-update-status`
+
+Returns the live/last-run state of each ruleset's update job, polled by the Rules modal while open.
+
+**Response:** `{"suricata": {"running": <boolean>, "lines": [<string>, ...], "done": <boolean>, "error": <string or null>}, "yara": {...}, "sigma": {...}}` - `lines` accumulates progress messages for the current (or most recent) run of that ruleset.
+
+---
+
+### `POST /api/update-rules`
+
+Starts an update for one ruleset, or all three. Triggered by the Rules modal's per-ruleset "Update" buttons and its "Update All" button.
+
+**Request body:** `{"ruleset": "suricata"|"yara"|"sigma"|"all"}`
+
+**Response:** `{"status": "started"}`
+
+**Errors:** `400` if `ruleset` isn't one of the four allowed values. `409` ("Rule update already in progress") if the targeted ruleset (or, for `"all"`, any one of the three) is already running.
 
 ---
 
@@ -200,7 +252,7 @@ Extracts per-packet hex dumps from a TCP/UDP stream using `tcpdump -X`. Truncate
 
 Lists all previously-analyzed files.
 
-**Response:** Array of `{"md5": "<hash>", "name": "<display name>"}` sorted alphabetically by name.
+**Response:** Array of `{"md5": "<hash>", "name": "<display name>", "date_range": {"min": "<ISO timestamp or null>", "max": "<ISO timestamp or null>"}, "has_notes": <bool>}` sorted alphabetically by name. `date_range` reflects the sample's own event timestamps (not upload time), and is `{"min": null, "max": null}` if the analysis has no `events.db` yet. `has_notes` is `true` if a `notes.txt` file exists for the analysis.
 
 ---
 
@@ -216,7 +268,7 @@ Loads a historical analysis by MD5.
 
 **Response:**
 ```json
-{"success": true, "md5": "<hash>", "file_name": "<filename>"}
+{"success": true, "md5": "<hash>", "file_name": "<filename>", "notes": "<notes text or empty string>"}
 ```
 
 **Errors:** `400` if MD5 is invalid or path is unsafe. `404` if analysis not found. `400` if eve.json exceeds size limit.
@@ -339,6 +391,12 @@ or for log files:
 {"status": "processing", "md5": "<hash>", "phase": "logs"}
 ```
 
+If the upload was a ZIP archive containing more than one supported file, only the first is analyzed (a PCAP takes priority; otherwise the first non-hidden file) and every response above gains a `filesSkipped` field with the count of files that were dropped:
+
+```json
+{"status": "processing", "md5": "<hash>", "phase": "network", "filesSkipped": 2}
+```
+
 **Response (already analyzed):**
 ```json
 {"status": "ready", "md5": "<hash>"}
@@ -403,7 +461,7 @@ or, if analysis (Suricata/YARA/Zircolite) failed:
 
 The `phase` field reflects the current analysis stage (`network`, `logs`, or `files`), or an empty string if no phase file exists yet. `meta` is present whenever `.meta` exists for the analysis and omitted otherwise (including on the `error` response). Same "no 404 for a well-formed-but-nonexistent MD5" caveat as `GET /api/status` applies here too.
 
-**Ready detection:** For PCAPs, checks that `eve.json` exists and `events.db` is present. For other files, checks that `events.db` exists.
+**Ready detection:** the same check for every file type - `events.db` exists and no `.phase` file is still present (`events.db` is created the instant ingest starts, well before it finishes, so its existence alone isn't sufficient; `.phase` stays set for exactly that ingest window).
 
 ---
 
@@ -442,6 +500,46 @@ Deletes a single historical analysis (removes the entire MD5 directory).
 ```
 
 **Errors:** `400` for invalid MD5 or unsafe path. `404` if analysis not found.
+
+---
+
+### `POST /api/rename-analysis`
+
+Sets a custom display name for an analysis, overwriting `name.txt`. Only changes what's displayed (header, previous-analyses list) — the real originally-uploaded filename is unaffected, preserved separately in `.meta`'s `original` field.
+
+**Request Body:**
+```json
+{"md5": "<hash>", "name": "<new display name>"}
+```
+
+The name is trimmed, has embedded newlines collapsed to spaces, and is capped at 255 characters.
+
+**Response:**
+```json
+{"success": true, "name": "<new display name>"}
+```
+
+**Errors:** `400` for invalid MD5, unsafe path, or an empty/whitespace-only name. `404` if analysis not found.
+
+---
+
+### `POST /api/analysis-notes`
+
+Sets (or clears) freeform investigation notes for an analysis, overwriting `notes.txt`. Unlike `/api/rename-analysis`, embedded newlines are preserved verbatim (multi-line notes are the point), and an empty submission is a valid way to clear notes rather than an error.
+
+**Request Body:**
+```json
+{"md5": "<hash>", "notes": "<notes text>"}
+```
+
+The notes are trimmed and capped at 10,000 characters. An empty (or whitespace-only) value deletes `notes.txt` if present.
+
+**Response:**
+```json
+{"success": true, "notes": "<notes text>"}
+```
+
+**Errors:** `400` for invalid MD5, unsafe path, or non-string notes. `404` if analysis not found.
 
 ---
 

@@ -3,7 +3,8 @@
 
 Provides file type detection (via the `file` command), Shannon entropy
 calculation, and printable string extraction. Used to enrich fileinfo events
-when YARA produces no matches.
+extracted from a PCAP's filestore, and every standalone (non-PCAP) file
+upload regardless of whether YARA finds a match.
 """
 
 import math
@@ -58,6 +59,8 @@ def analyze_file(file_path):
         mime_type: MIME type from `file -b --mime-type`
         entropy: Shannon entropy (0.0–8.0)
         strings: List of top printable ASCII strings
+        exif: dict of curated ExifTool fields - only present when
+            _should_run_exiftool(mime_type) matches and exiftool found data
     """
     metadata = {
         'file_type': '',

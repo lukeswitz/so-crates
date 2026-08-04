@@ -4,6 +4,8 @@ import unittest.mock
 import socket
 import sys
 import os
+import tempfile
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
@@ -365,6 +367,26 @@ class TestResolveSafeIps(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validators.resolve_safe_ips('slow.example.com')
 
+    def test_hanging_resolver_does_not_block_past_the_timeout(self):
+        """REGRESSION: socket.setdefaulttimeout() has no effect on
+        getaddrinfo() (it's a thin wrapper around the C resolver call, never
+        constructs a Python socket) - a slow/non-responding DNS server used
+        to be able to hang this call indefinitely instead of the intended
+        5s. Must actually stop waiting once the timeout elapses, even if
+        the underlying resolver call never returns at all."""
+        import time as time_mod
+
+        def _hang(*args, **kwargs):
+            time_mod.sleep(60)
+
+        with unittest.mock.patch('socket.getaddrinfo', side_effect=_hang), \
+                unittest.mock.patch('validators.DNS_RESOLUTION_TIMEOUT', 0.05):
+            start = time_mod.monotonic()
+            with self.assertRaises(ValueError):
+                validators.resolve_safe_ips('never-responds.example.com')
+            elapsed = time_mod.monotonic() - start
+        self.assertLess(elapsed, 5, 'must stop waiting at the timeout, not hang for the full 60s resolver call')
+
     def test_returned_ip_is_what_validate_url_safety_checked(self):
         """resolve_safe_ips must apply the same blocklist as validate_url_safety
         so the IPs it returns for pinning are exactly what was already vetted."""
@@ -427,6 +449,38 @@ class TestResolveSafeIps(unittest.TestCase):
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('::127.0.0.1')):
             with self.assertRaises(ValueError):
                 validators.resolve_safe_ips('v6compat.example.com')
+
+
+class TestIsFileStale(unittest.TestCase):
+    def test_fresh_file_is_not_stale(self):
+        with tempfile.NamedTemporaryFile() as f:
+            self.assertFalse(validators.is_file_stale(f.name, max_age_hours=24))
+
+    def test_old_file_is_stale(self):
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            path = f.name
+        try:
+            old_time = time.time() - (25 * 3600)
+            os.utime(path, (old_time, old_time))
+            self.assertTrue(validators.is_file_stale(path, max_age_hours=24))
+        finally:
+            os.unlink(path)
+
+    def test_missing_file_is_not_stale(self):
+        """Callers already handle 'doesn't exist' as its own case (e.g. fall
+        through to the baked-in-rules/download path) - is_file_stale must
+        not also treat a missing file as stale and trigger double-handling."""
+        self.assertFalse(validators.is_file_stale('/nonexistent/path/rules.yar', max_age_hours=24))
+
+    def test_boundary_just_under_threshold_is_not_stale(self):
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            path = f.name
+        try:
+            recent_time = time.time() - (23 * 3600)
+            os.utime(path, (recent_time, recent_time))
+            self.assertFalse(validators.is_file_stale(path, max_age_hours=24))
+        finally:
+            os.unlink(path)
 
 
 if __name__ == '__main__':

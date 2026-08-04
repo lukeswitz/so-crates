@@ -10,6 +10,7 @@ If you prefer to run without Docker or Podman, then you will need these prerequi
 - **yara** (optional) — for scanning extracted files. If installed, SO-CRATES automatically downloads YARA rules on first run (or uses baked-in rules in Docker). If missing, file extraction and File Alerts are skipped.
 - **Zircolite** (optional) — for Sigma rule detection on log files. SO-CRATES auto-detects if Zircolite is installed and skips log analysis if absent. The Dockerfile bakes in Zircolite v3.7.1.
 - **exiftool** (optional) — for extracting EXIF/media metadata from binary files. If missing, EXIF extraction is silently skipped (the rest of the file analysis still runs).
+- **file** (optional) — for MIME/file-type detection on non-PCAP uploads. If missing, this detection is silently skipped (the rest of the file analysis still runs).
 
 Once you have the prerequisites, then you can clone this github repo and run the server:
 
@@ -27,5 +28,7 @@ Then open http://localhost:8000/socrates.html in your browser.
 | `BIND_ADDRESS` | `127.0.0.1` | Address to bind the HTTP server to |
 | `PORT` | `8000` | HTTP server port |
 | `ENABLE_ARP_LOGGING` | unset (disabled) | Set to any non-empty value to enable Suricata's `arp` eve-log output. Off by default since ARP volume can be significant on a live network (Suricata's own default is disabled too, for the same reason) - only enable if you actually want ARP events. |
+| `OHMYDEBN_THEME_DIR` | unset (feature off) | Base OhMyDebn config directory (e.g. `~/.config/ohmydebn`), for the opt-in "Sync theme with OS" feature - see [Themes](../themes.md). No-op for any deployment not launched via OhMyDebn. |
+| `DEMO` | unset | Set to any non-empty value to show a shortened startup message pointing at a hosted demo link, instead of the usual `http://<host>:<port>/socrates.html` URL - used for the public demo deployment, not a typical local install. |
 
 Environment variables override the hardcoded defaults at startup.

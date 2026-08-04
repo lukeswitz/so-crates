@@ -2,8 +2,12 @@
 import os
 import ipaddress
 import socket
+import threading
+import time
 from urllib.parse import urlparse
 import config
+
+DNS_RESOLUTION_TIMEOUT = 5  # seconds; see _resolve_and_validate_ips
 
 ALLOWED_URL_SCHEMES = ('http', 'https')
 BLOCKED_HOSTS = ('localhost', '127.0.0.1', '0.0.0.0', '::1')
@@ -72,18 +76,36 @@ def _resolve_and_validate_ips(hostname):
     "93.1.2.3" but the host may have no IPv6 route).
     Raises ValueError if resolution fails, times out, or any address is blocked.
     """
-    try:
-        # Set a 5-second timeout to prevent hanging on slow/unresponsive DNS
-        old_timeout = socket.getdefaulttimeout()
-        socket.setdefaulttimeout(5)
+    # socket.setdefaulttimeout() has NO effect here - getaddrinfo() is a
+    # thin wrapper directly around the C-extension resolver call and never
+    # constructs a Python socket object, so the default-timeout mechanism
+    # (which only applies to sockets created afterward) is never consulted.
+    # A slow/non-responding DNS server for an attacker-supplied hostname
+    # could otherwise hang this thread for as long as the OS resolver's own
+    # retry/timeout policy allows, which can be far longer than 5s. Run the
+    # lookup in a daemon thread and stop waiting after 5s instead - the
+    # thread is abandoned to finish resolving on its own if it's still
+    # running, which is harmless since it holds no locks/resources this
+    # process cares about once abandoned.
+    result = {}
+
+    def _do_resolve():
         try:
-            addrinfo = socket.getaddrinfo(hostname, None)
-        finally:
-            socket.setdefaulttimeout(old_timeout)
-    except socket.gaierror:
-        raise ValueError(f"Could not resolve hostname: {hostname}")
-    except socket.timeout:
+            result['addrinfo'] = socket.getaddrinfo(hostname, None)
+        except OSError as e:
+            # Covers both socket.gaierror (resolution failure) and
+            # socket.timeout (an OSError subclass) - either way, the
+            # caller just needs "resolution didn't succeed."
+            result['error'] = e
+
+    thread = threading.Thread(target=_do_resolve, daemon=True)
+    thread.start()
+    thread.join(timeout=DNS_RESOLUTION_TIMEOUT)
+    if thread.is_alive():
         raise ValueError(f"DNS resolution timed out for hostname: {hostname}")
+    if 'error' in result:
+        raise ValueError(f"Could not resolve hostname: {hostname}")
+    addrinfo = result['addrinfo']
 
     resolved_ips = list(dict.fromkeys(info[4][0] for info in addrinfo))
     for addr in resolved_ips:
@@ -136,6 +158,22 @@ def validate_zip_extraction(zip_ref, extract_path, max_size=None):
     socrates.py's _resolve_upload_size_limit) so a user who hasn't opted
     into a higher personal upload limit doesn't get the full server hard
     ceiling as their zip-bomb decompression budget.
+
+    NOT a real bypass, re-confirmed each time it's been raised in review: a
+    ZIP member with a spoofed/lying declared file_size (small metadata,
+    large real decompressed content) does NOT let zip_ref.extractall() (or
+    zip_ref.open().read()) silently write more bytes than declared before
+    this check would catch it. CPython's zipfile.ZipExtFile bounds every
+    read to the declared file_size internally (see _read1's
+    `data = data[:self._left]`, where self._left is initialized from
+    file_size) and then validates CRC32 against the *original* (untruncated)
+    checksum - a size lie produces a truncated read whose CRC provably
+    can't match, raising zipfile.BadZipFile before the mismatch could ever
+    be exploited. Verified directly against both zip_ref.extractall() and a
+    manual streaming read on a real spoofed-metadata ZipInfo (not just
+    read from source) - both raise BadZipFile identically, with or without
+    this function's own size check. Don't re-implement a streaming
+    extractor to "fix" this again without re-verifying that premise first.
     """
     if max_size is None:
         max_size = config.MAX_UPLOAD_SIZE
@@ -173,10 +211,29 @@ def is_host_reachable(host, port, timeout=5):
     Returns True if connection succeeds, False otherwise.
     """
     try:
-        socket.create_connection((host, port), timeout=timeout)
-        return True
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
     except OSError:
         return False
+
+
+def is_file_stale(path, max_age_hours):
+    """Check if a file's mtime is older than max_age_hours.
+
+    mtime reflects the right thing either way a rules file gets to disk:
+    shutil.copy2() preserves the source's mtime (age of the rules content
+    itself, for a baked-in-image copy), and a fresh download naturally gets
+    "now" as its mtime (age of the last successful check).
+
+    Returns True if the file is older than the threshold, False if it's
+    fresh or the file doesn't exist (missing isn't "stale" -- callers
+    already handle "doesn't exist" as its own case).
+    """
+    try:
+        age_seconds = time.time() - os.path.getmtime(path)
+    except OSError:
+        return False
+    return age_seconds > max_age_hours * 3600
 
 
 LOG_EXTENSIONS = ('.evtx', '.json', '.jsonl', '.csv', '.xml', '.log')

@@ -1,6 +1,20 @@
 # Docker
 
-## docker run
+## Docker Desktop (Windows / macOS)
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it.
+2. Open a terminal — on Windows, use a WSL2 terminal (Docker Desktop's default backend), so the same commands below work unchanged rather than needing PowerShell-style paths — and run:
+
+```bash
+mkdir -p ~/socrates-data
+docker run -v ~/socrates-data:/data -p 8000:8000 ghcr.io/dougburks/so-crates:main
+```
+
+There's no `usermod`/group-membership step here, unlike the Linux instructions below — that workaround is specific to Docker Engine's native Linux permission model, which Docker Desktop doesn't use.
+
+Then open http://localhost:8000/socrates.html in your browser.
+
+## docker run (Linux)
 
 If you prefer `docker run`, then here are the steps you can use on Debian 13 or compatible distros:
 ```bash
@@ -12,7 +26,7 @@ mkdir -p ~/socrates-data
 newgrp docker -c "docker run -v ~/socrates-data:/data -p 8000:8000 ghcr.io/dougburks/so-crates:main"
 ```
 
-## docker compose
+## docker compose (Linux)
 
 If you prefer to use `docker compose`, then here are the steps you can use on Debian 13 or compatible distros:
 ```bash

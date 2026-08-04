@@ -258,13 +258,36 @@ def create_sqlite_db(db_path, eve_file):
                     fileinfo = fileinfo_by_sha256.get(sha256)
                     rowid = fileinfo_rowids.get(sha256)
                     if fileinfo and rowid:
+                        # events_fts uses content='events' (external content) -
+                        # it does NOT auto-sync when the content table is
+                        # modified directly like this; per SQLite's own FTS5
+                        # docs, that requires explicitly telling the FTS5
+                        # table what the old indexed value was ('delete'
+                        # with the *original* json_data) before indexing the
+                        # new one. Skipping this left the merged metadata
+                        # searchable via events.json_data/LIKE fallback, but
+                        # never findable via an FTS5 MATCH search.
+                        old_json = None
+                        if has_fts:
+                            old_row = conn.execute(
+                                'SELECT json_data FROM events WHERE id = ?', (rowid,)
+                            ).fetchone()
+                            old_json = old_row[0] if old_row else None
                         fileinfo.setdefault('fileinfo', {})['metadata'] = metadata
                         updated_json = json.dumps(fileinfo, separators=(',', ':'))
                         conn.execute(
                             'UPDATE events SET json_data = ? WHERE id = ?',
                             (updated_json, rowid)
                         )
-                        # FTS5 with content=events auto-updates when content table changes
+                        if has_fts and old_json is not None:
+                            conn.execute(
+                                "INSERT INTO events_fts(events_fts, rowid, json_data) VALUES('delete', ?, ?)",
+                                (rowid, old_json)
+                            )
+                            conn.execute(
+                                'INSERT INTO events_fts(rowid, json_data) VALUES (?, ?)',
+                                (rowid, updated_json)
+                            )
             except (json.JSONDecodeError, TypeError) as e:
                 print(f'Warning: could not parse file_metadata.json: {e}')
 
@@ -1114,8 +1137,14 @@ def _sort_expr(event_type, label, prefix=''):
     if label == 'Time':
         return f'{prefix}timestamp'
     if label in REAL_AGGREGATION_COLUMNS:
-        col, cast_text = REAL_AGGREGATION_COLUMNS[label]
-        return f'CAST({prefix}{col} AS TEXT)' if cast_text else f'{prefix}{col}'
+        # cast_text (used by _aggregation_expr's GROUP BY, below) exists
+        # only so the aggregation table's returned value is uniformly a
+        # string, matching every other aggregation column's shape - it says
+        # nothing about the column's actual storage type. src_port/dest_port
+        # are real INTEGER columns, so ORDER BY must sort them numerically;
+        # casting to TEXT here would sort "3306" before "443" before "80".
+        col, _cast_text = REAL_AGGREGATION_COLUMNS[label]
+        return f'{prefix}{col}'
     if event_type in AGGREGATION_JSON_PATHS and label in AGGREGATION_JSON_PATHS[event_type]:
         return _aggregation_expr(event_type, label, AGGREGATION_JSON_PATHS[event_type][label], prefix=prefix)
     if event_type is None:

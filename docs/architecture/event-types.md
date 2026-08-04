@@ -5,11 +5,11 @@
 | `alert` | Suricata rule matches | `alert.signature`, `alert.severity`, `alert.category`, `alert.rule` |
 | `dns` | DNS queries/responses | `dns.rrname`, `dns.rrtype`, `dns.rcode` |
 | `http` | HTTP requests (also covers HTTP/2, including cleartext h2c - Suricata logs both under `event_type: "http"` with the same field names, adding `http.version`/`http.http2`/`http.request_headers` for HTTP/2 frames) | `http.http_method`, `http.url`, `http.http_content_type`, `http.status` |
-| `tls` | TLS handshakes | `tls.sni`, `tls.version`, `tls.subject`, `tls.issuer` |
+| `tls` | TLS handshakes | `tls.sni`, `tls.version`, `tls.subject`, `tls.issuerdn` |
 | `flow` | Network flow summaries | `flow.pkts_toserver`, `flow.pkts_toclient`, `flow.bytes_toserver`, `flow.bytes_toclient`, `flow.state` |
 | `ftp` | FTP commands | `ftp.command`, `ftp.command_data`, `ftp.completion_code`, `ftp.reply` |
 | `anomaly` | Protocol anomalies | `anomaly.event`, `anomaly.type`, `anomaly.layer`, `anomaly.app_proto` |
-| `fileinfo` | File transfers | `fileinfo.filename`, `fileinfo.filetype` |
+| `fileinfo` | File transfers | `fileinfo.filename`, `fileinfo.magic` |
 | `filealerts` | YARA matches on extracted files | `rule_name`, `sha256`, `tags` |
 | `dnp3` | DNP3 industrial-control events | `dnp3.src`, `dnp3.dst`, `dnp3.type` |
 | `modbus` | Modbus industrial-control events | `modbus.request.function_code`, `modbus.request.unit_id` |

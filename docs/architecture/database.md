@@ -47,6 +47,24 @@ CREATE VIRTUAL TABLE events_fts USING fts5(
     content_rowid='id'
 );
 
+-- Sigma detections (log-file analyses only, populated by importing Zircolite's output)
+CREATE TABLE sigma_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT,
+    rule_title TEXT,
+    rule_id TEXT,
+    severity TEXT,
+    level TEXT,
+    logsource TEXT,
+    tags TEXT,
+    mitre_techniques TEXT,
+    original_log TEXT,
+    json_data TEXT
+);
+CREATE INDEX idx_sigma_severity ON sigma_alerts(severity);
+CREATE INDEX idx_sigma_timestamp ON sigma_alerts(timestamp);
+CREATE INDEX idx_sigma_rule_id ON sigma_alerts(rule_id);
+
 -- Performance pragmas
 PRAGMA journal_mode = WAL;      -- Better concurrency between readers and writers
 PRAGMA synchronous = NORMAL;    -- Faster writes with WAL crash safety
