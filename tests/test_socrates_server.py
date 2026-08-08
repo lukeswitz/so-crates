@@ -5834,6 +5834,26 @@ class TestDockerfile(unittest.TestCase):
             self.assertIn(py_file, copied_files, f'Dockerfile\'s COPY line must copy {py_file}')
         self.assertIn('socrates.html', copied_files, 'Dockerfile\'s COPY line must copy socrates.html')
 
+    def test_dockerfile_installs_ca_certificates_before_any_https_fetch(self):
+        """REGRESSION: every FROM stage that does a 'git clone https://...'
+        or 'curl ...https://...' must explicitly install ca-certificates
+        rather than relying on the base image happening to already have it.
+        debian:13-slim (trixie) is still an actively-updated release, and a
+        base image refresh silently dropping ca-certificates broke a real
+        CI build with git's "Problem with the SSL CA cert (path? access
+        rights?)" - the textbook symptom of a missing CA bundle file, not
+        an expired/invalid cert."""
+        with open(DOCKERFILE, 'r') as f:
+            content = f.read()
+        stages = re.split(r'(?=^FROM )', content, flags=re.MULTILINE)
+        for stage in stages:
+            if not re.search(r'https://', stage):
+                continue
+            self.assertIn(
+                'ca-certificates', stage,
+                f'Dockerfile stage doing an HTTPS fetch must install ca-certificates explicitly:\n{stage[:200]}'
+            )
+
     def test_dockerfile_bake_loop_uses_baked_in_sources_dynamically(self):
         """The per-source Suricata rules bake loop must derive its slug
         list from suricata_analyzer.BAKED_IN_SURICATA_SOURCES (which

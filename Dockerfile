@@ -6,6 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # extensions, lxml has a C extension) so the Rust toolchain, build-essential,
 # dev headers, and git never need to exist in the final runtime image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     git \
     python3 \
     python3-venv \
@@ -43,7 +44,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 # gzip-compressed JSON indexes, one per detection type, holding only the
 # plain-English investigation guidance. python3-yaml and the raw YAML
 # tree never need to exist in the final runtime image.
+#
+# ca-certificates is required explicitly, not assumed from the base image -
+# debian:13-slim (trixie) is still an actively-updated release, and a base
+# image refresh with a leaner minbase can silently drop it, breaking this
+# stage's git clone with "Problem with the SSL CA cert (path? access
+# rights?)" (git/libcurl's message for a missing CA bundle file entirely,
+# not an expired/invalid cert - this happened for real in CI).
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     git \
     python3 \
     python3-yaml \
@@ -121,6 +130,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Suricata-8 compatibility nicety.
 RUN echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sources.list.d/trixie-backports.list && \
     apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     python3 \
     tcpdump \
     tshark \
