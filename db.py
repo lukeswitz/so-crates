@@ -19,6 +19,7 @@ from models import (
     get_timestamp,
 )
 import config
+from suricata_sid_ranges import sid_ranges_sql_case
 
 
 def _related_file_path(db_path, filename):
@@ -26,7 +27,29 @@ def _related_file_path(db_path, filename):
     return os.path.join(os.path.dirname(db_path), filename)
 
 
-SQLITE_SCHEMA = '''
+# Composite indexes for the Sankey/aggregation GROUP BY queries (src_ip/
+# dest_ip/dest_port/src_port) - shared between SQLITE_SCHEMA (new databases)
+# and _ensure_ip_port_indexes (backfilled onto pre-existing ones) so the two
+# can't drift apart. event_type leads every index because every query (via
+# _build_where_conditions) always excludes the internal 'stats' row
+# (`event_type != 'stats'`), and the 10 per-type tabs additionally filter on
+# a specific `event_type = ?`. event_type leading lets SQLite use a
+# covering-index SEARCH for the equality-filtered per-type case (instead of
+# falling back to idx_event_type - correct on cardinality, but not covering,
+# since it lacks these columns, forcing a full row lookup per match) while
+# leftmost-prefix still lets each index also cover its second column alone
+# (src_ip, dest_ip) for the merged 'all' view's single-column queries.
+_IP_PORT_INDEXES = (
+    ('idx_src_dest_ip', 'event_type, src_ip, dest_ip'),
+    ('idx_dest_ip_port', 'event_type, dest_ip, dest_port'),
+    ('idx_dest_port', 'event_type, dest_port'),
+    ('idx_src_port', 'event_type, src_port'),
+)
+_IP_PORT_INDEX_SQL = '\n'.join(
+    f'CREATE INDEX IF NOT EXISTS {name} ON events({cols});' for name, cols in _IP_PORT_INDEXES
+)
+
+SQLITE_SCHEMA = f'''
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_type TEXT NOT NULL,
@@ -42,20 +65,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_event_type ON events(event_type);
 CREATE INDEX IF NOT EXISTS idx_timestamp ON events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_event_type_timestamp ON events(event_type, timestamp);
--- Sankey/aggregation GROUP BY queries hit src_ip/dest_ip/dest_port/src_port -
--- these composite indexes lead with event_type because every query (via
--- _build_where_conditions) always excludes the internal 'stats' row
--- (`event_type != 'stats'`), and the 10 per-type tabs additionally filter
--- on a specific `event_type = ?`. event_type leading lets SQLite use a
--- covering-index SEARCH for the equality-filtered per-type case (instead of
--- falling back to idx_event_type - correct on cardinality, but not covering,
--- since it lacks these columns, forcing a full row lookup per match) while
--- leftmost-prefix still lets each index also cover its second column alone
--- (src_ip, dest_ip) for the merged 'all' view's single-column queries.
-CREATE INDEX IF NOT EXISTS idx_src_dest_ip ON events(event_type, src_ip, dest_ip);
-CREATE INDEX IF NOT EXISTS idx_dest_ip_port ON events(event_type, dest_ip, dest_port);
-CREATE INDEX IF NOT EXISTS idx_dest_port ON events(event_type, dest_port);
-CREATE INDEX IF NOT EXISTS idx_src_port ON events(event_type, src_port);
+{_IP_PORT_INDEX_SQL}
 
 CREATE TABLE IF NOT EXISTS sigma_alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +84,24 @@ CREATE INDEX IF NOT EXISTS idx_sigma_severity ON sigma_alerts(severity);
 CREATE INDEX IF NOT EXISTS idx_sigma_timestamp ON sigma_alerts(timestamp);
 CREATE INDEX IF NOT EXISTS idx_sigma_rule_id ON sigma_alerts(rule_id);
 
+-- One optional note per row of events/sigma_alerts, keyed by a
+-- (source_table, row_id) pair rather than a real FOREIGN KEY - SQLite
+-- can't express a polymorphic FK against two different parent tables,
+-- and this file never turns on PRAGMA foreign_keys anyway, so a plain
+-- integer with an app-level invariant matches how the rest of this
+-- schema already trusts the app layer. UNIQUE(source_table, row_id)
+-- both enforces one note per row and gives SQLite's auto-created
+-- covering index for the row_id IN (...) per-page lookup, so no
+-- separate CREATE INDEX is needed here.
+CREATE TABLE IF NOT EXISTS row_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_table TEXT NOT NULL CHECK (source_table IN ('events', 'sigma_alerts')),
+    row_id INTEGER NOT NULL,
+    note TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(source_table, row_id)
+);
 '''
 
 
@@ -102,10 +130,8 @@ def _ensure_ip_port_indexes(conn):
     Cheap even the first time (~0.1s at 1M rows) and a ~0ms no-op once
     stats are already current, so safe to call unconditionally here.
     """
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_src_dest_ip ON events(event_type, src_ip, dest_ip)')
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_dest_ip_port ON events(event_type, dest_ip, dest_port)')
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_dest_port ON events(event_type, dest_port)')
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_src_port ON events(event_type, src_port)')
+    for name, cols in _IP_PORT_INDEXES:
+        conn.execute(f'CREATE INDEX IF NOT EXISTS {name} ON events({cols})')
     conn.execute('PRAGMA optimize;')
 
 
@@ -203,6 +229,15 @@ def create_sqlite_db(db_path, eve_file):
                     continue
                 try:
                     event = json.loads(line)
+                    # Suricata's own built-in protocol-command-decode rules
+                    # (opt-in via show_protocol_decode_alerts) are noise, not
+                    # threat detections - reclassify into a dedicated
+                    # synthetic type so they get their own tab instead of
+                    # diluting Network Alerts. classtype protocol-command-decode
+                    # maps to exactly this category string, confirmed against
+                    # ~/socrates-data/suricata/classification.config.
+                    if event.get('event_type') == 'alert' and event.get('alert', {}).get('category') == 'Generic Protocol Command Decode':
+                        event['event_type'] = 'protocol_decode'
                     rowid = _insert_event(conn, event, has_fts)
 
                     # Index fileinfo events by SHA256 for YARA correlation
@@ -441,7 +476,7 @@ def _build_events_query(conn, event_type, offset, limit, q, order_by, sort_dir):
     """Shared SQL-building logic for query_events_sqlite / query_events_sqlite_json."""
     terms = _build_search_terms(q)
     has_fts = _has_fts5(conn) if terms else False
-    select, event_type_col = _events_select(terms, has_fts, 'json_data', 'e.json_data')
+    select, event_type_col = _events_select(terms, has_fts, 'id, json_data', 'e.id, e.json_data')
     conditions, params = _build_where_conditions(terms, has_fts, event_type, event_type_col)
     sql = select
     if conditions:
@@ -472,9 +507,18 @@ def query_events_sqlite(db_path, event_type=None, offset=0, limit=1000, q=None, 
             results = []
             for row in cursor.fetchall():
                 try:
-                    results.append(json.loads(row['json_data']))
+                    parsed = json.loads(row['json_data'])
                 except (json.JSONDecodeError, TypeError):
-                    results.append({})
+                    parsed = {}
+                parsed['id'] = row['id']
+                results.append(parsed)
+
+            notes = get_row_notes(db_path, 'events', [r['id'] for r in results])
+            for r in results:
+                note = notes.get(r['id'])
+                if note is not None:
+                    r['row_note'] = note
+
             return results
         except sqlite3.OperationalError:
             return []
@@ -492,21 +536,125 @@ def query_events_sqlite_json(db_path, event_type=None, offset=0, limit=1000, q=N
     graceful-degradation behavior for that case. ~5x faster than
     query_events_sqlite + json.dumps for large result sets (measured:
     4.8s -> 0.9s at 500,000 rows).
+
+    Returns (json_str, ids) - ids is the row's SQL id for each event in the
+    same order as json_str's array, captured for free during the fetchall()
+    loop this function already does. Callers (e.g. for a row-notes lookup)
+    need the page's ids before the *next* thing they do, and re-parsing
+    json_str just to recover them would defeat this function's whole
+    reason for existing.
+
+    The row's own "id" key is appended just before each object's closing
+    '}' rather than prepended - some ingested log formats already have
+    their own 'id' field in json_data (see LOG_NOISE_FIELDS in
+    static/socrates.js, which already has to filter one out of the detail
+    view), and JSON parsers resolve duplicate keys by taking the *last*
+    occurrence, so appending guarantees this id always wins regardless of
+    what a given blob already contains.
+
+    A row_note key is appended the same way for any row with a saved note
+    (get_row_notes, one extra query against this same events.db - cheap
+    and indexed, bounded to this page's ids). Spliced in by list index
+    before the parts are joined, not via a substring search over the
+    already-joined string - a row's own json_data could in principle
+    contain literal text that looks like another row's id marker, so
+    string-searching the joined output for it isn't safe, while indexing
+    into the not-yet-joined parts list is exact by construction.
     """
     with _db_connection(db_path) as conn:
         if not _has_events_table(conn):
-            return '[]'
+            return '[]', []
         sql, params = _build_events_query(conn, event_type, offset, limit, q, order_by, sort_dir)
         try:
             cursor = conn.execute(sql, params)
             parts = []
+            ids = []
             for row in cursor.fetchall():
-                blob = row[0]
+                row_id, blob = row[0], row[1]
+                ids.append(row_id)
                 stripped = blob.strip() if blob else ''
-                parts.append(blob if stripped.startswith('{') and stripped.endswith('}') else '{}')
-            return '[' + ','.join(parts) + ']'
+                if stripped.startswith('{') and stripped.endswith('}'):
+                    parts.append(stripped[:-1] + ',"id":' + str(row_id) + '}')
+                else:
+                    parts.append('{"id":' + str(row_id) + '}')
+
+            notes = get_row_notes(db_path, 'events', ids)
+            if notes:
+                for i, row_id in enumerate(ids):
+                    note = notes.get(row_id)
+                    if note is not None:
+                        parts[i] = parts[i][:-1] + ',"row_note":' + json.dumps(note) + '}'
+
+            return '[' + ','.join(parts) + ']', ids
         except sqlite3.OperationalError:
-            return '[]'
+            return '[]', []
+
+
+def has_row_notes(db_path):
+    """True if this analysis has at least one row-level note, across
+    either source_table. Used to conditionally warn before reanalyze,
+    which deletes events.db (and therefore every row_notes row) entirely -
+    see socrates.py's handle_get_status. Same read-path convention as
+    get_row_notes: no _init_db call, since a missing/empty events.db or a
+    row_notes-less old one both just mean no notes yet, not an error."""
+    with _db_connection(db_path) as conn:
+        try:
+            cursor = conn.execute('SELECT 1 FROM row_notes LIMIT 1')
+            return cursor.fetchone() is not None
+        except sqlite3.OperationalError:
+            return False
+
+
+def get_row_notes(db_path, source_table, row_ids):
+    """Look up existing notes for a bounded set of row ids (one page's
+    worth, e.g. <=100) in a single query. Returns {row_id: note}, omitting
+    any row_id with no note - "has a note" is a plain row-exists check
+    everywhere, not a note != '' filter.
+
+    Read path (unlike set_row_note below): doesn't call _init_db, since
+    that's a write-path convention here - a row_notes-less old events.db
+    simply has no notes yet, which is exactly what an empty dict already
+    means to every caller.
+    """
+    if not row_ids:
+        return {}
+    with _db_connection(db_path) as conn:
+        placeholders = ','.join('?' * len(row_ids))
+        try:
+            cursor = conn.execute(
+                f'SELECT row_id, note FROM row_notes WHERE source_table = ? AND row_id IN ({placeholders})',
+                [source_table] + list(row_ids)
+            )
+            return {row[0]: row[1] for row in cursor.fetchall()}
+        except sqlite3.OperationalError:
+            return {}
+
+
+def set_row_note(db_path, source_table, row_id, note):
+    """Create, overwrite, or (if note is empty) clear the note on one row.
+
+    Mirrors notes.txt's clear-on-empty convention: an empty note deletes
+    the row entirely rather than storing an empty string, so every other
+    reader can keep treating "row exists in row_notes" as the has-a-note
+    signal.
+    """
+    with _db_connection(db_path) as conn:
+        _init_db(conn)
+        if note:
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                '''INSERT INTO row_notes (source_table, row_id, note, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(source_table, row_id)
+                   DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at''',
+                (source_table, row_id, note, now, now)
+            )
+        else:
+            conn.execute(
+                'DELETE FROM row_notes WHERE source_table = ? AND row_id = ?',
+                (source_table, row_id)
+            )
+        conn.commit()
 
 
 def get_event_count_sqlite(db_path, event_type=None, q=None):
@@ -714,6 +862,15 @@ AGGREGATION_JSON_PATHS = {
         'Alert': ['$.alert.signature'],
         'Category': ['$.alert.category'],
         'Severity': ['$.alert.severity'],
+        'Ruleset': ['$.alert.signature_id'],
+    },
+    # Reclassified from 'alert' at ingestion (see create_sqlite_db) - same
+    # underlying JSON shape, so the same paths apply.
+    'protocol_decode': {
+        'Alert': ['$.alert.signature'],
+        'Category': ['$.alert.category'],
+        'Severity': ['$.alert.severity'],
+        'Ruleset': ['$.alert.signature_id'],
     },
     'dns': {
         # Suricata 8's new V3 DNS logging format (the new default - see
@@ -960,6 +1117,16 @@ AGGREGATION_TRUNCATE = {
 # formatting exactly (e.g. "Sev " + severity, or a boolean -> Yes/No).
 AGGREGATION_VALUE_TRANSFORMS = {
     ('alert', 'Severity'): lambda expr: f"'Sev ' || COALESCE({expr}, 0)",
+    # Classifies signature_id into the curated ruleset it most likely came
+    # from - see suricata_sid_ranges.py for how SURICATA_SID_RANGES was
+    # derived. Generated from that same table (not hand-duplicated SQL) so
+    # this can never drift from classify_alert_ruleset(), the Python
+    # equivalent used by extractValue()'s client-side fallback path.
+    ('alert', 'Ruleset'): lambda expr: sid_ranges_sql_case(f'CAST({expr} AS INTEGER)'),
+    # protocol_decode is reclassified from 'alert' at ingestion (see
+    # create_sqlite_db) with the same alert.* JSON shape - same transforms.
+    ('protocol_decode', 'Severity'): lambda expr: f"'Sev ' || COALESCE({expr}, 0)",
+    ('protocol_decode', 'Ruleset'): lambda expr: sid_ranges_sql_case(f'CAST({expr} AS INTEGER)'),
     ('flow', 'Alerted'): lambda expr: f"CASE WHEN {expr} THEN 'Yes' ELSE 'No' END",
     ('pgsql', 'SSL'): lambda expr: f"CASE WHEN {expr} IS NULL THEN '' WHEN {expr} THEN 'Yes' ELSE 'No' END",
     # extractValue does String(e.websocket.fin) -> the literal "true"/"false"
@@ -1061,7 +1228,7 @@ def _ensure_flow_json_indexes(conn):
 
 def _all_events_detail_expr(prefix=''):
     """SQL equivalent of extractValue's 'Detail' case for the merged 'all'
-    events view (static/socrates.js:3286-3306) - covers every event_type
+    events view (static/socrates.js, buildRowForEvent's 'Detail' case) - covers every event_type
     that can appear in the events table in pcap mode. 'log'/'sigmaalert'
     never appear here (log is a separate mode; sigma_alerts is a separate
     table), so they need no branch. filealerts has no JS branch either
@@ -1083,6 +1250,7 @@ def _all_events_detail_expr(prefix=''):
 
     return f'''CASE {prefix}event_type
         WHEN 'alert' THEN COALESCE(json_extract({jd}, '$.alert.signature'), '')
+        WHEN 'protocol_decode' THEN COALESCE(json_extract({jd}, '$.alert.signature'), '')
         WHEN 'dns' THEN COALESCE(json_extract({jd}, '$.dns.rrname'), json_extract({jd}, '$.dns.queries[0].rrname'), '')
         WHEN 'http' THEN COALESCE(json_extract({jd}, '$.http.http_method'), '') || ' ' || COALESCE(json_extract({jd}, '$.http.url'), '')
         WHEN 'tls' THEN COALESCE(json_extract({jd}, '$.tls.sni'), '')
@@ -1271,7 +1439,7 @@ def _sigma_alert_where(q, severity):
 def insert_sigma_alerts(db_path, alerts):
     """Insert Sigma alert dicts into the sigma_alerts table."""
     with _db_connection(db_path) as conn:
-        conn.executescript(SQLITE_SCHEMA)
+        _init_db(conn)
         for alert in alerts:
             try:
                 conn.execute(
@@ -1313,9 +1481,17 @@ def query_sigma_alerts_sqlite(db_path, offset=0, limit=1000, q=None, severity=No
 
         try:
             cursor = conn.execute(sql, params)
-            return [dict(row) for row in cursor.fetchall()]
+            alerts = [dict(row) for row in cursor.fetchall()]
         except sqlite3.OperationalError:
             return []
+
+        notes = get_row_notes(db_path, 'sigma_alerts', [a['id'] for a in alerts])
+        for a in alerts:
+            note = notes.get(a['id'])
+            if note is not None:
+                a['row_note'] = note
+
+        return alerts
 
 
 def get_sigma_alert_count_sqlite(db_path, q=None, severity=None):

@@ -1,58 +1,174 @@
 # Release Notes
 
+## 3.2.0
+
+### Pivot menu: right-click-style Include/Exclude/Only/Hunt on any value
+
+Clicking a value in a data table row, an expanded row's detail panel, or an
+aggregation table now opens a pivot menu instead of immediately filtering or
+expanding - **Include** (broaden the current search to also match this
+value), **Exclude** (narrow it to hide this value), **Only** (start a new
+search scoped to just this value, clearing every other filter), and **Hunt**
+(a full-text search for this value across every field, replacing the whole
+search - the one action that also clears any active search/filters
+entirely). Each of Include/Exclude/Only carries a color-coded magnifying-
+glass icon (green/red/blue) and an explanatory hover tooltip spelling out
+exactly what clicking it will do with the real column/value substituted in.
+
+The menu also offers **Copy to Clipboard** and one-click lookups against
+Google, VirusTotal, Shodan, AbuseIPDB, urlscan.io, and CyberChef, plus
+**user-defined custom lookup sites** (added/edited/removed from Settings,
+with a `{value}` URL template) - all persisted per-browser, with strict
+http/https-only URL validation on custom entries so a malicious saved
+template can't execute as `javascript:`/`data:` when opened.
+
+Because a click on a pivotable cell no longer expands the row, the menu also
+carries an **Expand Row** entry (relabeled **Collapse Row** once the row is
+already open) as a discoverable way back to the old behavior - the row's
+timestamp cell still expands directly on click, as before.
+
+This replaced the aggregation table's old single-click-to-filter behavior
+entirely - clicking a value there now opens the same menu rather than
+applying a filter immediately.
+
+### Per-row notes
+
+A small note icon on each table row (Suricata alerts, DNS/HTTP/TLS/flow
+events, Sigma alerts, file/YARA matches, imported log events) lets an
+analyst attach a short annotation to that specific piece of evidence -
+"false positive, known scanner", "escalated to IR ticket #4521" - separate
+from the existing whole-analysis Notes field. The icon reuses the same
+modal component as analysis-level notes, scoped to the clicked row instead.
+Row-level notes are lost on reanalyze (which rebuilds the underlying database from
+scratch) - intentional, and now surfaced explicitly: the reanalyze
+confirmation dialog shows a bold "WARNING! You have one or more notes on a
+table row and these will be destroyed" line and turns the Re-analyze button
+red, but only when the analysis actually has row-level notes to lose.
+
+### Security Onion Playbooks
+
+Expanding a Suricata or Sigma alert now shows a **Playbook** section (after
+Alert Details/Sigma Rule, before Notes) with plain-English investigation
+guidance for that specific detection rule, or the generic baseline
+guidance if no rule-specific playbook exists. It's fetched only on first
+expand and shown only if a playbook actually comes back, so an install
+with nothing baked in shows no trace of the feature at all. The (sometimes long)
+questions list can be collapsed back down independently, while the
+playbook's name and description stay visible either way.
+
+Playbook data is baked into the Docker/Podman image from Security Onion's
+own Playbooks repository (~15MB of gzip-compressed, English-only guidance -
+the Elasticsearch/Sigma-syntax queries each question also carries aren't
+portable to this app's SQLite store and are dropped entirely). Manual
+installs get nothing by default, but can point `PLAYBOOKS_DIR` at their own
+locally-built index. No runtime refresh mechanism - this is deliberately
+baked-in-only, unlike the Suricata/YARA/Sigma rulesets, since guidance text
+changes far less often than daily threat rulesets.
+
+### Suricata protocol-decode-alert noise
+
+Fixed per-source `suricata-update` invocations not passing `--disable-conf`,
+which let "Generic Protocol Command Decode" and similar protocol-anomaly
+alerts leak into results even when those alerts were disabled via
+`disable.conf`. A new opt-in
+`show_protocol_decode_alerts` setting (Rules modal) makes this noise
+explicitly opt-in rather than an accident of the fetch wiring. When
+enabled, these alerts now get their own dedicated "Decoder Alerts" tab
+(ordered right after Network Alerts/File Alerts, colored to match
+Anomalies since it's closely related - if not identical - signal) instead
+of diluting Network Alerts. Same columns and detail view as a regular
+alert, just without a Playbook section (there's no investigation guidance
+for something that isn't a real detection).
+
+### Smaller fixes and UI polish
+
+- A reanalyze icon next to the notes icon in the analysis header re-runs
+  the pipeline without leaving the page.
+- Fixed an intermittent "Loading Sankey diagram..." that never resolved -
+  the diagram now tracks its own fetch generation independently of the rest
+  of the page, closing a bug class that had been patched piecemeal twice
+  before for other unrelated actions.
+- Stat cards now always show just the filtered count (e.g. `229,378`), not
+  the old `229,378 / 229,831` form that could overflow a card's border on a
+  large analysis; a data type that a search/filter reduces to zero is dropped
+  from the grid entirely instead of shown as disabled.
+- The test-suite/dev-server port-8000 collision is gone for good - JSDOM
+  tests now run against an isolated fake origin instead of the app's real
+  port, so `python3 socrates.py` no longer needs to be stopped before
+  running tests.
+
+### Fixed while preparing this release
+
+- **The Docker/Podman image would not have started** - `playbook_lookup.py`
+  was missing from the final stage's `COPY` line despite being imported
+  unconditionally by `socrates.py`. The existing test meant to catch
+  exactly this class of bug (a module added but never wired into the image)
+  didn't, because it only checked whether the filename appeared *anywhere*
+  in the Dockerfile, and `playbook_lookup.py` happened to already be named
+  in three unrelated comments - the test now checks the actual `COPY`
+  instruction's argument list specifically.
+- The screenshot and demo-recording scripts (`scripts/capture_screenshots.py`,
+  `scripts/record_demo.py`) predated the pivot menu and were clicking table
+  rows and aggregation values directly, which now opens the pivot menu
+  instead of expanding/filtering. Both scripts were updated to target the
+  timestamp cell and the menu's Only/Include actions respectively.
+- A double-escaping bug in the File Info detail panel's EXIF Metadata
+  section could render a value containing `&`/`<`/`>`/`"` as garbled,
+  doubly-escaped HTML entities.
+
 ## 3.1.0
 
 ### Rename an analysis, add notes, and click-to-copy the MD5
 
 Clicking the filename in the analysis header now turns it into an
-editable field — Enter or clicking away saves the new display name
+editable field - Enter or clicking away saves the new display name
 (`POST /api/rename-analysis`), Escape cancels. Renaming only changes
 what's displayed (header, Previous Analyses list); the real
 originally-uploaded filename stays intact in `.meta`'s `original` field.
 Fixed a real bug found while building this: reopening a renamed analysis
 from the Previous Analyses list reverted the header back to the
-*original* filename — `loadAnalysis()` was unconditionally overwriting
+*original* filename - `loadAnalysis()` was unconditionally overwriting
 the already-correct, rename-aware display name with `.meta.extracted`
 (the upload-time filename, which a rename never touches), a leftover
 override that turned out to be entirely redundant even before renaming
 existed, since `name.txt` and `.meta.extracted` always start identical
 at upload time anyway. The filename is truncated with an ellipsis when
-it's too long to fit — hovering it shows the full filename via a native
+it's too long to fit - hovering it shows the full filename via a native
 tooltip.
 
 A new Notes field lets an analyst attach freeform investigation context
 to an analysis ("suspected GuLoader, C2 at x.top", "false positive,
-benign updater") — separate from rename, which only relabels the
+benign updater") - separate from rename, which only relabels the
 analysis rather than annotating it. A small icon next to the MD5/date in
 the analysis header opens a Notes modal (textarea, live character count,
-explicit Save/Cancel — not autosave, since a modal already has an
+explicit Save/Cancel - not autosave, since a modal already has an
 obvious commit action); the icon itself is muted when there are no notes
 and accent-colored once there are, so an analyst can tell at a glance
 without opening it. Notes are stored as a plain-text `notes.txt` per
 analysis (mirroring `name.txt`'s convention) and saved via a new
-`POST /api/analysis-notes` — unlike rename, multi-line text is preserved
+`POST /api/analysis-notes` - unlike rename, multi-line text is preserved
 verbatim (not collapsed to a single line) and an empty submission is a
 valid, intentional way to clear notes rather than a rejected empty name.
 
 The Previous Analyses list also shows this same icon on any row that has
-notes, so an analyst doesn't have to open every analysis just to check —
+notes, so an analyst doesn't have to open every analysis just to check -
 and clicking it jumps straight to that analysis and opens its Notes
 modal in one step, rather than just the normal overview.
 
 Two small bugs were caught and fixed while building this: the notes
 button initially had no dedicated CSS rule and fell back to the
 browser's default white button, which looked out of place next to the
-dark-styled reanalyze/delete buttons beside it — now matches
+dark-styled reanalyze/delete buttons beside it - now matches
 `.previous-analysis-reanalyze`'s background/color treatment, including
 its per-theme overrides. And any open modal (Notes included) used to
 stay open if you navigated back to the Welcome screen via the
-"SO-CRATES" logo — most confusing for Notes specifically, since it's
+"SO-CRATES" logo - most confusing for Notes specifically, since it's
 tied to the specific analysis you just left. `showWelcome()` now closes
 every modal via a `closeAllModals()` helper shared with the existing
 Escape-key handler.
 
 Clicking the MD5 hash next to it copies it to the clipboard, with a
-toast confirming success — or a clear error if `navigator.clipboard`
+toast confirming success - or a clear error if `navigator.clipboard`
 isn't available, which happens on any real HTTP (non-HTTPS) origin other
 than the browser's `localhost`/`127.0.0.1` loopback exception (a common
 way to reach a container's published port from another machine on the
@@ -61,7 +177,7 @@ same LAN).
 Since the display name is now user-editable, two different analyses
 could end up renamed to the same thing with nothing to tell them apart
 in the Previous Analyses list. Each row's hover tooltip now shows the
-sample's own date range instead of its MD5 — an analyst is far more
+sample's own date range instead of its MD5 - an analyst is far more
 likely to recognize "when" than an MD5 fragment, and the MD5 is still
 reachable via the row's href/status-bar URL, so showing it in the
 tooltip too was redundant. Keeping the date range in the tooltip rather
@@ -83,7 +199,7 @@ instead of the old startup rule-check.
 
 While an update runs, a small spinner and an elapsed-time counter (`Updating…
 45s`) show it's actively working, instead of the raw update log dumping
-straight into the modal — that log (Suricata's `suricata-update` run in
+straight into the modal - that log (Suricata's `suricata-update` run in
 particular can be dozens of lines) read as noisy for what's meant to be a
 simple progress indicator. The actual log is still there for anyone who
 wants it: a "View Log" toggle reveals it on demand, both while an update is
@@ -91,17 +207,17 @@ running and after it finishes, and "Hide Log" collapses it again without
 losing the underlying output (still fetched via the same polling `/api/rule-
 update-status` calls either way). Once an update finishes, a green checkmark
 or red X appears next to that ruleset's Update button reflecting whether it
-succeeded — a persistent complement to the existing completion toast, which
+succeeded - a persistent complement to the existing completion toast, which
 is easy to miss if you're not looking right when it fires. The icon only
 appears after an update has actually run this session (never on first load,
 before anything's been triggered), so it can't be mistaken for a stale
 success/failure from a prior visit.
 
 A manually-installed (non-Docker/Podman) deployment starts with zero
-rules configured for all three engines — unlike the container image,
+rules configured for all three engines - unlike the container image,
 which bakes them all in and copies them into place before the server
 ever accepts a request. Nothing breaks without rules (every analyzer
-degrades gracefully — Suricata still parses full flow/protocol data with
+degrades gracefully - Suricata still parses full flow/protocol data with
 just no alerts; YARA/Sigma attempt an on-demand background download on
 the first real upload if internet is available), but there was
 previously no indication to a new manual-install user that anything was
@@ -112,7 +228,7 @@ Rules" link straight to the Rules modal.
 **Fixed a real report from this exact scenario**: the five "not
 available"/"using cached" progress messages across all three engines
 said "No internet access detected" unconditionally in their `else`
-branch — which is reached both when a reachability check genuinely
+branch - which is reached both when a reachability check genuinely
 failed *and* when `network_allowed=False` (server startup, which never
 checks reachability at all by design, so it can't block on a slow or
 unreachable mirror). A user on a machine with real internet access saw
@@ -121,29 +237,29 @@ distinguishes the two cases: "no internet access" is only ever printed
 when a reachability check actually ran and failed; the startup
 (never-checked) case instead prints a short, consistent
 `WARNING! No <ruleset> rules found` for whichever ruleset(s) are
-missing. These warnings state a fact, not an instruction — the startup
+missing. These warnings state a fact, not an instruction - the startup
 banner's existing "Tip! ... click the menu in the upper-right corner
 and then select Rules." line (always printed, not just when something's
 missing, since it's equally useful for a container install whose
 baked-in rules might just be outdated) is what tells the user what to
 do about it.
 
-Each ruleset section now names and links to its actual upstream source —
+Each ruleset section now names and links to its actual upstream source -
 Suricata to [Emerging Threats Open](https://rules.emergingthreats.net/),
 YARA to [YARA Forge](https://github.com/YARAHQ/yara-forge), Sigma to
-[SigmaHQ](https://github.com/SigmaHQ/sigma) — the same three projects
+[SigmaHQ](https://github.com/SigmaHQ/sigma) - the same three projects
 already listed in [Credits](credits.md), so an analyst can see what
 they're actually pulling in before clicking Update.
 
 Each ruleset's "updated" date is now colored with the warning color once
-it's more than 30 days old (or was never successfully updated) — an
+it's more than 30 days old (or was never successfully updated) - an
 analyst previously had to notice and mentally calculate staleness from a
 plain date string; now it's visible at a glance across all four dates
 (Suricata, YARA, Sigma Windows, Sigma Linux).
 
 - The modal now grows up to 1550px / 95% of viewport width and 92% of
   viewport height (up from a fixed 900px), and each ruleset's log box no
-  longer has its own small fixed height — it sizes to its content, so the
+  longer has its own small fixed height - it sizes to its content, so the
   modal itself is the only scrollable region instead of three separate,
   cramped inner scrollbars. On a large enough screen, a full
   `suricata-update` run is visible with no scrollbars at all.
@@ -155,9 +271,9 @@ plain date string; now it's visible at a glance across all four dates
   variable-length update log.
 
 Startup itself is now quieter too: it no longer prints "No internet
-access detected — using baked-in Suricata rules" or "Baked-in rules
-copied successfully" — since startup never touches the network by
-design, that message no longer reflected an actual check and was just
+access detected - using baked-in Suricata rules" or "Baked-in rules
+copied successfully" - since startup never touches the network by
+design, neither message reflected an actual check and was just
 noise every time. The old "Rule updates are now managed from the web
 interface..." line is now a friendlier tip:
 "Tip! To check for rule updates, click the menu in the upper-right
@@ -167,13 +283,13 @@ corner and then select Rules."
 
 `setup_yara_rules()`/`setup_sigma_rules()` previously used a cached rules
 file forever once downloaded or copied from the Docker image, with no
-freshness check — a long-lived install's rules could silently drift
+freshness check - a long-lived install's rules could silently drift
 arbitrarily far behind YARA Forge's weekly and Zircolite-Rules-v2's daily
 upstream releases. Both now refresh a cached copy in place if it's older
 than 24 hours and the network is reachable, falling back to the
 still-usable stale copy on any refresh failure rather than losing rules
-entirely. The three potentially-stale sources (YARA, Sigma windows, Sigma
-linux) share a single reachability probe instead of each blocking through
+entirely. The three potentially-stale sources (YARA, Sigma Windows, Sigma
+Linux) share a single reachability probe instead of each blocking through
 its own timeout, so a slow/unreachable network adds at most ~5s to
 startup instead of ~15s.
 
@@ -213,52 +329,52 @@ clone:
   ... /usr/local/lib/zircolite-venv`) was followed by a separate `chown -R`
   to give the app user ownership. On an overlay filesystem, a `chown -R`
   over a directory copied in from another stage forces a full copy-up of
-  every file just to change ownership metadata — doubling that layer's
+  every file just to change ownership metadata - doubling that layer's
   size. Fixed by using `COPY --chown=1000:1000` directly instead.
 - The Zircolite git clone was copied into the final image wholesale, but
   `sigma_analyzer.py` only ever uses `zircolite.py`, the `zircolite/`
-  package, and `config/config.yaml` from it — the clone's own bundled
+  package, and `config/config.yaml` from it - the clone's own bundled
   `rules/` (unused; SO-CRATES bakes in its own Sigma rules separately),
   `gui/`, `pics/`, `tests/`, `docs/`, and `templates/` directories were
   pure dead weight. Pruned in the builder stage before the final `COPY`,
   shrinking that copy from ~53MB to under 1MB.
 - The `unzip` package is now only needed at build time (to extract the
-  YARA Forge release archive) — the app itself parses ZIP uploads with
-  Python's own `zipfile` module — so it's no longer installed in the
+  YARA Forge release archive) - the app itself parses ZIP uploads with
+  Python's own `zipfile` module - so it's no longer installed in the
   final image.
 
 Also fixed: the Dockerfile's `COPY` line for top-level `.py` modules was
-missing `ohmydebn_colors.py` (added earlier this session), which made the
-container fail at import time. The regression test that's meant to catch
+missing `ohmydebn_colors.py`, which made the container fail at import time.
+The regression test that's meant to catch
 this (`test_dockerfile_copies_socrates_files`) used its own
-hand-maintained file list that had the same gap — it now dynamically
+hand-maintained file list that had the same gap - it now dynamically
 checks every `.py` file actually in the repo root against the Dockerfile
 instead.
 
 ### Theme renames and additions
 
 - **C64 → Breadbin Blue**, **MS-DOS Blue → DOS Blue**, **Windows XP → Luna
-  Blue** — both the display label and the underlying registry key/cheat
+  Blue** - both the display label and the underlying registry key/cheat
   code changed (`c64`→`breadbin-blue`/`bread`, `msdos`→`dos-blue`/`dos`,
   `winxp`→`luna-blue`/`luna`), to move away from specific product/console
   branding.
 - Two new Fun themes: **Digital Frontier** (a Tron-inspired look, cheat
   code `digit`) and **Retro Handheld** (a Game Boy-inspired 4-shade green
-  look, cheat code `retro`) — named generically for the same reason.
+  look, cheat code `retro`) - named generically for the same reason.
 
 ### Themes modal UI cleanup
 
-- The "Sync theme with OS" toggle moves to the top of the Themes modal
+- The "Sync theme to OhMyDebn theme" toggle moves to the top of the Themes modal
   and hides the manual picker while enabled, since OhMyDebn owns the
   theme while sync is on.
-- Removed the active-theme checkmark from the theme tile grid — the
+- Removed the active-theme checkmark from the theme tile grid - the
   border-color/bold-text highlight already marks the active tile, so the
   checkmark (and the empty placeholder space reserved for it on every
   other tile) was redundant visual noise.
 
 ### OhMyDebn theme sync
 
-A new opt-in "Sync theme with OS" setting (off by default, in the Themes
+A new opt-in "Sync theme to OhMyDebn theme" setting (off by default, in the Themes
 modal) lets SO-CRATES follow OhMyDebn desktop theme switches automatically.
 A `GET /api/theme` endpoint reads the active theme's name and color
 palette from a single `OHMYDEBN_THEME_DIR` environment variable (unset
@@ -295,14 +411,14 @@ a second while the tab is visible.
 - **Critical: JPEGs (and other file types) misclassified as PE
   executables.** `exif_analyzer.py`'s category detection ran a loose
   substring check (`'pe' in file_type.lower()`) before its more reliable
-  MIME-type checks — `"JPEG"`.lower() contains the substring `"pe"` (from
+  MIME-type checks - `"JPEG".lower()` contains the substring `"pe"` (from
   "j-**pe**-g"), so every JPEG silently lost its image-specific EXIF
   fields to the executable-metadata branch instead. Reordered so the
   reliable MIME-type checks run first.
 - **Critical: baked-in Suricata rules silently overwrote a previously
   fetched, better ruleset on every single restart.** The no-live-update
   branch of `setup_suricata_config()` checked for the baked-in rules copy
-  *before* checking whether rules already existed on disk — and since
+  *before* checking whether rules already existed on disk - and since
   every server startup calls this with `network_allowed=False`
   unconditionally, a real Docker/Podman deployment with a persistent
   `/data` volume would have its live-updated `suricata.rules` reverted
@@ -313,17 +429,17 @@ a second while the tab is visible.
 - **FTS5 search index could drift from `file_metadata.json`.** The file
   metadata merge path relied on a stale comment claiming FTS5's
   external-content table auto-updates on a plain `UPDATE` of the content
-  table — it doesn't. Fixed with an explicit
+  table - it doesn't. Fixed with an explicit
   `INSERT INTO events_fts(events_fts, rowid, json_data) VALUES('delete',
   ...)` plus re-insert.
 - **Suricata rule updates now fall back to baked-in/existing rules if
   `suricata-update` itself fails**, not just when the initial internet
-  reachability probe fails — a proxy blocking the real rule mirrors, a
+  reachability probe fails - a proxy blocking the real rule mirrors, a
   cert error, or a full disk could previously leave Suricata with no
   rules at all despite "internet access" having been detected.
 - **`_run_ruleset_update()`'s error reporting was silently broken.** Its
   `except` branch logged a failed update to the progress log but never
-  set `_rule_update_state[name]['error']` — always `None` — so the
+  set `_rule_update_state[name]['error']` - always `None` - so the
   frontend's error-vs-success toast (`status[name].error ? '... update
   error: ...' : '... rules updated'`) could never actually show a
   failure: a ruleset update that raised still reported success, giving an
@@ -332,13 +448,13 @@ a second while the tab is visible.
   `(OSError, urllib.error.URLError)`**, but the download helper can also
   raise `zipfile.BadZipFile` (a truncated, rate-limited, or HTML-error
   response that isn't actually a zip) or `KeyError` (if the expected
-  member is ever renamed upstream) — neither is an `OSError` subclass, so
+  member is ever renamed upstream) - neither is an `OSError` subclass, so
   both escaped the fallback entirely and turned a routine "check for
   updates" refresh into a whole-file-analysis failure despite a perfectly
   good cached copy sitting on disk. Both exceptions are now caught too.
 - **`get_sigma_rules_info()`'s docstring promises it never raises**, but
   it opened its cached rules file in plain text mode with no `errors`
-  handling — unlike its YARA/Suricata siblings, which both use
+  handling - unlike its YARA/Suricata siblings, which both use
   `errors='ignore'`. Invalid bytes in a corrupted cached file raised
   `UnicodeDecodeError` instead of the documented graceful fallback,
   breaking the entire Rules-info panel (Suricata and YARA included) for
@@ -356,7 +472,7 @@ a second while the tab is visible.
   surfaced as a toast instead of being silent data loss the user has no
   way to notice.
 - A YARA match's `file_path` field was silently truncated for any scanned
-  filename containing a space (e.g. a user-uploaded `My Invoice.pdf`) —
+  filename containing a space (e.g. a user-uploaded `My Invoice.pdf`) -
   the CLI output parser took the last whitespace-delimited token as the
   path, which only ever worked because rule names never contain
   whitespace while arbitrary uploaded filenames can. Currently harmless
@@ -369,12 +485,12 @@ a second while the tab is visible.
   nothing in that known set matches.
 - Multiple frontend `fetch()` call sites built URLs by interpolating the
   current file's MD5 directly into a query string without
-  `encodeURIComponent` — swept all of them (previously only
+  `encodeURIComponent` - swept all of them (previously only
   `buildStreamUrl()`/`buildSearchQuery()` encoded correctly).
 - Clicking a column header inside an Aggregation Tables mini-panel
   (e.g. the "Count"/"Value" headers) silently re-sorted the unrelated
   main data table underneath it, with zero visual feedback in the panel
-  itself — `.agg-table th` had `cursor: pointer` copy-pasted from the
+  itself - `.agg-table th` had `cursor: pointer` copy-pasted from the
   real sortable table's header style, so the app's own delegated
   click-to-sort handler (which only skips headers with `cursor: default`)
   treated it as sortable. Fixed by giving aggregation-table headers
@@ -385,22 +501,22 @@ a second while the tab is visible.
 - `_non_artifact_files()` (the display-name fallback used when `name.txt`
   is missing) and `handle_post_reanalyze()`'s file-selection logic used
   to be two separately hand-rolled, drifted implementations of "the real
-  uploaded file in this analysis directory, minus pipeline artifacts" —
+  uploaded file in this analysis directory, minus pipeline artifacts" -
   the former blanket-excluded any `.txt`/`.json`/`.db`-suffixed filename
   by extension, so a legitimately-uploaded standalone file with one of
   those extensions could never be found as a display-name fallback, even
   though reanalyze's own separate listing (extension-agnostic, exact
-  artifact names only) happily found and re-analyzed that exact same
+  artifact names only) happily found and reanalyzed that exact same
   file. Consolidated into one shared helper so the two can no longer
   silently disagree.
 - `is_host_reachable()` never closed the socket it opened to test
-  reachability — masked by CPython's refcounting GC, but a real resource
+  reachability - masked by CPython's refcounting GC, but a real resource
   leak (and the source of `ResourceWarning: unclosed <socket.socket...>`
   noise seen in test runs). Now uses a `with` block.
 - Removed dead code: the `reachable_check` parameter on
   `setup_yara_rules`/`setup_sigma_rules`, the `_check_reachable()` helper
   duplicated in both `yara_analyzer.py` and `sigma_analyzer.py`, and
-  `validators.make_reachability_checker()` — all unused after an earlier
+  `validators.make_reachability_checker()` - all unused after an earlier
   refactor moved rule updates to independent per-ruleset background
   threads.
 - A handful of docs pages had drifted from the current source: a stale
@@ -423,27 +539,27 @@ a second while the tab is visible.
 
 SO-CRATES now installs Suricata from Debian's `trixie-backports` repo
 (8.0.6) instead of the base `trixie` repo's 7.0.10, along with
-`suricata-update` 1.3.8 (fixes a real security issue — arbitrary file write
+`suricata-update` 1.3.8 (fixes a real security issue - arbitrary file write
 via path traversal in rule archive extraction, OISF redmine #8633). This
 applies to both the Dockerfile and bare-metal installs.
 
 **Critical fix that came with the upgrade:** Suricata 8 silently changed DNS
-logging to a new default format — `dns.rrname`/`dns.rrtype`, read directly
+logging to a new default format - `dns.rrname`/`dns.rrtype`, read directly
 by every DNS column in the UI, no longer exist at the top level at all (the
 same data moved to `dns.queries[0]`). This broke the `dns` tab completely
-(Query/Type went blank) — one of the highest-volume, most-viewed tabs in the
+(Query/Type went blank) - one of the highest-volume, most-viewed event types in the
 app. Fixed with a fallback that keeps working for previously-stored
 analyses from Suricata 7 too.
 
 ### New and fixed protocol support
 
-- **enip** and **ntp** now produce real events — Suricata 7.0.10 detected
+- **enip** and **ntp** now produce real events - Suricata 7.0.10 detected
   both correctly but had no eve-log output module for either, so nothing
   ever reached the UI regardless of config. Both work now that Suricata 8
   ships the loggers.
-- **websocket, pop3, mdns, ldap** — full column, filtering, and aggregation
+- **websocket, pop3, mdns, ldap** - full column, filtering, and aggregation
   support for these protocols, new in Suricata 8.
-- **arp** — decode-layer logging support added, but kept **off by default**
+- **arp** - decode-layer logging support added, but kept **off by default**
   (Suricata's own stance: "many events can be logged"). A live test across
   35 sample captures showed ARP at up to 12% of events in a realistic
   multi-host capture. Set the `ENABLE_ARP_LOGGING` environment variable to
@@ -451,19 +567,19 @@ analyses from Suricata 7 too.
 - 18 previously-enabled-but-unsupported Suricata protocols gained full
   column/aggregation support for the first time (previously falling back to
   a generic 6-column view): quic, dhcp, ftp_data, smb, ssh, krb5, sip, snmp,
-  mqtt, http2, dcerpc, rdp, tftp, ike, nfs, rfb, bittorrent_dht, smtp — plus
+  mqtt, http2, dcerpc, rdp, tftp, ike, nfs, rfb, bittorrent_dht, smtp - plus
   `ftp` and `anomaly`, which predated this work but had the same gap.
 - Fixed real data-shape bugs found while verifying against real traffic:
-    - `quic.ja3`/`ja3s` are objects (`{hash, string}`), not plain strings —
+    - `quic.ja3`/`ja3s` are objects (`{hash, string}`), not plain strings -
       previously rendered as the literal text `[object Object]`.
     - `rfb.client_protocol_version`/`server_protocol_version` are `{major,
       minor}` objects, and `security_type` is nested under `authentication`,
       not top-level.
     - `anomaly.message` was read in three separate places (a field that has
-      never existed in Suricata's eve.json) — the real field is
+      never existed in Suricata's eve.json) - the real field is
       `anomaly.event`.
     - HTTP/2 traffic (including cleartext h2c) is always logged by Suricata
-      under `event_type: "http"`, never a separate `"http2"` type — removed
+      under `event_type: "http"`, never a separate `"http2"` type - removed
       dead code that assumed otherwise; real HTTP/2 traffic already renders
       correctly under the existing `http` tab.
 - Fixed a Suricata config-generation bug: re-running setup on an
@@ -477,7 +593,7 @@ analyses from Suricata 7 too.
   (`GET /api/aggregation-data`, `GET /api/sankey-data`) via SQL `GROUP BY`,
   scaling with the query instead of the full dataset size, with unfiltered
   results cached per-analysis.
-- Uploads are now parsed as a stream instead of buffered in memory — peak
+- Uploads are now parsed as a stream instead of buffered in memory - peak
   memory no longer scales with upload size. Leftover temp files from an
   upload interrupted by a server crash are now swept on the next startup.
 - Upload size limit raised from a fixed 1,000 MB to a user-configurable
@@ -488,21 +604,24 @@ analyses from Suricata 7 too.
 
 ### UI
 
-- 20 new themes (25 total, up from 5), grouped into Dark / Light / Fun
-  sections in the gear menu, each with its own favicon — including three
-  new Fun themes: **CGA** (classic 4-color CGA Palette 1 High-Intensity —
-  black background, cyan/magenta/white), **C64** (Commodore 64 blue-on-blue
-  aesthetic, using the real Pepto/VICE C64 16-color palette — blue
-  background, light-blue border/text/accent, including the header's
-  "SO-CRATES" logo, for a deliberately flat, monochrome resting look, with a
-  distinct cyan `--interactive-highlight` for hover/focus/active borders so
-  those states are still visible), and **Vaporwave** (a modern, non-retro
-  counterpart to the other three — dark purple/navy background with hot-pink
-  accents and cyan/mint/pastel-yellow highlights, evoking the 2010s+
-  vaporwave internet aesthetic rather than nostalgia for old hardware).
+- 20 new themes (25 total, up from 5), grouped into Dark Themes, Light
+  Themes, and Fun Themes sections in the gear menu, each with its own
+  favicon. Three of the new Fun themes stand out:
+    - **CGA** - classic 4-color CGA Palette 1 High-Intensity look (black
+      background, cyan/magenta/white)
+    - **C64** - Commodore 64 blue-on-blue aesthetic, using the real
+      Pepto/VICE C64 16-color palette (blue background, light-blue
+      border/text/accent, including the header's "SO-CRATES" logo), for a
+      deliberately flat, monochrome resting look, with a distinct cyan
+      `--interactive-highlight` for hover/focus/active borders so those
+      states are still visible
+    - **Vaporwave** - a modern, non-retro counterpart to the other three:
+      dark purple/navy background with hot-pink accents and
+      cyan/mint/pastel-yellow highlights, evoking the 2010s+ vaporwave
+      internet aesthetic rather than nostalgia for old hardware
 - The active theme is now marked with a checkmark in the gear menu.
 - Each Fun theme (C64, CGA, Hacker, Sguil, Vaporwave) now has its own typed
-  cheat code — type it anywhere outside a text field to switch instantly. See
+  cheat code - type it anywhere outside a text field to switch instantly. See
   [Themes](themes.md) for the codes.
 - The gear menu's Fun Themes section now appears after Light Themes
   instead of between Dark and Light (`THEME_GROUP_ORDER` in
@@ -523,15 +642,15 @@ analyses from Suricata 7 too.
 - Docs now live on a real site (MkDocs Material, deployed to GitHub Pages)
   instead of a single growing README plus a handful of unlinked `docs/*.md`
   files. `README.md` is now a short landing page (tagline, a screenshot,
-  and links out to the docs site); everything else — installation
+  and links out to the docs site); everything else - installation
   (Docker/Podman/OhMyDebn/Manual), usage, themes, configuration, security,
-  architecture, the API reference, and the filtering design doc — is now
+  architecture, the API reference, and the filtering design doc - is now
   properly cross-linked, searchable, and navigable instead of split across
   files with no shared nav.
 - The Themes page shows a real screenshot of every one of the 25 themes,
   grouped under Dark/Light/Fun headings, click-to-zoom.
 - Added `scripts/capture_screenshots.py` to regenerate every docs screenshot
-  in one run against the app's own built-in sample pcap — no local fixture
+  in one run against the app's own built-in sample pcap - no local fixture
   or hardcoded analysis needed.
 - Added a recorded demo video (`scripts/record_demo.py`, Playwright) to the
   Home page, walking through a sample analysis end-to-end: upload, each
@@ -545,7 +664,7 @@ analyses from Suricata 7 too.
   instead of one long page, matching Installation's existing
   Overview/Docker/Podman/OhMyDebn/Manual split.
 - Went through every docs page and verified its claims directly against
-  current source rather than trusting what the docs already said — fixed
+  current source rather than trusting what the docs already said - fixed
   real drift in the API reference (missing endpoint, wrong response
   shapes, a fictional error code), the security page, the architecture
   page, and several others (stale file-layout diagrams, wrong config
@@ -556,7 +675,7 @@ analyses from Suricata 7 too.
 - **CGA theme's borders read as dark green instead of cyan**: every
   border/panel-outline in the app was driven by `--bg-hover`, which also
   doubles as the hover-state background fill. CGA's `--bg-hover` (`#004040`)
-  had equal green/blue channels at low brightness — green dominates human
+  had equal green/blue channels at low brightness - green dominates human
   luminance perception far more than blue, so the color skewed
   green-looking despite being a "pure cyan" hue numerically. Fixed properly
   by splitting borders into their own `--border-color` variable, distinct
@@ -585,14 +704,14 @@ analyses from Suricata 7 too.
   reason, then reintroduced with the real purpose described above.)
 - **Upload disk-space check used the wrong number**: `/api/upload`'s
   upfront disk-space check was sized against the raw `Content-Length` of
-  the request, not the resolved upload-size ceiling (`effective_max`) — a
+  the request, not the resolved upload-size ceiling (`effective_max`) - a
   compressed upload (e.g. a ZIP) can have a `Content-Length` far smaller
   than what it's allowed to expand to, so the check could pass even when
   there wasn't really enough room. `/api/load-url` already checked against
   `effective_max`; `/api/upload` now does too.
 - **Load-from-URL password gap**: `/api/load-url` only ever tried the
   MTA-style dated password (`infected_YYYYMMDD`) when a URL's path matched
-  `/YYYY/MM/DD/` on `malware-traffic-analysis.net` — any other password
+  `/YYYY/MM/DD/` on `malware-traffic-analysis.net` - any other password
   attempt was skipped entirely, unlike `/api/upload`, which always tries
   the plain `infected` password regardless of source. `/api/load-url` now
   always tries `infected` too (cheap, harmless even when it doesn't apply),
@@ -604,12 +723,12 @@ analyses from Suricata 7 too.
   for all three codes (`cga`, `31337`, `sguil`).
 - The Welcome modal's help text had a hardcoded `Maximum file size is
   1000MB.` string that never reflected reality once upload size became
-  user-configurable (see Performance & scalability, above) — a user who'd
+  user-configurable (see Performance & scalability, above) - a user who'd
   raised their own ceiling in Settings still saw the stale default with no
   indication it was adjustable. Now computed from the user's actual
   effective limit each time the modal opens.
 - `extractAllValue()`'s `'Command'`/`'Message'` column overrides were stale
-  and actively wrong — `Command` ignored pgsql/enip/pop3's own real command
+  and actively wrong - `Command` ignored pgsql/enip/pop3's own real command
   fields in the "All Events" view, and `Message` read the same
   never-existed `anomaly.message` field. Both removed in favor of the
   already-correct per-protocol handling.
@@ -620,9 +739,9 @@ analyses from Suricata 7 too.
 - **Podman Compose deployment bug**: `docker-compose.podman.yml`'s
   `user: "${UID}:${GID}"` silently resolved to an empty `user: ":"` when
   following the README's exact instructions, since bash doesn't export
-  `$UID`/`$GID` by default — this forced the container to run as root
+  `$UID`/`$GID` by default - this forced the container to run as root
   instead of the current user, defeating the whole point of the
   `userns_mode: keep-id` volume-permission mapping. Confirmed by actually
-  building and running the image. README now has users write a `.env` file
-  instead of relying on a shell export, since `podman compose` reads that
+  building and running the image. README now instructs users to write a
+  `.env` file instead of relying on a shell export, since `podman compose` reads that
   automatically from any terminal, including for a later `down`/`restart`.

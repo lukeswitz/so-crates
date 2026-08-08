@@ -1,37 +1,12 @@
-        :root {
-            --bg-primary: #0d1117;
-            --bg-secondary: #161b22;
-            --bg-tertiary: #21262d;
-            --bg-hover: #30363d;
-            --bg-hover-light: #484f58;
-            --border-color: #30363d;
-            --text-primary: #c9d1d9;
-            --text-bright: #f0f6fc;
-            --text-muted: #8b949e;
-            --accent: #58a6ff;
-            --accent-hover: #1f6feb;
-            --bg-drop-active: #1c2333;
-            --modal-backdrop: rgba(0,0,0,0.8);
-            --badge-danger-text: #ff6b6b;
-            --danger-bg: #1f2328;
-            --badge-bg-neutral: #0b0e11;
-            --badge-warning-text: #ffa726;
-            --badge-success-text: #66bb6a;
-            --tag-red-text: #ff6b6b;
-            --tag-purple-text: #ba68c8;
-            --tag-orange-text: #ffa726;
-            --tag-blue-text: #42a5f5;
-            --tag-gray-text: #9e9e9e;
-            --tag-green-text: #66bb6a;
-            --help-icon-color: #f1c40f;
-        }
-
-        /* Mirrors :root exactly. :root only matches <html> itself, so a
+        /* [data-theme="dark"] must be listed alongside :root (not left to
+           inherit from it) because :root only matches <html> itself - a
            nested element (the theme preview swatch) can't select "dark" by
-           just omitting data-theme - it would inherit whatever theme is
+           just omitting data-theme, it would inherit whatever theme is
            really active on <html> instead. This makes "dark" explicitly
-           selectable like every other theme, purely for that case. */
-        [data-theme="dark"] {
+           selectable like every other theme, purely for that case. A
+           shared selector list here (rather than two separate blocks with
+           identical values) means the two can never drift out of sync. */
+        :root, [data-theme="dark"] {
             --bg-primary: #0d1117;
             --bg-secondary: #161b22;
             --bg-tertiary: #21262d;
@@ -1067,6 +1042,108 @@
             --help-icon-color: #FFFF55;
         }
 
+        /* Dracula (draculatheme.com) - official palette: background
+           #282a36, "Current Line" #44475a (used here for --bg-hover, its
+           canonical role), foreground #f8f8f2, comment #6272a4, and the
+           signature purple #bd93f9 as the primary accent. */
+        [data-theme="dracula"] {
+            --bg-primary: #282a36;
+            --bg-secondary: #21222c;
+            --bg-tertiary: #343746;
+            --bg-hover: #44475a;
+            --bg-hover-light: #565973;
+            --border-color: #3b3d4d;
+            --text-primary: #f8f8f2;
+            --text-bright: #ffffff;
+            --text-muted: #6272a4;
+            --accent: #bd93f9;
+            --accent-hover: #9d7cd8;
+            --bg-drop-active: #2d2f3d;
+            --modal-backdrop: rgba(0,0,0,0.8);
+            --badge-danger-text: #ff5555;
+            --danger-bg: #3a2020;
+            --badge-bg-neutral: #191a21;
+            --badge-warning-text: #ffb86c;
+            --badge-success-text: #50fa7b;
+            --tag-red-text: #ff5555;
+            --tag-purple-text: #bd93f9;
+            --tag-orange-text: #ffb86c;
+            --tag-blue-text: #8be9fd;
+            --tag-gray-text: #6272a4;
+            --tag-green-text: #50fa7b;
+            --help-icon-color: #f1fa8c;
+        }
+
+        /* Solarized Dark (ethanschoonover.com/solarized) - official base
+           tones: base03 #002b36 (background), base02 #073642 (highlights),
+           base01 #586e75 (comments/muted), base0 #839496 (body text),
+           base2 #eee8d5 (emphasized text on dark). Deliberately
+           low-contrast/muted by design - that's the whole point of the
+           original palette, not an oversight - so this theme reads flatter
+           than the others. Blue #268bd2 is the canonical accent. */
+        [data-theme="solarized-dark"] {
+            --bg-primary: #002b36;
+            --bg-secondary: #001f27;
+            --bg-tertiary: #073642;
+            --bg-hover: #0a4552;
+            --bg-hover-light: #14555f;
+            --border-color: #0d3d47;
+            --text-primary: #839496;
+            --text-bright: #eee8d5;
+            --text-muted: #586e75;
+            --accent: #268bd2;
+            --accent-hover: #2075b5;
+            --bg-drop-active: #063540;
+            --modal-backdrop: rgba(0,0,0,0.8);
+            --badge-danger-text: #dc322f;
+            --danger-bg: #2a1418;
+            --badge-bg-neutral: #001920;
+            --badge-warning-text: #b58900;
+            --badge-success-text: #859900;
+            --tag-red-text: #dc322f;
+            --tag-purple-text: #6c71c4;
+            --tag-orange-text: #cb4b16;
+            --tag-blue-text: #268bd2;
+            --tag-gray-text: #586e75;
+            --tag-green-text: #859900;
+            --help-icon-color: #b58900;
+        }
+
+        /* Monokai - classic Sublime Text default palette: background
+           #272822, foreground #f8f8f2, comment #75715e, and #3e3d32 for
+           the selection/line-highlight (used here for --bg-hover, its
+           canonical role in the original). Lime green #a6e22e is the
+           single most recognizable Monokai color (class/function names),
+           used as both the accent and success color, same as most
+           Monokai-derived UI themes do. */
+        [data-theme="monokai"] {
+            --bg-primary: #272822;
+            --bg-secondary: #1e1f1a;
+            --bg-tertiary: #34352d;
+            --bg-hover: #3e3d32;
+            --bg-hover-light: #49483e;
+            --border-color: #3b3a33;
+            --text-primary: #f8f8f2;
+            --text-bright: #ffffff;
+            --text-muted: #75715e;
+            --accent: #a6e22e;
+            --accent-hover: #8fc722;
+            --bg-drop-active: #2b2c1e;
+            --modal-backdrop: rgba(0,0,0,0.8);
+            --badge-danger-text: #f92672;
+            --danger-bg: #3a1a26;
+            --badge-bg-neutral: #1b1c17;
+            --badge-warning-text: #fd971f;
+            --badge-success-text: #a6e22e;
+            --tag-red-text: #f92672;
+            --tag-purple-text: #ae81ff;
+            --tag-orange-text: #fd971f;
+            --tag-blue-text: #66d9ef;
+            --tag-gray-text: #75715e;
+            --tag-green-text: #a6e22e;
+            --help-icon-color: #e6db74;
+        }
+
         [data-theme="hacker"] .search-btn {
             background: var(--bg-hover);
             color: var(--accent);
@@ -1110,22 +1187,50 @@
         .app-header-filename-input:focus { outline: none; border-color: var(--interactive-highlight, var(--accent)); }
         .app-header-right { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; justify-content: flex-end; }
         .app-header-meta { display: flex; align-items: center; gap: 15px; margin-left: 15px; }
+        /* Centers in the full header bar (.app-header is position: fixed,
+           so it's the containing block here), independent of how wide the
+           left-side icon/filename group happens to be - same reasoning as
+           the footer teaser's centering, but via absolute positioning
+           instead of a 3-column flex split, since this element is shared
+           with analysis mode's file-metadata content (see showWelcomeUI()'s
+           comment) and must not be pulled out of that layout. */
+        /* Links to the About modal - accent color (not text-muted) plus a
+           hover underline are both needed as the "this is clickable" cue,
+           since it's much longer/subtler than this app's usual short link
+           text and would otherwise read as a plain decorative subtitle. */
+        .app-header-tagline { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--accent); font-size: 0.9rem; white-space: nowrap; text-decoration: none; cursor: pointer; }
+        .app-header-tagline:hover { text-decoration: underline; }
+        @media (max-width: 760px) { .app-header-tagline { display: none; } }
+        /* Footer center teaser (#footerCenterTeaser) - the whole phrase is
+           the link, not just one word within it, same reasoning as
+           .app-header-tagline above. */
+        .footer-teaser-link { color: var(--accent); text-decoration: none; cursor: pointer; }
+        .footer-teaser-link:hover { text-decoration: underline; }
         #helpModal .modal-content { max-width: 700px; }
         #helpModal.wide .modal-content { max-width: 850px; }
         #helpModalBody { max-height: 60vh; overflow-y: auto; }
-        #rulesModal .modal-content { max-width: 1550px; width: 95vw; max-height: 92vh; }
+        #rulesModal .modal-content { max-width: 900px; width: 95vw; max-height: 92vh; }
         .rule-update-log { font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 12px; color: var(--text-primary); }
         #fileInfoContainer { margin-bottom: 20px; }
         .container { width: 100%; padding: 20px; box-sizing: border-box; padding-bottom: 80px; padding-top: 56px; }
         header { background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); padding: 30px; border-radius: 12px; margin-bottom: 20px; border: 1px solid var(--border-color); }
         #mainHeader { padding: 0; background: transparent; border: none; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px; margin-bottom: 20px; }
-        .stat-card { background: var(--bg-secondary); padding: 20px; border-radius: 10px; border: 1px solid var(--border-color); text-align: center; cursor: pointer; }
+        .stat-card { background: var(--bg-secondary); padding: 20px; border-radius: 10px; border: 1px solid var(--border-color); text-align: center; cursor: pointer; container-type: inline-size; }
         .stat-card:hover { border-color: var(--interactive-highlight, var(--accent)); }
         .stat-card.tab-active { border-color: var(--interactive-highlight, var(--accent)); background: var(--bg-tertiary); }
-        .stat-card.stat-disabled { opacity: 0.5; cursor: default; }
-        .stat-card.stat-disabled:hover { border-color: var(--border-color); }
-        .stat-number { font-size: 2.5rem; font-weight: bold; }
+        /* Fluid, not fixed - a large sample can have 20+ event-type cards
+           in the auto-fit grid below, squeezing each card down to its
+           140px minmax floor; a fixed 2.5rem digit size overflowed cards
+           that narrow once counts hit 6-7 digits (e.g. "207,010"). Scaled
+           off the card's own width (container query, not viewport) so it
+           adapts to however many columns actually end up on screen,
+           clamped so it never shrinks below legible or grows past the
+           original 2.5rem on a roomy card. buildStats() always shows a
+           single plain count now (never a longer "filtered / total"
+           string - see its own comment), so white-space: nowrap is safe:
+           a lone number has no space to wrap on anyway. */
+        .stat-number { font-size: clamp(1.15rem, 15cqw, 2.5rem); font-weight: bold; white-space: nowrap; }
         .stat-label { color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; word-break: keep-all; overflow-wrap: normal; line-height: 1.2; }
         @media (max-width: 600px) { .stat-card { padding: 15px 10px; } .stat-number { font-size: 1.8rem; } .stat-label { font-size: 0.75rem; letter-spacing: 0.5px; } }
         .section { background: var(--bg-secondary); overflow: hidden; }
@@ -1149,6 +1254,12 @@
         .detail-content { font-family: 'Consolas', 'Monaco', monospace; font-size: 0.8rem; color: var(--text-primary); overflow-wrap: break-word; }
         .detail-label { color: var(--text-muted); }
         .detail-value { color: var(--text-primary); }
+        /* Click target for the detail-panel pivot menu (see
+           handleDetailValueClick) - only htmlRowText's non-empty values
+           get this span, so hover only ever highlights an actual value,
+           never an empty placeholder. */
+        .detail-value-pivot { cursor: pointer; border-radius: 3px; }
+        .detail-value-pivot:hover { background: var(--bg-hover); }
         .ascii-transcript div { overflow-wrap: break-word; word-break: break-all; }
         .ascii-loading { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border-color); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin-right: 8px; vertical-align: middle; }
         .value-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: middle; flex-shrink: 0; }
@@ -1177,8 +1288,12 @@
         .modal-close { background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; margin-left: auto; }
         .sort-arrow { margin-left: 5px; font-size: 0.6rem; }
         .loading { text-align: center; padding: 40px; color: var(--text-muted); }
-        .agg-row { cursor: pointer; }
-        .agg-row:hover { background: var(--bg-hover) !important; }
+        /* Scoped to [data-agg-pivot], not every .agg-row - the "(empty)"
+           value bucket has nothing to pivot on (see _renderAggTablesHtml)
+           and is rendered without the attribute, so it must not look
+           clickable either. */
+        .agg-row[data-agg-pivot] { cursor: pointer; }
+        .agg-row[data-agg-pivot]:hover { background: var(--bg-hover) !important; }
         .agg-table { display: block; margin-bottom: 12px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; background: var(--bg-secondary); }
         .agg-table .agg-header { display: flex; width: 100%; justify-content: space-between; align-items: center; padding: 12px; box-sizing: border-box; background: var(--bg-tertiary); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); }
         .agg-close { background: none; border: none; color: var(--text-muted); font-size: 1rem; cursor: pointer; line-height: 1; padding: 0 4px; margin-left: 8px; }
@@ -1191,27 +1306,81 @@
         .filter-bar { background: var(--bg-drop-active); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 15px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .filter-label { color: var(--accent); font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
         .filter-chip { background: var(--accent); color: var(--bg-primary); padding: 3px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
+        .filter-chip-exclude { background: var(--badge-danger-text); }
         .filter-chip-remove { cursor: pointer; font-size: 1rem; line-height: 1; opacity: 0.7; }
         .filter-chip-remove:hover { opacity: 1; }
         .filter-clear-all { background: var(--badge-bg-neutral); border: 1px solid var(--badge-danger-text); color: var(--badge-danger-text); padding: 3px 10px; border-radius: 12px; font-size: 0.8rem; cursor: pointer; }
+
+        /* Row-cell pivot menu (Include/Exclude/Only/Hunt) - see
+           showPivotMenu(). position: fixed + JS-set left/top (viewport
+           coordinates from the triggering click), not attached to any
+           particular row/table, so it can open from any pivotable cell.
+           Same floating-panel look as .app-header-menu-dropdown
+           (bg-secondary/border-color/shadow) for visual consistency with
+           this app's other dropdown. */
+        .pivot-menu { position: fixed; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); min-width: 160px; z-index: 1003; overflow: hidden; }
+        .pivot-menu-label { padding: 8px 14px; color: var(--text-muted); font-size: 0.75rem; border-bottom: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+        .pivot-menu-item { display: block; width: 100%; padding: 8px 14px; color: var(--text-primary); font-size: 0.9rem; cursor: pointer; border: none; background: none; text-align: left; }
+        .pivot-menu-item:hover { background: var(--bg-tertiary); }
+        /* Separates the field-scoped filter actions (Include/Exclude/Only/
+           Hunt) from Copy to Clipboard and the external lookup-site links. */
+        .pivot-menu-divider { border-top: 1px solid var(--border-color); margin: 4px 0; }
+        /* Only the icon is color-coded, not the button's own text (which
+           stays .pivot-menu-item's plain --text-primary) - reuses the same
+           tag-red/green/blue trio already used for YARA tag badges
+           elsewhere (see showPivotMenu()'s own comment) rather than adding
+           new theme variables. inline-block keeps the SVG's own
+           vertical-align/margin-right (baked into SEARCH_ICON_SVG) intact. */
+        .pivot-menu-icon { display: inline-block; }
+        .pivot-menu-icon-include { color: var(--tag-green-text); }
+        .pivot-menu-icon-exclude { color: var(--tag-red-text); }
+        .pivot-menu-icon-only { color: var(--tag-blue-text); }
+
+        /* Hover affordance for pivotable cells - a subtle per-cell
+           highlight distinguishes "click this specific value" from the
+           row's own (also clickable, to expand) background, without
+           needing separate markup per cell: every plain data <td> gets it,
+           the note-icon cell and the always-full-width detail-row don't
+           since they're never pivot targets (see pivotDataAttrsHtml). */
+        tr[data-pivot] > td:hover { background: var(--bg-hover); cursor: pointer; }
         .filter-clear-all:hover { background: rgba(255, 107, 107, 0.1); }
         .pagination-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 15px; padding: 10px 15px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; flex-wrap: wrap; }
         .pagination-info { color: var(--text-muted); font-size: 0.85rem; }
         .pagination-controls { display: flex; align-items: center; gap: 10px; }
         .pagination-page { color: var(--text-primary); font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
-        .pagination-page-input { width: 46px; text-align: center; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 6px; font-size: 0.85rem; font-weight: 600; font-family: inherit; }
+        .pagination-page-input, .settings-number-input, .notes-textarea, .settings-text-input { background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; font-family: inherit; }
         .pagination-page-input:focus { outline: none; border-color: var(--interactive-highlight, var(--accent)); }
-        .settings-number-input { width: 120px; text-align: center; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 6px; font-size: 0.85rem; font-weight: 600; font-family: inherit; }
         .settings-number-input:focus { outline: none; border-color: var(--interactive-highlight, var(--accent)); }
-        .notes-textarea { width: 100%; min-height: 160px; resize: vertical; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 8px 10px; font-size: 0.9rem; font-family: inherit; box-sizing: border-box; }
         .notes-textarea:focus { outline: none; border-color: var(--interactive-highlight, var(--accent)); }
+        .settings-text-input:focus { outline: none; border-color: var(--interactive-highlight, var(--accent)); }
+        .pagination-page-input, .settings-number-input { text-align: center; padding: 4px 6px; font-size: 0.85rem; font-weight: 600; }
+        .pagination-page-input { width: 46px; }
+        .settings-number-input { width: 120px; }
+        .settings-text-input { width: 100%; box-sizing: border-box; text-align: left; padding: 6px 8px; font-size: 0.85rem; }
+        .notes-textarea { width: 100%; min-height: 160px; resize: vertical; padding: 8px 10px; font-size: 0.9rem; box-sizing: border-box; }
         .pagination-btn { background: var(--accent); color: var(--bg-primary); border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
         .pagination-btn:hover:not(:disabled) { background: var(--accent-hover); }
         .pagination-btn:disabled { opacity: 0.4; cursor: default; }
+        .modal-btn-primary { background: var(--accent); color: var(--bg-primary); border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+        .modal-btn-secondary { background: transparent; color: var(--text-muted); border: 1px solid var(--border-color); padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; }
         .agg-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 0; padding: 0 0 5px; }
         .agg-section { flex: 0 1 auto; margin-bottom: 0; }
         .agg-cell { overflow-wrap: break-word; word-break: break-word; }
-        .footer { position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; color: var(--text-muted); font-size: 0.85rem; border-top: 1px solid var(--border-color); background: var(--bg-secondary); z-index: 1000; }
+        /* Three equal-width flex columns (not justify-content: space-between
+           on two items) so .footer-center is genuinely centered in the
+           viewport regardless of how wide .footer-left/.footer-right's own
+           content happens to be - space-between alone only centers a
+           middle item when the two outer ones are equal width, which the
+           SO-CRATES/update-badge link and the copyright link never are. */
+        .footer { position: fixed; bottom: 0; left: 0; right: 0; display: flex; align-items: center; gap: 12px; padding: 15px 20px; color: var(--text-muted); font-size: 0.85rem; border-top: 1px solid var(--border-color); background: var(--bg-secondary); z-index: 1000; }
+        .footer-left, .footer-center, .footer-right { flex: 1; min-width: 0; }
+        .footer-center { text-align: center; }
+        .footer-right { text-align: right; }
+        /* Hidden rather than squeezed at narrow widths - three flex:1
+           columns plus this sentence's full length would either wrap the
+           fixed-height footer onto multiple lines or crowd the SO-CRATES/
+           copyright links either side of it. */
+        @media (max-width: 760px) { .footer-center { display: none; } }
         .drop-zone-active { border-color: var(--interactive-highlight, var(--accent)) !important; background: var(--bg-drop-active) !important; }
         .sankey-panel { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 20px; position: relative; overflow: hidden; }
         .agg-panel { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 20px; position: relative; overflow: hidden; }
@@ -1239,7 +1408,6 @@
         .view-tab:hover { color: var(--text-primary); }
         .view-tab.active { color: var(--text-primary); border-bottom-color: var(--interactive-highlight, var(--accent)); }
         .sankey-svg { width: 100%; height: auto; display: block; }
-        .sankey-node rect { fill: var(--bg-tertiary); stroke: var(--bg-hover); stroke-width: 1; rx: 4; shape-rendering: crispEdges; }
         .sankey-link { fill: none; stroke-opacity: 0.35; transition: stroke-opacity 0.2s; cursor: pointer; }
         .sankey-link:hover { stroke-opacity: 0.7; }
         .sankey-node rect { fill: var(--bg-tertiary); stroke: var(--bg-hover); stroke-width: 1; rx: 4; shape-rendering: crispEdges; cursor: pointer; }
@@ -1263,20 +1431,13 @@
         .sample-card .sample-label { font-weight: 600; font-size: 0.9rem; white-space: nowrap; color: var(--accent); }
         .previous-analysis-delete { background: var(--danger-bg); color: var(--badge-danger-text); }
         [data-theme="hacker"] .previous-analysis-delete { color: var(--accent); }
-        .previous-analysis-reanalyze { background: var(--bg-hover); color: var(--accent); }
-        [data-theme="ristretto"] .previous-analysis-reanalyze,
-        [data-theme="rose-pine"] .previous-analysis-reanalyze,
-        [data-theme="ethereal"] .previous-analysis-reanalyze,
-        [data-theme="miasma"] .previous-analysis-reanalyze,
-        [data-theme="catppuccin-latte"] .previous-analysis-reanalyze,
-        [data-theme="white"] .previous-analysis-reanalyze { color: var(--text-bright); }
-        .previous-analysis-notes { background: var(--bg-hover); color: var(--accent); }
-        [data-theme="ristretto"] .previous-analysis-notes,
-        [data-theme="rose-pine"] .previous-analysis-notes,
-        [data-theme="ethereal"] .previous-analysis-notes,
-        [data-theme="miasma"] .previous-analysis-notes,
-        [data-theme="catppuccin-latte"] .previous-analysis-notes,
-        [data-theme="white"] .previous-analysis-notes { color: var(--text-bright); }
+        .previous-analysis-reanalyze, .previous-analysis-notes { background: var(--bg-hover); color: var(--accent); }
+        [data-theme="ristretto"] .previous-analysis-reanalyze, [data-theme="ristretto"] .previous-analysis-notes,
+        [data-theme="rose-pine"] .previous-analysis-reanalyze, [data-theme="rose-pine"] .previous-analysis-notes,
+        [data-theme="ethereal"] .previous-analysis-reanalyze, [data-theme="ethereal"] .previous-analysis-notes,
+        [data-theme="miasma"] .previous-analysis-reanalyze, [data-theme="miasma"] .previous-analysis-notes,
+        [data-theme="catppuccin-latte"] .previous-analysis-reanalyze, [data-theme="catppuccin-latte"] .previous-analysis-notes,
+        [data-theme="white"] .previous-analysis-reanalyze, [data-theme="white"] .previous-analysis-notes { color: var(--text-bright); }
         .previous-analysis-delete-all { background: var(--danger-bg); color: var(--badge-danger-text); }
         [data-theme="hacker"] .previous-analysis-delete-all { color: var(--accent); }
         .reanalyze-confirm-btn {
@@ -1291,6 +1452,23 @@
         }
         [data-theme="hacker"] .reanalyze-confirm-btn:hover {
             background: var(--accent);
+            color: var(--bg-primary);
+        }
+        /* Row notes would be destroyed by this reanalyze - same red as
+           delete-modal-confirm-btn, so the button's own color communicates
+           the risk without relying on the warning text above it. */
+        .reanalyze-confirm-btn.danger {
+            background: #ff6b6b;
+            color: #1a1a1a;
+            border: 1px solid transparent;
+        }
+        [data-theme="hacker"] .reanalyze-confirm-btn.danger {
+            background: var(--bg-hover);
+            color: #ff6b6b;
+            border: 1px solid #ff6b6b;
+        }
+        [data-theme="hacker"] .reanalyze-confirm-btn.danger:hover {
+            background: #ff6b6b;
             color: var(--bg-primary);
         }
         .delete-modal-title { color: var(--badge-danger-text); }
@@ -1313,6 +1491,10 @@
         .mitre-tag:hover { text-decoration: underline; }
         .log-detail-panel { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px; font-size: 0.85rem; color: var(--text-primary); overflow-wrap: break-word; }
         .log-detail-panel .mono { font-family: 'Consolas', 'Monaco', monospace; }
+        .playbook-question { border-top: 1px solid var(--border-color); padding: 10px 0; }
+        .playbook-question-text { color: var(--text-primary); font-weight: 600; }
+        .playbook-question-context { color: var(--text-muted); font-size: 0.85rem; margin-top: 4px; }
+        .playbook-questions-toggle:hover { color: var(--text-primary); }
         .log-events-section { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; margin-top: 20px; }
         .log-events-section h3 { color: var(--text-muted); margin: 0 0 15px 0; font-size: 1rem; text-transform: uppercase; }
         .app-header-menu { position: relative; display: inline-flex; align-items: center; }
@@ -1353,11 +1535,148 @@
             --text-bright: #ff55ff;
             --text-muted: #ff55ff;
         }
-        [data-theme="cga"] #themesModal {
-            --text-bright: #ffffff;
-            --text-muted: #55aaaa;
-        }
         [data-theme="breadbin-blue"] .app-logo-text {
             color: var(--text-primary) !important;
+        }
+
+        /* Digital Frontier: neon-outline treatment on top of its own
+           --accent (#00d9ff) - every panel/card reads as lit-from-within
+           at rest, flaring brighter on hover/focus, rather than only the
+           border/text using the accent color the way every other theme
+           does. Colors are hardcoded rgba() here (not derived from a CSS
+           variable) to match how every other per-theme override in this
+           file works - CSS custom properties can't be decomposed into
+           rgba() components without a second variable dedicated to that
+           (--accent-rgb was exactly that, added purely for completeness
+           with no real consumer, and removed as dead CSS - see AGENTS.md's
+           Theming Conventions and test_dead_theme_vars_removed). */
+        [data-theme="digital-frontier"] .stat-card,
+        [data-theme="digital-frontier"] .sample-card,
+        [data-theme="digital-frontier"] .theme-tile,
+        [data-theme="digital-frontier"] .modal-content {
+            box-shadow: 0 0 4px rgba(0, 217, 255, 0.5), 0 0 16px rgba(0, 217, 255, 0.25);
+        }
+        [data-theme="digital-frontier"] .stat-card:hover,
+        [data-theme="digital-frontier"] .stat-card.tab-active,
+        [data-theme="digital-frontier"] .sample-card:hover,
+        [data-theme="digital-frontier"] .theme-tile:hover {
+            box-shadow: 0 0 8px rgba(0, 217, 255, 0.85), 0 0 28px rgba(0, 217, 255, 0.5);
+        }
+        [data-theme="digital-frontier"] .app-header {
+            box-shadow: 0 2px 12px rgba(0, 217, 255, 0.4);
+        }
+        [data-theme="digital-frontier"] .stat-number {
+            color: var(--accent);
+        }
+        [data-theme="digital-frontier"] .app-logo-text {
+            text-shadow: 0 0 6px rgba(0, 217, 255, 0.7);
+        }
+        [data-theme="digital-frontier"] button:hover,
+        [data-theme="digital-frontier"] input:focus,
+        [data-theme="digital-frontier"] textarea:focus {
+            box-shadow: 0 0 10px rgba(0, 217, 255, 0.7);
+        }
+
+        /* Vaporwave: same neon-outline treatment as Digital Frontier
+           above, but two-tone (hot pink core + cyan halo) rather than a
+           single color - pink/cyan together is the signature vaporwave
+           combo (--accent: #FF71CE, --border-color: #01CDFE), and a
+           single-color glow here would read as a duller copy of Digital
+           Frontier's rather than this theme's own thing. */
+        [data-theme="vaporwave"] .stat-card,
+        [data-theme="vaporwave"] .sample-card,
+        [data-theme="vaporwave"] .theme-tile,
+        [data-theme="vaporwave"] .modal-content {
+            box-shadow: 0 0 4px rgba(255, 113, 206, 0.5), 0 0 16px rgba(1, 205, 254, 0.3);
+        }
+        [data-theme="vaporwave"] .stat-card:hover,
+        [data-theme="vaporwave"] .stat-card.tab-active,
+        [data-theme="vaporwave"] .sample-card:hover,
+        [data-theme="vaporwave"] .theme-tile:hover {
+            box-shadow: 0 0 8px rgba(255, 113, 206, 0.85), 0 0 28px rgba(1, 205, 254, 0.55);
+        }
+        [data-theme="vaporwave"] .app-header {
+            box-shadow: 0 2px 12px rgba(255, 113, 206, 0.35), 0 2px 20px rgba(1, 205, 254, 0.25);
+        }
+        [data-theme="vaporwave"] .stat-number {
+            color: var(--accent);
+        }
+        [data-theme="vaporwave"] .app-logo-text {
+            text-shadow: 0 0 6px rgba(255, 113, 206, 0.7), 0 0 14px rgba(1, 205, 254, 0.4);
+        }
+        [data-theme="vaporwave"] button:hover,
+        [data-theme="vaporwave"] input:focus,
+        [data-theme="vaporwave"] textarea:focus {
+            box-shadow: 0 0 6px rgba(255, 113, 206, 0.7), 0 0 14px rgba(1, 205, 254, 0.4);
+        }
+
+        /* Amber: same neon-outline treatment again, single-toned like
+           Digital Frontier rather than two-tone like Vaporwave - unlike
+           those two (a fictional Tron look, a multi-color synthwave
+           palette), Amber models a real display technology (amber
+           phosphor CRT terminals, e.g. Wyse/DEC), and those were
+           monochrome - a second glow color here wouldn't just look
+           different, it'd be wrong for what the theme is representing.
+           --accent/--text-bright are already the same #FFB000, so no
+           separate color: override is needed on .app-logo-text the way
+           Vaporwave needed one (its logo text is --text-bright: white by
+           default, with the glow supplying the color; Amber's logo text
+           is already amber before the glow is added). */
+        [data-theme="amber"] .stat-card,
+        [data-theme="amber"] .sample-card,
+        [data-theme="amber"] .theme-tile,
+        [data-theme="amber"] .modal-content {
+            box-shadow: 0 0 4px rgba(255, 176, 0, 0.5), 0 0 16px rgba(255, 176, 0, 0.25);
+        }
+        [data-theme="amber"] .stat-card:hover,
+        [data-theme="amber"] .stat-card.tab-active,
+        [data-theme="amber"] .sample-card:hover,
+        [data-theme="amber"] .theme-tile:hover {
+            box-shadow: 0 0 8px rgba(255, 176, 0, 0.85), 0 0 28px rgba(255, 176, 0, 0.5);
+        }
+        [data-theme="amber"] .app-header {
+            box-shadow: 0 2px 12px rgba(255, 176, 0, 0.4);
+        }
+        [data-theme="amber"] .app-logo-text {
+            text-shadow: 0 0 6px rgba(255, 176, 0, 0.7);
+        }
+        [data-theme="amber"] button:hover,
+        [data-theme="amber"] input:focus,
+        [data-theme="amber"] textarea:focus {
+            box-shadow: 0 0 10px rgba(255, 176, 0, 0.7);
+        }
+
+        /* Hacker: same neon-outline treatment again, single-toned green
+           like Amber (also a real monochrome phosphor CRT look, not a
+           fictional/multi-color one) - layers on top of the existing
+           code-rain background canvas rather than replacing it, since
+           that's a separate effect (an animated canvas behind the UI, not
+           a card/panel style). No .stat-number override, same reasoning
+           as Amber: --text-primary/--accent are already the same #00ff41,
+           and stat numbers don't glow (dropped from every theme above as
+           a legibility regression on the one thing in a stat card users
+           actually read - see e.g. the Digital Frontier test for why). */
+        [data-theme="hacker"] .stat-card,
+        [data-theme="hacker"] .sample-card,
+        [data-theme="hacker"] .theme-tile,
+        [data-theme="hacker"] .modal-content {
+            box-shadow: 0 0 4px rgba(0, 255, 65, 0.5), 0 0 16px rgba(0, 255, 65, 0.25);
+        }
+        [data-theme="hacker"] .stat-card:hover,
+        [data-theme="hacker"] .stat-card.tab-active,
+        [data-theme="hacker"] .sample-card:hover,
+        [data-theme="hacker"] .theme-tile:hover {
+            box-shadow: 0 0 8px rgba(0, 255, 65, 0.85), 0 0 28px rgba(0, 255, 65, 0.5);
+        }
+        [data-theme="hacker"] .app-header {
+            box-shadow: 0 2px 12px rgba(0, 255, 65, 0.4);
+        }
+        [data-theme="hacker"] .app-logo-text {
+            text-shadow: 0 0 6px rgba(0, 255, 65, 0.7);
+        }
+        [data-theme="hacker"] button:hover,
+        [data-theme="hacker"] input:focus,
+        [data-theme="hacker"] textarea:focus {
+            box-shadow: 0 0 10px rgba(0, 255, 65, 0.7);
         }
 

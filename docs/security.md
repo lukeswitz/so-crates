@@ -1,13 +1,18 @@
 # Security
 
-- Binds to `127.0.0.1` by default on manual/source installs; the Docker/Podman image binds `0.0.0.0` internally so port-publishing works — actual exposure is controlled by the `-p`/port choice made when running the container, not by the app itself
-- No CORS headers are sent (no cross-origin access, not even a wildcard)
-- Input validation on all endpoints (IP, port, MD5, path traversal)
-- File type detection routes each upload to the right analyzer only: PCAPs → Suricata, log files → Zircolite Sigma detection, everything else → YARA
-- SSRF protection on "Load from URL": blocks localhost and private/internal IP ranges, and resolves the hostname once and connects directly to the validated IP (rather than letting the HTTP client re-resolve it) to prevent DNS-rebinding TOCTOU bypasses
-- Zip-slip prevention and decompressed-size limits (zip-bomb protection) on archive extraction
-- Upload size ceiling (5,000 MB hard max, user-adjustable up to that from a 1,000 MB default) and an upfront disk-space check before accepting an upload
-- Generic error messages (no internal details leaked)
-- Content-Security-Policy header (`default-src 'self'`, restricting scripts/styles/images/connections/forms to the app's own origin) on every response — `'unsafe-inline'` is allowed for scripts and styles, a deliberate tradeoff for the app's inline-`onclick`/inline-`style` UI architecture
-- The Docker/Podman image runs as a non-root user (`USER 1000:1000`), not root
-- Startup makes zero network calls of any kind (rule setup at boot only uses baked-in rules or whatever's already cached on disk) — it can never hang or block on a slow or unreachable rule mirror; refreshing rules over the network is an explicit, on-demand action from the Rules modal (gear menu → Rules) instead
+SO-CRATES is designed to run locally/self-hosted for an analyst examining
+potentially malicious files. What's built in by default - see
+[Security Model](architecture/security-model.md) for implementation details
+(function names, exact mechanisms).
+
+- **Network binding** - `127.0.0.1` by default; only the Docker/Podman image binds `0.0.0.0` internally (for port-publishing), with actual exposure still controlled by the `-p`/port choice at run time
+- **No CORS** - no cross-origin access is allowed, not even a wildcard
+- **Input validation** - on all endpoints (IP, port, MD5, path traversal)
+- **File-type routing** - PCAPs, log files, and everything else each only ever reach their own analyzer (Suricata, Zircolite/Sigma, YARA)
+- **SSRF protection** - on "Load from URL", including a DNS-rebinding-safe resolve-then-connect
+- **Zip safety** - zip-slip and zip-bomb (decompressed-size) protection on archive extraction
+- **Upload limits** - a hard size ceiling plus an upfront disk-space check before accepting an upload
+- **Generic error messages** - no internal details or stack traces leaked
+- **Content-Security-Policy** - sent on every response
+- **Non-root container** - the Docker/Podman image runs as a non-root user
+- **No startup network calls** - rule refresh is always an explicit, on-demand action from the Rules modal, never automatic

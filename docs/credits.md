@@ -2,17 +2,32 @@
 
 SO-CRATES is built on top of several excellent open-source projects:
 
-| Project | License | Purpose | Website |
-|---------|---------|---------|---------|
-| [Suricata](https://suricata.io/) | GPLv2 | Network traffic analysis and IDS | https://suricata.io/ |
-| [Zircolite](https://github.com/wagga40/Zircolite) | LGPLv3 | Sigma rule detection for log files | https://github.com/wagga40/Zircolite |
-| [YARA](https://virustotal.github.io/yara/) | BSD-3-Clause | Malware pattern matching | https://virustotal.github.io/yara/ |
-| [SigmaHQ Rules](https://github.com/SigmaHQ/sigma) | Detection Rule License (DRL) 1.1 | Detection logic for log analysis | https://github.com/SigmaHQ/sigma |
-| [YARA Forge](https://github.com/YARAHQ/yara-forge) | Various | Curated YARA rules | https://github.com/YARAHQ/yara-forge |
-| [Emerging Threats Open](https://rules.emergingthreats.net/) | MIT | Suricata network rules | https://rules.emergingthreats.net/ |
-| [D3](https://d3js.org/) | ISC | Sankey diagram visualization | https://d3js.org/ |
-| [d3-sankey](https://github.com/d3/d3-sankey) | BSD-3-Clause | Sankey diagram layout | https://github.com/d3/d3-sankey |
-| [tcpdump](https://www.tcpdump.org/) | BSD-3-Clause | Stream/hexdump carving | https://www.tcpdump.org/ |
-| [Wireshark/tshark](https://www.wireshark.org/) | GPLv2 | ASCII transcript extraction | https://www.wireshark.org/ |
-| [ExifTool](https://exiftool.org/) | Perl Artistic License / GPL | EXIF/media metadata extraction | https://exiftool.org/ |
-| [file](https://www.darwinsys.com/file/) | BSD-2-Clause-alike | MIME/file-type detection | https://www.darwinsys.com/file/ |
+| Project | License | Purpose |
+|---------|---------|---------|
+| [Suricata](https://suricata.io/) | GPLv2 | Network traffic analysis and IDS |
+| [Zircolite](https://github.com/wagga40/Zircolite) | LGPLv3 | Sigma rule detection for log files |
+| [YARA](https://virustotal.github.io/yara/) | BSD-3-Clause | Malware pattern matching |
+| [SigmaHQ Rules](https://github.com/SigmaHQ/sigma) | Detection Rule License (DRL) 1.1 | Detection logic for log analysis |
+| [YARA Forge](https://github.com/YARAHQ/yara-forge) | Various | Curated YARA rules |
+| [Security Onion Playbooks](https://github.com/Security-Onion-Solutions/securityonion-resources-playbooks) | Custom | Investigation guidance for Suricata/Sigma alerts |
+| [Emerging Threats Open](https://rules.emergingthreats.net/) | MIT | Suricata network rules (default) |
+| [Suricata Traffic ID](https://openinfosecfoundation.org/rules/trafficid/trafficid.rules) | MIT | Suricata network rules (optional) |
+| [Abuse.ch SSL Blacklist](https://sslbl.abuse.ch/) | CC0-1.0 | Suricata network rules (optional) |
+| [Abuse.ch JA3 Fingerprints](https://sslbl.abuse.ch/ja3-fingerprints/) | CC0-1.0 | Suricata network rules (optional) |
+| [Abuse.ch Feodo Tracker](https://feodotracker.abuse.ch/) | CC0-1.0 | Suricata network rules (optional) |
+| [Abuse.ch URLhaus](https://urlhaus.abuse.ch/) | CC0-1.0 | Suricata network rules (optional) |
+| [Etnetera Aggressive IP Blacklist](https://security.etnetera.cz/) | MIT | Suricata network rules (optional) |
+| [Positive Technologies PT Rules (Open)](https://rules.ptsecurity.com) | Custom | Suricata network rules (optional) |
+| [PAW Patrules](https://pawpatrules.fr/) | CC-BY-SA-4.0 | Suricata network rules (optional) |
+| [IPFire DBL](https://www.ipfire.org/dbl/) | CC-BY-SA-4.0 | Suricata network rules (optional) |
+| [Stamus Lateral Movement](https://www.stamus-networks.com/) | GPL-3.0-only | Suricata network rules (optional) |
+| [Threat Hunting Rules (tgreen)](https://github.com/travisbgreen/hunting-rules) | GPLv3 | Suricata network rules (optional) |
+| [NMAP Scan Detection](https://github.com/aleksibovellan/opnsense-suricata-nmaps) | MIT | Suricata network rules (optional) |
+| [Antiphishing](https://github.com/julioliraup/Antiphishing) | GPL-3.0 | Suricata network rules (optional) |
+| [The Hunter's Ledger](https://the-hunters-ledger.com/) | CC-BY-4.0 | Suricata network rules (optional) |
+| [D3](https://d3js.org/) | ISC | Sankey diagram visualization |
+| [d3-sankey](https://github.com/d3/d3-sankey) | BSD-3-Clause | Sankey diagram layout |
+| [tcpdump](https://www.tcpdump.org/) | BSD-3-Clause | Stream/hexdump carving |
+| [Wireshark/tshark](https://www.wireshark.org/) | GPLv2 | ASCII transcript extraction |
+| [ExifTool](https://exiftool.org/) | Perl Artistic License / GPL | EXIF/media metadata extraction |
+| [file](https://www.darwinsys.com/file/) | BSD-2-Clause-alike | MIME/file-type detection |

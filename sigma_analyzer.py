@@ -12,6 +12,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import urllib.error
 import urllib.request
 
 import config
@@ -61,11 +62,15 @@ def _zircolite_config():
 
 
 def get_sigma_rules_info(data_dir=None):
-    """Return {'windows': {'count': int|None, 'updated': epoch|None},
-    'linux': {...}} - each Sigma ruleset file is a plain JSON array of rule
-    objects, so len(json.load(f)) gives the count directly (verified
-    against the real files). Never raises - None fields per-ruleset if that
-    file doesn't exist or fails to parse."""
+    """Return {'windows': {'count': int|None, 'updated': epoch|None,
+    'stale': bool|None}, 'linux': {...}} - each Sigma ruleset file is a
+    plain JSON array of rule objects, so len(json.load(f)) gives the count
+    directly (verified against the real files). 'stale' is True once that
+    ruleset's file is older than config.RULES_MAX_AGE_HOURS - purely a
+    local mtime check, no network access, safe to call unconditionally
+    (see static/socrates.js's checkForStaleRules(), which is opt-in).
+    Never raises - None fields per-ruleset if that file doesn't exist or
+    fails to parse."""
     if data_dir is None:
         data_dir = os.path.expanduser('~/socrates-data')
     rules_dir = os.path.join(data_dir, config.SIGMA_RULES_SUBDIR)
@@ -73,15 +78,19 @@ def get_sigma_rules_info(data_dir=None):
     for ruleset_name in ZIRCOLITE_RULES_URLS:
         rules_file = os.path.join(rules_dir, f'{ruleset_name}.json')
         if not os.path.isfile(rules_file):
-            result[ruleset_name] = {'count': None, 'updated': None}
+            result[ruleset_name] = {'count': None, 'updated': None, 'stale': None}
             continue
         try:
             with open(rules_file, 'r', errors='ignore') as f:
                 data = json.load(f)
             count = len(data) if isinstance(data, list) else None
-            result[ruleset_name] = {'count': count, 'updated': os.path.getmtime(rules_file)}
+            result[ruleset_name] = {
+                'count': count,
+                'updated': os.path.getmtime(rules_file),
+                'stale': is_file_stale(rules_file, config.RULES_MAX_AGE_HOURS),
+            }
         except (OSError, json.JSONDecodeError):
-            result[ruleset_name] = {'count': None, 'updated': None}
+            result[ruleset_name] = {'count': None, 'updated': None, 'stale': None}
     return result
 
 
@@ -109,7 +118,12 @@ def setup_sigma_rules(data_dir=None, on_progress=print, network_allowed=True, fo
     stale yet - used by the on-demand "check for rule updates" action, so
     it actually checks rather than just reporting the cached copy as fine
     because the 24h cache window hasn't expired. Has no effect if there's
-    no cached copy to begin with or if network_allowed is False.
+    no cached copy to begin with. When network_allowed is False, force
+    also controls whether a "using cached" message is emitted: a plain
+    staleness check (server startup, per-file background scans) stays
+    silent since nothing changed, while an explicit forced check that
+    happens to run offline still reports the cached-copy outcome so the
+    action doesn't look like it did nothing.
 
     Returns dict mapping 'windows'/'linux' to file path, or None for each.
     """
@@ -119,6 +133,18 @@ def setup_sigma_rules(data_dir=None, on_progress=print, network_allowed=True, fo
     os.makedirs(rules_dir, exist_ok=True)
 
     result = {}
+    # Lazily computed and cached across loop iterations, not re-probed per
+    # ruleset - windows and linux are two iterations of the same loop, and
+    # would otherwise both hit the same host separately (e.g. both stale,
+    # or both never downloaded, on the same setup_sigma_rules() call).
+    reachable = None
+
+    def _reachable():
+        nonlocal reachable
+        if reachable is None:
+            reachable = network_allowed and is_host_reachable('github.com', 443, timeout=5)
+        return reachable
+
     for ruleset_name, url in ZIRCOLITE_RULES_URLS.items():
         rules_file = os.path.join(rules_dir, f'{ruleset_name}.json')
 
@@ -126,7 +152,7 @@ def setup_sigma_rules(data_dir=None, on_progress=print, network_allowed=True, fo
         if os.path.isfile(rules_file):
             stale = is_file_stale(rules_file, config.RULES_MAX_AGE_HOURS)
             if force or stale:
-                if network_allowed and is_host_reachable('github.com', 443, timeout=5):
+                if _reachable():
                     on_progress(f'Checking Sigma rules ({ruleset_name}) for updates...')
                     try:
                         _download_rule_file(url, rules_file)
@@ -135,7 +161,7 @@ def setup_sigma_rules(data_dir=None, on_progress=print, network_allowed=True, fo
                         on_progress(f'Warning: could not refresh Sigma rules ({ruleset_name}), using cached copy: {e}')
                 elif network_allowed:
                     on_progress(f'No internet access detected — using cached Sigma rules ({ruleset_name})')
-                else:
+                elif force:
                     on_progress(f'Using cached Sigma rules ({ruleset_name})')
             elif network_allowed:
                 on_progress(f'Sigma rules ({ruleset_name}) already present — using cached rules')
@@ -153,7 +179,7 @@ def setup_sigma_rules(data_dir=None, on_progress=print, network_allowed=True, fo
                 on_progress(f'Warning: could not copy baked-in Sigma rules: {e}')
 
         # Try to download
-        if network_allowed and is_host_reachable('github.com', 443, timeout=5):
+        if _reachable():
             try:
                 _download_rule_file(url, rules_file)
                 result[ruleset_name] = rules_file
@@ -515,7 +541,11 @@ def run_sigma_pipeline(dir_path, log_path, data_dir=None):
 
     if data_dir is None:
         data_dir = os.path.expanduser('~/socrates-data')
-    rules = setup_sigma_rules(data_dir)
+    # network_allowed=False: analysis must never silently reach out to
+    # refresh rules on its own - that's now an explicit, opt-in action
+    # (Rules modal, or the checkForStaleRules() notification). Uses
+    # whatever's already cached/baked-in, however old.
+    rules = setup_sigma_rules(data_dir, network_allowed=False)
     if not rules:
         print('Sigma rules not available')
         return False, None

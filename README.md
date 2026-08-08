@@ -11,7 +11,7 @@ A standalone web application for analyzing pcap files, log files, and binary fil
 ## Documentation
 
 - [Interactive Demo](https://so-crates.org/quick-demo/)
-- [Installation](https://so-crates.org/installation/) ([OhMyDebn](https://so-crates.org/installation/ohmydebn/), [Docker](https://so-crates.org/installation/docker/), [Podman](https://so-crates.org/installation/podman/), [Manual](https://so-crates.org/installation/manual/))
+- [Installation](https://so-crates.org/installation/) ([OhMyDebn](https://so-crates.org/installation/ohmydebn/), [Docker](https://so-crates.org/installation/docker/), [Podman](https://so-crates.org/installation/podman/))
 - [Usage](https://so-crates.org/usage/)
 - [Configuration](https://so-crates.org/configuration/)
 - [Security](https://so-crates.org/security/)

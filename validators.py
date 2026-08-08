@@ -217,6 +217,16 @@ def is_host_reachable(host, port, timeout=5):
         return False
 
 
+def is_epoch_stale(epoch, max_age_hours):
+    """Check if an already-known mtime/epoch is older than max_age_hours -
+    the actual staleness formula, factored out of is_file_stale() so a
+    caller that has already derived a timestamp another way (e.g.
+    get_suricata_rules_info()'s min mtime across several active rule
+    files) can reuse the exact same comparison instead of re-deriving it,
+    which would otherwise risk silently drifting from this definition."""
+    return (time.time() - epoch) > max_age_hours * 3600
+
+
 def is_file_stale(path, max_age_hours):
     """Check if a file's mtime is older than max_age_hours.
 
@@ -230,10 +240,10 @@ def is_file_stale(path, max_age_hours):
     already handle "doesn't exist" as its own case).
     """
     try:
-        age_seconds = time.time() - os.path.getmtime(path)
+        mtime = os.path.getmtime(path)
     except OSError:
         return False
-    return age_seconds > max_age_hours * 3600
+    return is_epoch_stale(mtime, max_age_hours)
 
 
 LOG_EXTENSIONS = ('.evtx', '.json', '.jsonl', '.csv', '.xml', '.log')

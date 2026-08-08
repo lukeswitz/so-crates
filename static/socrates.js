@@ -60,8 +60,40 @@
             return n;
         }
 
+        // Unlike getUserQueryLimit()/getUserMaxUploadSizeMB(), there's no
+        // client-side default constant to fall back to here - the real
+        // default is the server's config.RULES_MAX_AGE_HOURS, fetched
+        // dynamically via /api/rules-info's staleThresholdHours. Returns
+        // null (not a fallback number) when unset/invalid, so callers can
+        // tell "no override, use the server's value" apart from "override
+        // to N days" - see _resolveStaleThresholdHours().
+        function getUserStaleThresholdDays() {
+            const raw = safeStorageGet(localStorage, 'socrates_staleThresholdDays');
+            const n = parseInt(raw, 10);
+            if (isNaN(n) || n < 1 || n > 365) return null;
+            return n;
+        }
+
+        // Single place both isRulesetStale() consumers (the Rules modal's
+        // date-color warning and checkForStaleRules()'s notification) go
+        // through to resolve "how old is too old" - keeps them agreeing
+        // the same way unifying on staleThresholdHours did originally (see
+        // AGENTS.md's Detection Rule Freshness section), now that either
+        // one can also be overridden by the user's per-browser preference.
+        function _resolveStaleThresholdHours(serverHours) {
+            const days = getUserStaleThresholdDays();
+            return days !== null ? days * 24 : serverHours;
+        }
+
         function sortEventTypes(types) {
-            const order = { alert: 0, sigmaalert: 1, filealerts: 2, log: 3 };
+            // Network Alerts, File Alerts, Decoder Alerts, Anomalies (in
+            // that order) take priority over everything else, which then
+            // falls back to alphabetical below. sigmaalert/log never
+            // coexist with alert/filealerts/protocol_decode/anomaly (log
+            // mode vs pcap mode are mutually exclusive), so their relative
+            // priority to each other is preserved from before without
+            // affecting the pcap-mode ordering above.
+            const order = { alert: 0, filealerts: 1, protocol_decode: 2, anomaly: 3, sigmaalert: 4, log: 5 };
             return [...types].sort((a, b) => {
                 const ai = order[a] ?? 99;
                 const bi = order[b] ?? 99;
@@ -103,6 +135,9 @@
             'luna-blue': { label: 'Luna Blue', group: 'fun' },
             'amber': { label: 'Amber CRT', group: 'fun' },
             'dos-blue': { label: 'DOS Blue', group: 'fun' },
+            'dracula': { label: 'Dracula', group: 'dark' },
+            'solarized-dark': { label: 'Solarized Dark', group: 'dark' },
+            'monokai': { label: 'Monokai', group: 'dark' },
         };
 
         // Mirrors the keydown easter-egg checks below (kept separate rather
@@ -656,10 +691,12 @@
             menuBaseTheme = null;
         }
 
-        function handleThemesBackdropClick(event) {
-            if (event.target === document.getElementById('themesModal')) {
-                closeThemesModal();
-            }
+        // Shared by every modal whose backdrop <div> has onclick="handleModalBackdropClick(event, closeXModal)" -
+        // event.currentTarget is always that backdrop div itself (where the
+        // listener is attached), so a click lands on the backdrop (not a
+        // child element) exactly when target === currentTarget.
+        function handleModalBackdropClick(event, closeFn) {
+            if (event.target === event.currentTarget) closeFn();
         }
 
         // Applies immediately on toggle, unlike the numeric Settings
@@ -723,21 +760,25 @@
         }
 
         // Opt-in only (checked before ever fetching, same as
-        // pollOhmydebnTheme()) - unlike the YARA/Sigma/Suricata rule
-        // freshness checks, a stale app version doesn't silently degrade
-        // the correctness of the current analysis, so there's no harm in
-        // requiring explicit consent rather than checking automatically.
-        // One-shot per page load (called once from init()), not polled -
-        // the running app version can't change while the tab is open.
+        // pollOhmydebnTheme()) - a stale app version doesn't silently
+        // degrade the correctness of the current analysis, so there's no
+        // harm in requiring explicit consent rather than checking
+        // automatically. One-shot per page load (called once from init()),
+        // not polled - the running app version can't change while the tab
+        // is open. (Detection rule freshness is a different story - see
+        // checkForStaleRules() below, which used to be unconditional for
+        // exactly that "silently degrades correctness" reason, until
+        // network-without-consent was judged the worse tradeoff.)
         async function checkForAppUpdate() {
             if (safeStorageGet(localStorage, 'socrates_checkForUpdates') !== 'true') return;
             await _fetchAndApplyVersionCheck();
         }
 
-        // Manual "Check Now" button in Settings - bypasses the opt-in gate
-        // (an explicit click IS the consent) and, unlike the silent
-        // automatic check, always reports the result via toast so clicking
-        // the button visibly does something even when there's nothing new.
+        // Manual "Check Now" button in the About modal - bypasses the
+        // opt-in gate (an explicit click IS the consent) and, unlike the
+        // silent automatic check, always reports the result via toast so
+        // clicking the button visibly does something even when there's
+        // nothing new.
         async function checkForAppUpdateNow() {
             const data = await _fetchAndApplyVersionCheck();
             if (!data) {
@@ -752,6 +793,103 @@
         function handleCheckForUpdatesChange(checkbox) {
             safeStorageSet(localStorage, 'socrates_checkForUpdates', String(checkbox.checked));
             if (checkbox.checked) checkForAppUpdate();
+        }
+
+        function _joinWithAnd(items) {
+            if (items.length <= 2) return items.join(' and ');
+            return items.slice(0, -1).join(', ') + ', and ' + items[items.length - 1];
+        }
+
+        // Maps /api/rules-info's shape ({suricata: {...}, yara: {...},
+        // sigma: {windows: {...}, linux: {...}}}) to the ruleset family
+        // labels that are currently stale, matching the Rules modal's own
+        // three update buttons (Suricata/YARA/Sigma - "update Sigma"
+        // refreshes both its windows and linux rulesets together, so
+        // either being stale counts as "Sigma" is stale here). Computes
+        // staleness itself via isRulesetStale(updated, thresholdHours) -
+        // the same function/threshold the Rules modal's date-color warning
+        // uses - rather than trusting the server's precomputed 'stale'
+        // field, since thresholdHours may be the user's per-browser
+        // override (_resolveStaleThresholdHours()), which the server has
+        // no way to have already applied. A ruleset with no 'updated' at
+        // all (never downloaded, not merely old) is deliberately not
+        // included - that's checkForMissingRules()'s job (unconditional,
+        // fires when every ruleset is null), not this one's. The two stay
+        // mutually exclusive by construction: a ruleset only reaches
+        // isRulesetStale() here once 'updated' is non-null, so they never
+        // compete to show a toast for the same ruleset at the same time.
+        function _staleRulesetLabels(rulesInfo, thresholdHours) {
+            const isStale = (entry) => !!(entry && entry.updated && isRulesetStale(entry.updated, thresholdHours));
+            const stale = [];
+            if (isStale(rulesInfo.suricata)) stale.push('Suricata');
+            if (isStale(rulesInfo.yara)) stale.push('YARA');
+            const sigma = rulesInfo.sigma || {};
+            if (isStale(sigma.windows) || isStale(sigma.linux)) stale.push('Sigma');
+            return stale;
+        }
+
+        // Opt-in only, same mechanics as checkForAppUpdate() - but for a
+        // different reason. Analyzing with stale detection rules DOES
+        // silently degrade the correctness of the results (missed
+        // detections), which used to be the argument for refreshing
+        // YARA/Sigma rules over the network automatically, no consent
+        // asked, whenever a file was analyzed (see setup_yara_rules()/
+        // setup_sigma_rules()'s network_allowed=False call sites in
+        // socrates.py/sigma_analyzer.py, and AGENTS.md). That traded one
+        // problem for a worse one for a security-focused tool: unprompted
+        // outbound connections. This notification is the replacement -
+        // opt-in, and purely a local file-age check (stat'ing rules files
+        // via /api/rules-info, no outbound network access regardless of
+        // the opt-in setting - that setting is for notification-noise
+        // consent, not network consent), fired once per welcome-screen
+        // view (called from showWelcomeUI()) to catch the analyst before
+        // they start an analysis rather than interrupt one already
+        // running. No separate manual "check now" trigger - the Rules
+        // modal already shows the same staleness live via its own
+        // amber-date warning (isRulesetStale()/formatDateSpan()), so a
+        // second, redundant on-demand check added nothing.
+        async function checkForStaleRules() {
+            if (safeStorageGet(localStorage, 'socrates_checkForStaleRules') !== 'true') return;
+            let stale;
+            try {
+                const resp = await fetch('/api/rules-info');
+                if (!resp.ok) return;
+                const info = await resp.json();
+                stale = _staleRulesetLabels(info, _resolveStaleThresholdHours(info.staleThresholdHours));
+            } catch (e) {
+                return;
+            }
+            if (stale.length) {
+                showToast(
+                    _joinWithAnd(stale) + ' rules are stale. Update via the Rules menu before analyzing.',
+                    { sticky: true, actionLabel: 'Open Rules', onAction: showRulesModal }
+                );
+            }
+        }
+
+        function handleCheckForStaleRulesChange(checkbox) {
+            safeStorageSet(localStorage, 'socrates_checkForStaleRules', String(checkbox.checked));
+            if (checkbox.checked) checkForStaleRules();
+        }
+
+        // Applies immediately on change (unlike Settings modal's numeric
+        // fields, which batch behind an explicit Save) - matches the
+        // checkbox right next to it, which also applies on change. An
+        // empty/invalid/out-of-range value clears the override (falls
+        // back to the server's default) rather than clamping to the
+        // nearest boundary, so deleting the number is how a user resets
+        // to default. Re-renders #rulesModalBody immediately from the
+        // cached lastRulesInfo/lastRulesStatus (same pattern as
+        // toggleRuleLog()) so the amber-date warnings above reflect the
+        // new threshold right away, not just on the next 2s poll tick.
+        function handleStaleThresholdDaysChange(input) {
+            const n = parseInt(input.value, 10);
+            if (isNaN(n) || n < 1 || n > 365) {
+                safeStorageRemove(localStorage, 'socrates_staleThresholdDays');
+            } else {
+                safeStorageSet(localStorage, 'socrates_staleThresholdDays', String(n));
+            }
+            reRenderRulesModalFromCache();
         }
 
         document.addEventListener('click', function(e) {
@@ -775,6 +913,7 @@
                 log: '#b0b0b0',
                 modbus: '#ab47bc',
                 pgsql: '#ff7043',
+                protocol_decode: '#ff9800',
                 sigmaalert: '#ff6b6b',
                 stats: '#9e9e9e',
                 tls: '#58a6ff',
@@ -842,6 +981,20 @@
             TABLE_PAGE_SIZE: 100,
         };
         const DEFAULT_SAMPLE_URL = 'https://www.malware-traffic-analysis.net/2026/02/03/2026-02-03-GuLoader-for-AgentTesla-style-infection-with-FTP-data-exfil.pcap.zip';
+        const SAMPLE_LOG_URL = 'https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES/raw/refs/heads/master/Defense%20Evasion/apt10_jjs_sideloading_prochollowing_persist_as_service_sysmon_1_7_8_13.evtx';
+        const SAMPLE_BINARY_URL = 'https://secure.eicar.org/eicar.com';
+
+        // Named constants above (not inline string literals in the sample
+        // cards below) so the tooltip's domain is always derived from the
+        // same URL the click actually fetches, rather than a second,
+        // separately-typed copy that could silently drift from it.
+        function _sampleCardTitle(url) {
+            try {
+                return 'Downloads from ' + new URL(url).hostname;
+            } catch (e) {
+                return '';
+            }
+        }
         const FILE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
         const REFRESH_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>';
         const DELETE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
@@ -852,9 +1005,13 @@
         const X_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
         const LIGHTBULB_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-7 7c0 2.5 1.5 4.5 3 6h8c1.5-1.5 3-3.5 3-6a7 7 0 0 0-7-7z"/></svg>';
         const SEARCH_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+        const COPY_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        const PLUS_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>';
         const CALENDAR_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>';
         const NOTES_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M14 3v4a1 1 0 0 0 1 1h4"></path><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"></path><line x1="9" y1="9" x2="10" y2="9"></line><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>';
+        const EXPAND_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>';
         const NOTES_MAX_LENGTH = 10000;
+        const ROW_NOTE_MAX_LENGTH = 500; // mirrors config.MAX_ROW_NOTE_LENGTH
         function getWelcomeHelpContent() { return `
             <p style="color: var(--text-muted); font-size: 0.95rem;">
                 <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is ${getUserMaxUploadSizeMB().toLocaleString()} MB (adjustable in <a href="#" onclick="event.preventDefault(); showSettingsModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Settings</a>).
@@ -879,7 +1036,7 @@
                         <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Packet Capture</strong></td>
                         <td style="padding: 8px 12px;">.pcap, .pcapng, .cap, .trace</td>
                         <td style="padding: 8px 12px;">Suricata</td>
-                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Emerging Threats Open</a></td>
+                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal(true);" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Multiple Rulesets</a></td>
                     </tr>
                     <tr style="border-bottom: 1px solid var(--bg-tertiary);">
                         <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Logs</strong></td>
@@ -902,9 +1059,13 @@
                 <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Want more fun? Try one of our fun <a href="#" onclick="event.preventDefault(); showThemesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">themes</a>!
             </p>
         `; }
-        const WELCOME_FEATURES_HTML = `
-            <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color); margin-top: 20px;">
-                <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 10px; text-align: center;">SO-CRATES provides basic analysis. Need more advanced functionality?<br>Take a look at the full <a href="https://securityonion.net" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion</a> platform available in a free Community Edition!<br>If you need enterprise features, consider upgrading to <a href="https://securityonion.com/pro" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion Pro</a>!</div>
+        // Full feature comparison, opened via showSecurityOnionModal() -
+        // the footer's own teaser (#footerCenterTeaser, set in
+        // showWelcomeUI()) only links to this rather than showing it
+        // directly, so it doesn't push a long table onto every visit to
+        // the welcome screen.
+        const SECURITY_ONION_COMPARISON_HTML = `
+                <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 10px; text-align: center;">SO-CRATES provides basic analysis of imported files. Need more advanced functionality?<br>Take a look at the full <a href="https://securityonion.net/software" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion</a> platform available in a free Community Edition!<br>If you need enterprise features, consider upgrading to <a href="https://securityonion.com/pro" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion Pro</a>!</div>
                 <table class="feature-table" style="width: 100%; border-collapse: collapse; margin-top: 15px;">
                     <thead>
                         <tr style="border-bottom: 1px solid var(--border-color);">
@@ -922,25 +1083,7 @@
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                         </tr>
                         <tr style="border-bottom: 1px solid var(--border-color);">
-                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Investigate Alerts</td>
-                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
-                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
-                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid var(--border-color);">
-                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Slice and Dice Metadata</td>
-                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
-                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
-                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid var(--border-color);">
-                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Pivot to ASCII Transcript</td>
-                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
-                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
-                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid var(--border-color);">
-                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Download Carved PCAP</td>
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Investigate Alerts and Metadata</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
                             <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
@@ -1044,7 +1187,7 @@
                     </tbody>
                 </table>
                 <div style="margin-top: 15px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; font-size: 0.85rem;">
-                    <a href="https://securityonion.net" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">Security Onion</a>
+                    <a href="https://securityonion.net/software" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">Security Onion</a>
                     <span style="color: var(--bg-hover);">|</span>
                     <a href="http://securityonion.net/docs/about" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">Security Onion Documentation</a>
                     <span style="color: var(--bg-hover);">|</span>
@@ -1052,7 +1195,6 @@
                     <span style="color: var(--bg-hover);">|</span>
                     <a href="http://securityonion.net/docs/security-onion-pro" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">Security Onion Pro Documentation</a>
                 </div>
-            </div>
         `;
         let lastSampleUrl = DEFAULT_SAMPLE_URL;
         function yaraTagBadgeHtml(tag) {
@@ -1220,13 +1362,308 @@
             }
         }
         
-        function toggleRow(tr) {
+        // Row-cell pivot menu entry point, called first by toggleRow/
+        // toggleLogRow/toggleSigmaRow so a click on a pivotable cell opens
+        // Include/Exclude/Only instead of expanding the row. Returns true
+        // if it opened the menu (caller must return without also
+        // expanding), false if the click should fall through to the
+        // normal expand/collapse behavior - clicked outside any <td>,
+        // clicked a <td> from a different row (e.g. a bubbled click from
+        // the detail-row below), or this cell has no pivot data (the
+        // excluded Time column, or an empty value - see
+        // pivotDataAttrsHtml). The note-icon <td> never reaches here at
+        // all: its own onclick already calls stopPropagation (see
+        // rowNoteIconHtml). Passes tr through to showPivotMenu so its
+        // "Expand Row" entry (see there) has a way back to the
+        // expand/collapse behavior this click just bypassed.
+        function handleRowCellClick(tr, event) {
+            if (!event) return false;
+            const td = event.target.closest('td');
+            if (!td || td.parentElement !== tr) return false;
+            let pairs;
+            try {
+                pairs = JSON.parse(decodeURIComponent(tr.dataset.pivot || '[]'));
+            } catch (e) {
+                return false;
+            }
+            const cellIndex = Array.from(tr.children).indexOf(td);
+            const pair = pairs[cellIndex];
+            if (!pair) return false;
+            // Must not reach the document-level outside-click listener
+            // showPivotMenu()'s menu relies on to close itself - that
+            // listener would otherwise see this same click as "outside"
+            // the menu that was just created (the menu isn't a DOM
+            // ancestor of the row/cell that was clicked) and immediately
+            // remove it again before the user ever sees it.
+            event.stopPropagation();
+            showPivotMenu(event, 'section-' + tr.dataset.eventType, pair[0], pair[1], false, tr);
+            return true;
+        }
+
+        // Tracks the single currently-open pivot menu (at most one at a
+        // time, same as every other dropdown/modal in this app) so the
+        // outside-click/Escape listeners below know what to close.
+        let activePivotMenuEl = null;
+
+        function closePivotMenu() {
+            if (activePivotMenuEl) {
+                activePivotMenuEl.remove();
+                activePivotMenuEl = null;
+            }
+        }
+
+        // Same always-registered-once, contains()-check pattern as the
+        // gear menu's own outside-click listener above - the pivot menu is
+        // append/remove'd from document.body per open rather than
+        // toggling a persistent element's 'active' class, since unlike the
+        // gear menu it has no fixed home in the DOM (it can open from any
+        // row, in any table).
+        document.addEventListener('click', function(e) {
+            if (activePivotMenuEl && !activePivotMenuEl.contains(e.target)) {
+                closePivotMenu();
+            }
+        });
+
+        // Arrow function, not a plain function(e) expression - this file's
+        // hacker-mode easter egg listener elsewhere is located by tests via
+        // a regex matching addEventListener('keydown', ...) followed by a
+        // plain function(e) expression, which would otherwise wrongly
+        // match whichever of the two listeners appears first in the file.
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && activePivotMenuEl) closePivotMenu();
+        });
+
+        // The columns list a detail-panel field's label is checked against
+        // (see handleDetailValueClick) to decide whether it gets the full
+        // Include/Exclude/Only/Hunt menu or the trimmed Hunt-only one -
+        // mirrors pivotDataAttrsHtml's own per-eventType column source, but
+        // as a standalone lookup (a detail value has no ready-made columns
+        // array the way a table row's own render call does).
+        function detailColumnsForEventType(eventType) {
+            if (!eventType) return [];
+            if (eventType === 'all') return ALL_EVENTS_COLUMNS;
+            if (eventType === 'binary') return BINARY_YARA_COLUMNS;
+            return getColumnsForType(eventType);
+        }
+
+        // Delegated (not a per-value onclick) since htmlRowText returns a
+        // plain HTML string, not a DOM node addEventListener could attach
+        // to directly - same reasoning as showPivotMenu's own closures
+        // over onclick-string embedding. Detail-panel fields have no
+        // ready-made column context of their own (unlike a table row,
+        // which already carries data-event-type - see pivotDataAttrsHtml),
+        // so this resolves it from the detail-row's own preceding
+        // collapsed row instead: every detail-row is rendered as the very
+        // next sibling of the row it expands from (see e.g.
+        // buildRowForEvent's own row + detail-row pairing).
+        document.addEventListener('click', function(event) {
+            const pivotEl = event.target.closest('[data-detail-pivot]');
+            if (!pivotEl) return;
+            let pair;
+            try {
+                pair = JSON.parse(decodeURIComponent(pivotEl.dataset.detailPivot));
+            } catch (e) {
+                return;
+            }
+            const [label, value] = pair;
+            const detailRow = pivotEl.closest('tr.detail-row');
+            const collapsedRow = detailRow ? detailRow.previousElementSibling : null;
+            const eventType = collapsedRow ? collapsedRow.dataset.eventType : null;
+            const columns = detailColumnsForEventType(eventType);
+            const trimmed = !eventType || !columns.includes(label);
+            event.stopPropagation();
+            showPivotMenu(event, eventType ? 'section-' + eventType : null, label, value, trimmed);
+        });
+
+        // Aggregation-table rows (see _renderAggTablesHtml) always carry a
+        // real column - they're literally grouped by it - so this always
+        // opens the full menu, unlike the detail-panel listener above.
+        // Delegated for the same reason: _renderAggTablesHtml returns a
+        // plain HTML string, and val is arbitrary field content.
+        document.addEventListener('click', function(event) {
+            const row = event.target.closest('tr.agg-row[data-agg-pivot]');
+            if (!row) return;
+            let triple;
+            try {
+                triple = JSON.parse(decodeURIComponent(row.dataset.aggPivot));
+            } catch (e) {
+                return;
+            }
+            const [sectionId, col, value] = triple;
+            event.stopPropagation();
+            showPivotMenu(event, sectionId, col, value, false);
+        });
+
+        // Include/Exclude/Only for one row-cell's value (see
+        // handleRowCellClick). Built via direct DOM APIs and
+        // addEventListener closures over the real col/value, not an
+        // onclick="..." attribute string - col/value can be arbitrary
+        // attacker-influenced content (a log field, an HTTP header, ...),
+        // and closures sidestep the whole class of onclick-string escaping
+        // bugs (JSON.stringify-vs-double-quotes, unescaped single quotes)
+        // this codebase otherwise has to guard against explicitly for
+        // every dynamic onclick elsewhere - see TestFilterOnclickQuoting.
+        // Only the visible label text goes through escapeHtml, same as
+        // any other rendered value.
+        // trimmed: true omits Include/Exclude/Only - for a value that has
+        // no real filterable column behind it (most detail-panel fields,
+        // see handleDetailValueClick), Include/Exclude/Only would have
+        // nothing valid to filter on. Hunt/Copy/the lookup sites need no
+        // column at all (just the raw value), so they're offered either way.
+        // expandRowEl: the <tr> the click originated from (see
+        // handleRowCellClick), or omitted for the aggregation-table and
+        // detail-panel-value call sites - neither has a row of its own to
+        // expand (an aggregation row has no detail-row sibling at all, and
+        // a detail-panel value's row is already expanded, since that's the
+        // only way its panel could be visible to click in). "Expand Row"
+        // is only offered when expandRowEl actually has a collapsible
+        // detail-row sibling.
+        function showPivotMenu(event, sectionId, col, value, trimmed, expandRowEl) {
+            closePivotMenu();
+            const menu = document.createElement('div');
+            menu.className = 'pivot-menu';
+            menu.style.left = event.clientX + 'px';
+            menu.style.top = event.clientY + 'px';
+            const fullLabel = `${col}: ${value}`;
+            const valueLabel = String(value).length > 60 ? String(value).slice(0, 60) + '…' : String(value);
+            const expandDetailRow = expandRowEl ? expandRowEl.nextElementSibling : null;
+            const canExpandRow = !!(expandDetailRow && expandDetailRow.classList.contains('detail-row'));
+            // toggleDetailRow (wired below) always toggles either
+            // direction - the label/tooltip just need to describe whatever
+            // it's about to do next, based on the row's state right now.
+            const rowIsExpanded = canExpandRow && expandDetailRow.classList.contains('visible');
+            const expandRowLabel = rowIsExpanded ? 'Collapse Row' : 'Expand Row';
+            const expandRowTitle = rowIsExpanded ? 'Hide full details for this row' : 'View full details for this row';
+            const expandRowHtml = canExpandRow
+                ? `<button type="button" class="pivot-menu-item" data-pivot-action="expand-row" title="${escapeHtml(expandRowTitle)}"><span class="pivot-menu-icon">${EXPAND_ICON_SVG}</span>${expandRowLabel}</button><div class="pivot-menu-divider"></div>`
+                : '';
+            // Only the magnifying glass icon is color-coded (via its own
+            // wrapping span, not the button itself) - the button's own text
+            // stays the normal menu-item color. Icon colors reuse the same
+            // tag-red/green/blue trio already used for YARA tag badges
+            // elsewhere, rather than adding new theme variables, and are
+            // defined in every theme already so Include/Exclude/Only stay
+            // distinguishable regardless of which theme is active. Hunt
+            // gets no special tint - it's a different kind of action
+            // (whole-analysis free-text search, not a field-scoped filter)
+            // and Include/Exclude/Only's colors are deliberately not
+            // implied to apply to it.
+            // Lookup-site buttons are built from PIVOT_LOOKUP_SITES
+            // (built-in) concatenated with getCustomLookupSites()
+            // (user-added, see the Settings modal's own section) rather
+            // than hand-written one per site, so adding another site is a
+            // one-line data change, not another copy-pasted button +
+            // listener pair. The combined array is also what the click
+            // handler below indexes into, so a site's position here and
+            // its data-pivot-lookup-index always agree.
+            const allLookupSites = PIVOT_LOOKUP_SITES.concat(getCustomLookupSites());
+            const lookupSitesHtml = allLookupSites.map((site, i) =>
+                `<button type="button" class="pivot-menu-item" data-pivot-lookup-index="${i}"><span class="pivot-menu-icon">${SEARCH_ICON_SVG}</span>${escapeHtml(site.label)}</button>`
+            ).join('');
+            // Deliberately says "search" for all four, not "filter" for
+            // Include/Exclude/Only and "search" only for Hunt - the two
+            // mechanisms (currentFilters vs currentSearch) are an
+            // implementation detail an analyst reading a tooltip has no
+            // reason to care about; both narrow down what's shown, which
+            // is the only thing worth explaining here.
+            const includeTitle = `Include ${col}: ${value} in current search`;
+            const excludeTitle = `Exclude ${col}: ${value} from current search results`;
+            const onlyTitle = `Start a new search for ${col}: ${value}`;
+            const huntTitle = `Start a new search for ${value} across all fields`;
+            const filterButtonsHtml = trimmed ? '' : `
+                <button type="button" class="pivot-menu-item" data-pivot-action="include" title="${escapeHtml(includeTitle)}"><span class="pivot-menu-icon pivot-menu-icon-include">${SEARCH_ICON_SVG}</span>Include</button>
+                <button type="button" class="pivot-menu-item" data-pivot-action="exclude" title="${escapeHtml(excludeTitle)}"><span class="pivot-menu-icon pivot-menu-icon-exclude">${SEARCH_ICON_SVG}</span>Exclude</button>
+                <button type="button" class="pivot-menu-item" data-pivot-action="only" title="${escapeHtml(onlyTitle)}"><span class="pivot-menu-icon pivot-menu-icon-only">${SEARCH_ICON_SVG}</span>Only</button>`;
+            menu.innerHTML = `
+                <div class="pivot-menu-label" title="${escapeHtml(fullLabel)}">${escapeHtml(col)}: ${escapeHtml(valueLabel)}</div>
+                ${expandRowHtml}
+                ${filterButtonsHtml}
+                <button type="button" class="pivot-menu-item" data-pivot-action="hunt" title="${escapeHtml(huntTitle)}"><span class="pivot-menu-icon">${SEARCH_ICON_SVG}</span>Hunt</button>
+                <div class="pivot-menu-divider"></div>
+                <button type="button" class="pivot-menu-item" data-pivot-action="copy"><span class="pivot-menu-icon">${COPY_ICON_SVG}</span>Copy to Clipboard</button>
+                ${lookupSitesHtml}
+                <button type="button" class="pivot-menu-item" data-pivot-action="add-custom-lookup"><span class="pivot-menu-icon">${PLUS_ICON_SVG}</span>Add Custom Lookup...</button>
+            `;
+            if (canExpandRow) {
+                menu.querySelector('[data-pivot-action="expand-row"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    toggleDetailRow(expandRowEl);
+                });
+            }
+            if (!trimmed) {
+                menu.querySelector('[data-pivot-action="include"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    includeFilterValue(sectionId, col, value);
+                });
+                menu.querySelector('[data-pivot-action="exclude"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    excludeFilterValue(sectionId, col, value);
+                });
+                menu.querySelector('[data-pivot-action="only"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    onlyFilterValue(sectionId, col, value);
+                });
+            }
+            menu.querySelector('[data-pivot-action="hunt"]').addEventListener('click', function() {
+                closePivotMenu();
+                huntFilterValue(value);
+            });
+            menu.querySelector('[data-pivot-action="copy"]').addEventListener('click', function() {
+                closePivotMenu();
+                copyValueToClipboard(value);
+            });
+            menu.querySelectorAll('[data-pivot-lookup-index]').forEach(function(btn) {
+                const site = allLookupSites[Number(btn.dataset.pivotLookupIndex)];
+                btn.addEventListener('click', function() {
+                    closePivotMenu();
+                    // PIVOT_LOOKUP_SITES' own entries carry a function
+                    // (CyberChef's own base64 encoding, for one, can't be
+                    // expressed as a plain string template); custom sites
+                    // from getCustomLookupSites() are plain {value}-template
+                    // strings instead (see applyCustomLookupUrlTemplate's
+                    // own comment for why).
+                    const url = typeof site.urlTemplate === 'function'
+                        ? site.urlTemplate(value)
+                        : applyCustomLookupUrlTemplate(site.urlTemplate, value);
+                    window.open(url, '_blank', 'noopener,noreferrer');
+                });
+            });
+            menu.querySelector('[data-pivot-action="add-custom-lookup"]').addEventListener('click', function() {
+                closePivotMenu();
+                showSettingsModal(true);
+            });
+            document.body.appendChild(menu);
+            activePivotMenuEl = menu;
+
+            // getBoundingClientRect() needs the menu already in the DOM to
+            // measure its real rendered size - re-clamped here rather than
+            // guessed up front, so it can't render off the right/bottom
+            // edge of the viewport regardless of label length.
+            const rect = menu.getBoundingClientRect();
+            let left = event.clientX;
+            let top = event.clientY;
+            if (left + rect.width > window.innerWidth) left = Math.max(0, window.innerWidth - rect.width - 8);
+            if (top + rect.height > window.innerHeight) top = Math.max(0, window.innerHeight - rect.height - 8);
+            menu.style.left = left + 'px';
+            menu.style.top = top + 'px';
+        }
+
+        function toggleRow(tr, event) {
+            if (handleRowCellClick(tr, event)) return;
+            toggleDetailRow(tr);
+        }
+
+        // Extracted from toggleRow so the pivot menu's "Expand Row" entry
+        // (see showPivotMenu) can trigger the exact same expand/collapse
+        // behavior directly, without going back through handleRowCellClick
+        // - which would just reopen the pivot menu instead of expanding.
+        function toggleDetailRow(tr) {
             const detailRow = tr.nextElementSibling;
             if (detailRow && detailRow.classList.contains('detail-row')) {
                 const wasHidden = !detailRow.classList.contains('visible');
                 tr.classList.toggle('expanded-row');
                 detailRow.classList.toggle('visible');
-                
+
                 if (wasHidden) {
                     const asciiDiv = detailRow.querySelector('.stream-payload');
                     if (asciiDiv) {
@@ -1240,10 +1677,81 @@
                             loadAsciiTranscript(srcIp, srcPort, dstIp, dstPort, pre);
                         }
                     }
+                    loadPlaybookSectionIfPresent(detailRow);
                 }
             }
         }
-        
+
+        // playbook is {name, description, questions: [{question, context}]}.
+        // Reuses htmlSection/htmlRowText/htmlRow so the section fits the
+        // same label/value grid every other detail-panel section uses -
+        // Name/Description go through htmlRowText so they're pivot-menu
+        // clickable like any other detail value, same as everywhere else.
+        function renderPlaybookSectionHtml(playbook) {
+            let html = htmlSection('Playbook', 'var(--accent)');
+            html += htmlRowText('Name', playbook.name);
+            html += htmlRowText('Description', playbook.description);
+            const questionsHtml = (playbook.questions || []).map((q, i) => {
+                const contextHtml = q.context ? `<div class="playbook-question-context">${escapeHtml(q.context)}</div>` : '';
+                return htmlRow(`Q${i + 1}`, `<div class="playbook-question-text">${escapeHtml(q.question || '')}</div>${contextHtml}`);
+            }).join('');
+            // Full-width, not a label/value row - there's no natural short
+            // label for it. Doubles as the collapse/expand toggle for the
+            // questions below (see togglePlaybookQuestions) - Name/
+            // Description always stay visible either way, so an advanced
+            // user can collapse just the (sometimes long) questions list to
+            // reclaim vertical space between Alert Details/Rule and the
+            // Payload section further down, without losing the section
+            // entirely. Expanded by default - this is a "shrink it back
+            // down" control, not a "click to reveal" gate.
+            html += `<div class="playbook-questions-toggle" style="grid-column: 1 / -1; color: var(--text-muted); margin-top: 4px; cursor: pointer; user-select: none;" onclick="togglePlaybookQuestions(this)">▾ The following questions might help guide your investigation:</div>`;
+            html += `<div class="playbook-questions" style="display: contents;">${questionsHtml}</div>`;
+            return html;
+        }
+
+        // Purely local DOM state via the toggle element's own next sibling,
+        // not a global flag like toggleDiagram()/toggleAggregations() use -
+        // multiple rows can each have their own expanded Playbook section
+        // open at once, unlike the single-instance Sankey/Aggregations
+        // panels those two toggle. display:'contents' (not '') so the
+        // questions keep participating in the section's own grid layout
+        // when shown, matching how they were laid out before the toggle
+        // existed.
+        function togglePlaybookQuestions(toggleEl) {
+            const content = toggleEl.nextElementSibling;
+            const collapsed = content.style.display === 'none';
+            content.style.display = collapsed ? 'contents' : 'none';
+            toggleEl.textContent = (collapsed ? '▾' : '▸') + ' The following questions might help guide your investigation:';
+        }
+
+        // Fetches /api/playbook using the placeholder's own
+        // data-detection-type/data-rule-id (see renderAlertDetails/
+        // formatSigmaAlertDetail) and, if a playbook comes back, inserts a
+        // "Playbook" section directly before the placeholder - which
+        // itself stays display:none forever, so a null response (e.g. a
+        // manual install with nothing baked in) leaves no trace at all.
+        // Called from toggleDetailRow/toggleSigmaRow's own wasHidden
+        // branch, mirroring loadAsciiTranscript's lazy-on-first-expand
+        // shape. data-attempted guards against re-fetching on every
+        // collapse/re-expand - once tried (successfully or not), never
+        // tried again for this row.
+        async function loadPlaybookSectionIfPresent(detailRow) {
+            const placeholder = detailRow.querySelector('.playbook-section-placeholder');
+            if (!placeholder || placeholder.dataset.attempted) return;
+            placeholder.dataset.attempted = 'true';
+            const detectionType = placeholder.dataset.detectionType;
+            const ruleId = placeholder.dataset.ruleId;
+            try {
+                const resp = await fetch(`/api/playbook?type=${encodeURIComponent(detectionType)}&id=${encodeURIComponent(ruleId)}`);
+                const data = await resp.json();
+                if (data.playbook) {
+                    placeholder.insertAdjacentHTML('beforebegin', renderPlaybookSectionHtml(data.playbook));
+                }
+            } catch (e) {
+                // Quiet failure - no playbook shown is the correct outcome either way.
+            }
+        }
+
         async function loadAsciiTranscript(src, sport, dst, dport, pre) {
             const url = buildStreamUrl('ascii-stream', src, sport, dst, dport);
             try {
@@ -1321,18 +1829,22 @@
                 if (data.packets && data.packets.length > 0) {
                     let html = '<div class="packet-controls"><button class="packet-control-btn" onclick="expandAllPackets(this.parentNode.parentNode)">Expand All</button><button class="packet-control-btn" onclick="collapseAllPackets(this.parentNode.parentNode)">Collapse All</button></div>';
                     
+                    // Packets always start collapsed - expandAllPackets()/
+                    // collapseAllPackets()/togglePacket() (bound above and
+                    // on each packet-header) are the only things that ever
+                    // change this, by toggling the 'hidden' class directly
+                    // on the DOM after render, not by re-rendering from
+                    // per-packet state.
                     data.packets.forEach((pkt) => {
-                        const isExpanded = false;
-                        const arrow = isExpanded ? '▾' : '▸';
                         const dirParts = pkt.header.split(' > ');
                         const isSrc = dirParts.length >= 2 ? dirParts[0].includes(src) : pkt.header.indexOf(src) < pkt.header.indexOf(dst);
                         const dirClass = isSrc ? 'src-dir' : 'dst-dir';
                         html += `
                             <div class="packet-block ${dirClass}">
                                 <div class="packet-header" onclick="togglePacket(this)">
-                                    <span>${arrow}</span><span>${escapeHtml(pkt.header)}</span>
+                                    <span>▸</span><span>${escapeHtml(pkt.header)}</span>
                                 </div>
-                                <div class="packet-content${isExpanded ? '' : ' hidden'}">
+                                <div class="packet-content hidden">
                                     <pre>${escapeHtml(pkt.lines.join('\n'))}</pre>
                                 </div>
                             </div>
@@ -1378,8 +1890,22 @@
             return `<span class="detail-label">${escapeHtml(label)}</span><span class="${valueCls}"${sty}>${innerHtml}</span>`;
         }
         
+        // Wraps a non-empty value in its own clickable span (see
+        // handleDetailValueClick) so the ~120 call sites that go through
+        // this one shared helper all get the detail-panel pivot menu for
+        // free, without each needing its own change. data-detail-pivot
+        // carries [label, value] as percent-encoded JSON rather than an
+        // onclick="..." string - same reasoning as pivotDataAttrsHtml's
+        // own data-pivot attribute (a detail value can be arbitrary
+        // attacker-influenced content, e.g. a log field or HTTP header).
+        // An empty value has nothing meaningful to pivot on, so it's left
+        // as plain (unwrapped) text, matching pivotDataAttrsHtml's own
+        // choice to exclude empty values from the row-cell menu too.
         function htmlRowText(label, text, className, style) {
-            return htmlRow(label, escapeHtml(String(text || '')), className, style);
+            const value = String(text || '');
+            if (!value) return htmlRow(label, '', className, style);
+            const encoded = encodeURIComponent(JSON.stringify([label, value]));
+            return htmlRow(label, `<span class="detail-value-pivot" data-detail-pivot="${encoded}">${escapeHtml(value)}</span>`, className, style);
         }
 
         function maybeLinkifyValue(value) {
@@ -1435,15 +1961,39 @@
             return `<div class="stream-payload" data-src-ip="${srcIpHtml}" data-src-port="${srcPort}" data-dst-ip="${dstIpHtml}" data-dst-port="${dstPort}" style="margin-top: 15px;"><div style="color: var(--text-muted); font-size: 0.85rem; border-bottom: 1px solid var(--border-color); padding-bottom: 5px; margin-bottom: 5px;">Payload</div><div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px;"><div class="view-tabs"><button class="view-tab active" onclick="switchStreamView('ascii','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">ASCII Transcript</button><button class="view-tab" onclick="switchStreamView('hexdump','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">Hexdump</button></div><button class="stream-btn" onclick="downloadPcap('${srcIpJs}','${srcPort}','${dstIpJs}','${dstPort}')" style="margin-left: 12px;">Download PCAP</button></div><div class="stream-view-container" style="background: var(--bg-primary); padding: 15px; border-radius: 8px; font-size: 0.8rem; margin: 0;"><div class="ascii-transcript" style="white-space: pre-wrap; overflow-wrap: break-word;"></div><div class="hexdump-content" style="display: none;"></div></div></div>`;
         }
 
-        function renderAlertDetails(e) {
-            let html = htmlSection('Alert Details', COLORS.EVENT.alert);
-            html += htmlRowText('Signature', e.alert?.signature);
+        function renderAlertFields(e) {
+            let html = htmlRowText('Signature', e.alert?.signature);
             html += htmlRowText('Category', e.alert?.category);
             html += htmlRowText('Severity', e.alert?.severity);
             html += htmlRowText('Action', e.alert?.action);
             html += htmlRowText('GID', e.alert?.gid);
             html += htmlRowText('SID', e.alert?.signature_id);
+            html += htmlRowText('Ruleset', classifyRuleset(e.alert?.signature_id));
             html += htmlRow('Rule', escapeHtml(e.alert?.rule || ''), 'mono', 'white-space: pre-wrap; overflow-wrap: break-word; min-width: 0;');
+            return html;
+        }
+
+        function renderAlertDetails(e) {
+            let html = htmlSection('Alert Details', COLORS.EVENT.alert);
+            html += renderAlertFields(e);
+            // Hidden anchor for the Playbook section - see
+            // loadPlaybookSectionIfPresent. display:none means it takes no
+            // space and shows nothing if the fetch it triggers on first
+            // expand comes back with no playbook (e.g. a manual install
+            // with nothing baked in) - there's never an empty "Playbook"
+            // heading shown, only ever a populated one or nothing at all.
+            html += `<span class="playbook-section-placeholder" data-detection-type="nids" data-rule-id="${escapeHtml(String(e.alert?.signature_id || ''))}" style="display:none;"></span>`;
+            return html;
+        }
+
+        function renderProtocolDecodeDetails(e) {
+            // Suricata's own built-in protocol-command-decode alerts are
+            // noise, not real detections (see create_sqlite_db's
+            // reclassification in db.py) - same fields as Alert Details,
+            // but deliberately no Playbook section, since there's no
+            // investigation guidance for "this isn't a threat."
+            let html = htmlSection('Decoder Alert Details', COLORS.EVENT.protocol_decode);
+            html += renderAlertFields(e);
             return html;
         }
 
@@ -1670,7 +2220,7 @@
             if (meta.exif && Object.keys(meta.exif).length) {
                 html += htmlSection('Exif Metadata', COLORS.EVENT.fileinfo);
                 Object.entries(meta.exif).forEach(([k, v]) => {
-                    html += htmlRowText(escapeHtml(k), escapeHtml(v), '', 'word-break: break-all;');
+                    html += htmlRowText(k, v, '', 'word-break: break-all;');
                 });
             }
 
@@ -1692,6 +2242,7 @@
 
         const EVENT_RENDERERS = {
             alert: renderAlertDetails,
+            protocol_decode: renderProtocolDecodeDetails,
             dns: renderDnsDetails,
             dnp3: renderDnp3Details,
             http: renderHttpDetails,
@@ -1711,6 +2262,7 @@
             if (renderer) {
                 html += renderer(e);
             }
+            html += rowNoteDetailHtml('events', e.id, e.row_note);
             html += `</div>`;
             html += _formatEventPayload(e);
             return html;
@@ -1791,9 +2343,19 @@
             document.getElementById('searchBarContainer').style.display = 'none';
             document.getElementById('inputBoxes').style.display = 'block';
             document.getElementById('appHeaderFilename').innerHTML = '';
-            document.getElementById('appHeaderMeta').innerHTML = '<span style="color: var(--text-muted); font-size: 0.9rem;">Security Onion Containerized Rapid Analysis of Threats, Evil, and Sus</span>';
+            // .app-header-tagline is absolutely positioned (see socrates.css)
+            // to center in the header bar regardless of #appHeaderLeft's own
+            // width - unlike the footer's teaser, #appHeaderMeta is shared
+            // with analysis mode (file metadata next to the filename, set
+            // elsewhere), so it can't just become a 3-column layout without
+            // also centering that unrelated content away from the filename
+            // it describes. This welcome-only tagline is scoped to its own
+            // class instead, left untouched at the other #appHeaderMeta call site.
+            document.getElementById('appHeaderMeta').innerHTML = '<a href="#" onclick="event.preventDefault(); showAboutModal();" class="app-header-tagline">Security Onion Containerized Rapid Analysis of Threats, Evil, and Sus</a>';
+            document.getElementById('footerCenterTeaser').innerHTML = '<a href="#" onclick="event.preventDefault(); showSecurityOnionModal();" class="footer-teaser-link">Need more advanced functionality?</a>';
             document.getElementById('appHeaderRight').innerHTML = renderGearMenu();
             updateThemeMenu();
+            checkForStaleRules();
         }
 
         function shouldShowHelpModal() {
@@ -1816,7 +2378,7 @@
         // again" checkbox state) that must only fire if Help was actually
         // open.
         function closeOtherMenuModals(exceptId) {
-            const closers = { helpModal: closeHelpModal, settingsModal: closeSettingsModal, themesModal: closeThemesModal, rulesModal: closeRulesModal, aboutModal: closeAboutModal, notesModal: closeNotesModal };
+            const closers = { helpModal: closeHelpModal, settingsModal: closeSettingsModal, themesModal: closeThemesModal, rulesModal: closeRulesModal, aboutModal: closeAboutModal, notesModal: closeNotesModal, securityOnionModal: closeSecurityOnionModal };
             Object.keys(closers).forEach(function(id) {
                 if (id === exceptId) return;
                 const modal = document.getElementById(id);
@@ -1878,7 +2440,13 @@
             }
         }
 
-        function showSettingsModal() {
+        // focusCustomLookup: true opens the modal with focus already in the
+        // Custom Lookup Sites add-form - reached from the pivot menu's own
+        // "Add Custom Lookup..." entry, so the analyst lands ready to type
+        // rather than having to find and click into the field themselves.
+        // Mirrors showRulesModal(expandSuricataSources)'s own pattern for
+        // the same reason.
+        function showSettingsModal(focusCustomLookup) {
             closeOtherMenuModals('settingsModal');
             const input = document.getElementById('maxQueryLimitInput');
             const hint = document.getElementById('settingsHint');
@@ -1904,17 +2472,83 @@
                 uploadInput.max = maxUploadMB;
                 uploadHint.textContent = `Default: ${CONFIG.DEFAULT_UPLOAD_SIZE_MB.toLocaleString()} MB. Server maximum: ${maxUploadMB.toLocaleString()} MB.`;
             }).catch(() => {});
+            renderCustomLookupSitesSection();
             document.getElementById('settingsModal').classList.add('active');
+            if (focusCustomLookup) {
+                document.getElementById('customLookupNameInput').focus();
+            }
+        }
+
+        // Re-rendered from scratch (not patched in place) on every open and
+        // after every add/edit/delete - the list is short (capped at
+        // MAX_CUSTOM_LOOKUP_SITES) so this is cheap, and it keeps the
+        // add/edit form's own reset (resetCustomLookupForm) as the single
+        // place that clears editingCustomLookupIndex, rather than needing
+        // to reason about partial DOM updates.
+        function renderCustomLookupSitesSection() {
+            const sites = getCustomLookupSites();
+            const listEl = document.getElementById('customLookupSitesList');
+            listEl.innerHTML = sites.length === 0
+                ? '<div style="color: var(--text-muted); font-size: 0.85rem; padding: 6px 0;">No custom lookup sites yet.</div>'
+                : sites.map((site, i) => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--bg-hover); min-width: 0;">
+                        <div style="min-width: 0; overflow: hidden;">
+                            <div style="color: var(--text-primary); font-size: 0.9rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(site.label)}</div>
+                            <div style="color: var(--text-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(site.urlTemplate)}">${escapeHtml(site.urlTemplate)}</div>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+                            <button onclick="startEditCustomLookupSite(${i})" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">Edit</button>
+                            <button onclick="handleDeleteCustomLookupSite(${i})" style="background: none; color: var(--badge-danger-text); border: none; padding: 0; cursor: pointer; display: flex;" title="Delete">${DELETE_ICON_SVG}</button>
+                        </div>
+                    </div>
+                `).join('');
+            resetCustomLookupForm();
+        }
+
+        function resetCustomLookupForm() {
+            editingCustomLookupIndex = null;
+            document.getElementById('customLookupNameInput').value = '';
+            document.getElementById('customLookupUrlInput').value = '';
+            document.getElementById('customLookupError').style.display = 'none';
+            document.getElementById('customLookupSaveBtn').textContent = 'Add';
+            document.getElementById('customLookupCancelBtn').style.display = 'none';
+        }
+
+        function startEditCustomLookupSite(index) {
+            const site = getCustomLookupSites()[index];
+            if (!site) return;
+            editingCustomLookupIndex = index;
+            document.getElementById('customLookupNameInput').value = site.label;
+            document.getElementById('customLookupUrlInput').value = site.urlTemplate;
+            document.getElementById('customLookupError').style.display = 'none';
+            document.getElementById('customLookupSaveBtn').textContent = 'Save';
+            document.getElementById('customLookupCancelBtn').style.display = 'inline-block';
+        }
+
+        function cancelEditCustomLookupSite() {
+            resetCustomLookupForm();
+        }
+
+        function handleSaveCustomLookupSite() {
+            const name = document.getElementById('customLookupNameInput').value;
+            const url = document.getElementById('customLookupUrlInput').value;
+            const result = saveCustomLookupSite(editingCustomLookupIndex, name, url);
+            if (!result.valid) {
+                const errorEl = document.getElementById('customLookupError');
+                errorEl.textContent = result.error;
+                errorEl.style.display = 'block';
+                return;
+            }
+            renderCustomLookupSitesSection();
+        }
+
+        function handleDeleteCustomLookupSite(index) {
+            deleteCustomLookupSite(index);
+            renderCustomLookupSitesSection();
         }
 
         function closeSettingsModal() {
             document.getElementById('settingsModal').classList.remove('active');
-        }
-
-        function handleSettingsBackdropClick(event) {
-            if (event.target === document.getElementById('settingsModal')) {
-                closeSettingsModal();
-            }
         }
 
         function showAboutModal() {
@@ -1932,10 +2566,18 @@
             document.getElementById('aboutModal').classList.remove('active');
         }
 
-        function handleAboutBackdropClick(event) {
-            if (event.target === document.getElementById('aboutModal')) {
-                closeAboutModal();
-            }
+        // The full feature comparison (SECURITY_ONION_COMPARISON_HTML) is
+        // set here rather than baked into the modal's static HTML skeleton
+        // - it's plain content with no per-open state, but still needs a
+        // JS-side constant since it embeds CHECKMARK_ICON_SVG.
+        function showSecurityOnionModal() {
+            closeOtherMenuModals('securityOnionModal');
+            document.getElementById('securityOnionModalBody').innerHTML = SECURITY_ONION_COMPARISON_HTML;
+            document.getElementById('securityOnionModal').classList.add('active');
+        }
+
+        function closeSecurityOnionModal() {
+            document.getElementById('securityOnionModal').classList.remove('active');
         }
 
         // Validates and (if valid) persists a single numeric Settings field.
@@ -1999,6 +2641,10 @@
             document.getElementById('mainHeader').style.display = 'block';
             document.getElementById('dataPanel').style.display = '';
             document.getElementById('searchBarContainer').style.display = 'block';
+            // Same footer teaser as the welcome screen (showWelcomeUI) -
+            // kept consistent across both modes rather than swapping to a
+            // "Need help?" prompt during analysis.
+            document.getElementById('footerCenterTeaser').innerHTML = '<a href="#" onclick="event.preventDefault(); showSecurityOnionModal();" class="footer-teaser-link">Need more advanced functionality?</a>';
         }
         
         async function showWelcome() {
@@ -2068,13 +2714,13 @@
                         <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color); width: 100%; box-sizing: border-box;">
                             <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; margin-bottom: 15px; font-weight: 600;">${DOWN_ARROW_ICON_SVG} Select a sample file, import a file from URL, or import a file from your local system</div>
                             <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 15px;">
-                                <div class="sample-card" onclick="loadSampleUrl('${DEFAULT_SAMPLE_URL}')">
+                                <div class="sample-card" title="${_sampleCardTitle(DEFAULT_SAMPLE_URL)}" onclick="loadSampleUrl('${DEFAULT_SAMPLE_URL}')">
                                      <span class="sample-label">Sample pcap file</span>
                                  </div>
-                                <div class="sample-card" onclick="loadSampleUrl('https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES/raw/refs/heads/master/Defense%20Evasion/apt10_jjs_sideloading_prochollowing_persist_as_service_sysmon_1_7_8_13.evtx')">
+                                <div class="sample-card" title="${_sampleCardTitle(SAMPLE_LOG_URL)}" onclick="loadSampleUrl('${SAMPLE_LOG_URL}')">
                                     <span class="sample-label">Sample log file</span>
                                 </div>
-                                <div class="sample-card" onclick="loadSampleUrl('https://secure.eicar.org/eicar.com')">
+                                <div class="sample-card" title="${_sampleCardTitle(SAMPLE_BINARY_URL)}" onclick="loadSampleUrl('${SAMPLE_BINARY_URL}')">
                                     <span class="sample-label">Sample binary file</span>
                                 </div>
                             </div>
@@ -2111,7 +2757,6 @@
                            </div>
                           <div id="previousAnalysesList">${previousHtml}</div>
                       </div>
-                     ${WELCOME_FEATURES_HTML}
                  </div>
              `;
             
@@ -2135,6 +2780,7 @@
             closeRulesModal();
             closeAboutModal();
             closeNotesModal();
+            closeSecurityOnionModal();
         }
 
         let keyBuffer = '';
@@ -2298,6 +2944,36 @@
         // expected with no indication why - nudge new manual installs at the
         // Rules modal once, rather than leaving them to discover this only
         // by noticing an analysis came back oddly empty.
+        // Unconditional (not opt-in) - unlike checkForStaleRules() below,
+        // which only nudges about rules that exist but have gone stale,
+        // "nothing was ever downloaded" means every detection engine is
+        // completely empty, important enough to always surface once
+        // rather than gate behind a setting the user hasn't found yet.
+        // Populated by checkForMissingRules() from /api/rules-info's
+        // suricata.sidRanges - the single source of truth generated from
+        // suricata_sid_ranges.SURICATA_SID_RANGES (see db.py's
+        // sid_ranges_sql_case() for the server-side equivalent). null until
+        // that fetch resolves; classifyRuleset() below handles that gap.
+        // NOTE: must stay `var` (not let) so it attaches to the global
+        // object - the JSDOM test harness assigns/reads it via separate
+        // script evaluations, same reason as currentFilters/truncatedTypes.
+        var SID_RANGES = null;
+
+        // Best-effort mapping of an alert's signature_id to the curated
+        // ruleset it most likely came from - client-side equivalent of
+        // suricata_sid_ranges.classify_alert_ruleset(). Returns '' (not
+        // 'Other / Unrecognized', which would misleadingly claim a real
+        // classification) while SID_RANGES hasn't loaded yet.
+        function classifyRuleset(sid) {
+            if (sid === undefined || sid === null || !SID_RANGES) return '';
+            const n = Number(sid);
+            if (!Number.isFinite(n)) return '';
+            for (const r of SID_RANGES) {
+                if (n >= r.min && (r.max === null || n <= r.max)) return r.label;
+            }
+            return 'Other / Unrecognized';
+        }
+
         async function checkForMissingRules() {
             try {
                 const resp = await fetch('/api/rules-info');
@@ -2314,6 +2990,22 @@
                         onAction: showRulesModal,
                     });
                 }
+                // Populates classifyRuleset()'s cache - this call is
+                // fire-and-forget from init(), not awaited before
+                // loadAnalysis(), so on a slow connection the alert table's
+                // very first render could happen before this resolves (see
+                // classifyRuleset()). Re-render the alert section if one is
+                // already on screen so that race self-corrects immediately
+                // instead of waiting for the next unrelated interaction.
+                if (info.suricata.sidRanges) {
+                    SID_RANGES = info.suricata.sidRanges;
+                    if (document.getElementById('section-alert')) {
+                        buildSection('alert', tabDataCache['alert'] || []);
+                    }
+                    if (document.getElementById('section-protocol_decode')) {
+                        buildSection('protocol_decode', tabDataCache['protocol_decode'] || []);
+                    }
+                }
             } catch (e) {
                 // Ignore - not worth surfacing an error over a background nudge
             }
@@ -2322,6 +3014,14 @@
         const RULESET_LABELS = { suricata: 'Suricata', yara: 'YARA', sigma: 'Sigma' };
 
         let rulesPollInterval = null;
+        // Separate 1s ticker just for the "Updating… Ns" elapsed-time
+        // display, so it counts up every second instead of only jumping
+        // every 2s alongside rulesPollInterval's actual network fetch.
+        // Only runs while at least one ruleset update is actually in
+        // progress (started/stopped from refreshRulesModal's own
+        // anyRunning check below) - re-renders from cache, no extra
+        // network calls.
+        let rulesTickInterval = null;
         let rulesPrevRunning = { suricata: false, yara: false, sigma: false };
         // Client-side only (the server doesn't track a start timestamp) -
         // set the moment a ruleset is first observed running (either just
@@ -2344,6 +3044,27 @@
         let lastRulesInfo = null;
         let lastRulesStatus = null;
 
+        // name -> bool, which of info.suricata.availableSources the user has
+        // checked. Only (re)synced from the server's enabledSources when the
+        // modal is (re)opened (suricataSelectionInitialized reset in
+        // closeRulesModal(), consumed once in refreshRulesModal()) - not on
+        // every 2s poll tick, or an in-progress checkbox edit would get
+        // stomped mid-click the same way staleThresholdDaysInput would if it
+        // weren't guarded against the poll.
+        let suricataSourceSelection = {};
+        let suricataSelectionInitialized = false;
+        let suricataSourcesExpanded = false;
+
+        // Whether to leave Suricata's own bundled protocol-command-decode
+        // event rules active (e.g. "SURICATA STREAM excessive
+        // retransmissions") instead of suppressed - off by default, since
+        // these are noisy built-in stream/decoder anomaly events bundled
+        // identically into every source's own fetch, not a real per-source
+        // ruleset choice. Re-synced from info.suricata.showProtocolDecodeAlerts
+        // alongside suricataSourceSelection, guarded by the same
+        // suricataSelectionInitialized flag (see its own comment above).
+        let showProtocolDecodeAlerts = false;
+
         function formatRuleCount(count) {
             return (count === null || count === undefined) ? 'no rules found' : count.toLocaleString() + ' rules';
         }
@@ -2352,26 +3073,35 @@
             return epoch ? new Date(epoch * 1000).toLocaleString() : 'never';
         }
 
-        const RULES_STALE_DAYS = 30;
-
-        function isRulesetStale(epoch) {
-            return !epoch || (Date.now() - epoch * 1000) > RULES_STALE_DAYS * 86400000;
+        // thresholdHours comes from /api/rules-info's staleThresholdHours
+        // (server's config.RULES_MAX_AGE_HOURS) rather than a separate
+        // hardcoded constant here - this used to be its own frontend-only
+        // 30-day cutoff, independently of the backend's 'stale' field
+        // (used by checkForStaleRules()'s notification), so the same
+        // ruleset could show as fresh here while triggering that
+        // notification, or vice versa. Both now agree by construction.
+        function isRulesetStale(epoch, thresholdHours) {
+            return !epoch || (Date.now() - epoch * 1000) > thresholdHours * 3600000;
         }
 
         // Flags an "updated" date as stale (or missing) so an analyst
         // notices at a glance without having to do the date math themselves.
-        function formatDateSpan(epoch) {
-            const style = isRulesetStale(epoch) ? ' style="color: var(--badge-warning-text);"' : '';
+        function formatDateSpan(epoch, thresholdHours) {
+            const style = isRulesetStale(epoch, thresholdHours) ? ' style="color: var(--badge-warning-text);"' : '';
             return `<span${style}>${formatRuleDate(epoch)}</span>`;
         }
 
         // Canonical source for each ruleset - same projects/links listed in
         // docs/credits.md - shown in the Rules modal so an analyst knows
         // what they're pulling in before clicking Update.
+        // Suricata deliberately excluded - unlike YARA/Sigma, it's no
+        // longer a single fixed source now that sources are individually
+        // enable/disable-able (see renderRuleSection()'s suricata-specific
+        // branch below), so a single hardcoded "(Emerging Threats Open)"
+        // link would misname whatever's actually enabled.
         const RULESET_SOURCES = {
             yara: { label: 'YARA Forge', url: 'https://github.com/YARAHQ/yara-forge' },
             sigma: { label: 'SigmaHQ', url: 'https://github.com/SigmaHQ/sigma' },
-            suricata: { label: 'Emerging Threats Open', url: 'https://rules.emergingthreats.net/' },
         };
 
         function formatElapsed(seconds) {
@@ -2388,51 +3118,244 @@
             const resultIcon = !statusEntry.running && lastResult
                 ? `<span style="color: ${lastResult === 'error' ? 'var(--badge-danger-text)' : 'var(--badge-success-text)'};" title="${lastResult === 'error' ? 'Last update failed' : 'Last update succeeded'}">${lastResult === 'error' ? X_ICON_SVG : CHECKMARK_ICON_SVG}</span>`
                 : '';
-            const progressLine = statusEntry.running
-                ? `<div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
-                       <span style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center;"><span class="rule-spinner"></span>Updating… ${startTime ? formatElapsed(Math.max(0, Math.round((Date.now() - startTime) / 1000))) : ''}</span>
-                       ${logText ? `<button onclick="toggleRuleLog('${name}')" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">${expanded ? 'Hide Log' : 'View Log'}</button>` : ''}
-                   </div>`
-                : (logText ? `<div style="margin-top: 8px;"><button onclick="toggleRuleLog('${name}')" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">${expanded ? 'Hide Log' : 'View Log'}</button></div>` : '');
+            // The Update button already reads "Updating…" while running, so
+            // a separate line repeating "Updating…" alongside it (its only
+            // other job being the elapsed-seconds counter) was pure
+            // redundancy - the spinner+counter now render directly inside
+            // the button itself instead (see updateButtonLabel below).
+            const updateButtonLabel = statusEntry.running
+                ? `<span class="rule-spinner"></span>Updating… ${startTime ? formatElapsed(Math.max(0, Math.round((Date.now() - startTime) / 1000))) : ''}`
+                : 'Update';
+            const logToggle = logText
+                ? `<button onclick="toggleRuleLog('${name}')" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">${expanded ? 'Hide Log' : 'View Log'}</button>`
+                : '';
             const sectionDivider = isLast ? '' : 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--bg-hover);';
+            // Suricata's heading link opens the sources picker
+            // (toggleSuricataSources()) instead of linking to one
+            // hardcoded source's site - see the RULESET_SOURCES comment
+            // above for why a static "(Emerging Threats Open)" link would
+            // be inaccurate now. This is the *only* trigger for the picker
+            // - it used to be duplicated with a separate "Choose Rulesets"
+            // button in renderSuricataSourcesSection(), which was pure
+            // redundancy once this heading link did the same thing, so
+            // that button was removed in favor of this one label reflecting
+            // expanded/collapsed state.
+            const sourceLink = source
+                ? `<a href="${source.url}" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.8rem; margin-left: 6px;">(${source.label})</a>`
+                : `<button onclick="toggleSuricataSources()" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; margin-left: 6px;">(${suricataSourcesExpanded ? 'Hide Rulesets' : 'Enable/Disable Rulesets'})</button>`;
             return `
                 <div style="${sectionDivider}">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 10px;">
                         <div>
                             <strong style="color: var(--text-bright);">${label}</strong>
-                            <a href="${source.url}" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.8rem; margin-left: 6px;">(${source.label})</a>
-                            <div style="color: var(--text-muted); font-size: 0.9rem;">${countText}</div>
+                            ${sourceLink}
+                            <span style="color: var(--text-muted); font-size: 0.9rem;"> — ${countText}</span>
                         </div>
                         <div style="display: flex; align-items: center; gap: 8px;">
                             ${resultIcon}
-                            <button onclick="triggerRulesetUpdate('${name}')" ${statusEntry.running ? 'disabled' : ''} style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">${statusEntry.running ? 'Updating…' : 'Update'}</button>
+                            ${logToggle}
+                            <button onclick="triggerRulesetUpdate('${name}')" ${statusEntry.running ? 'disabled' : ''} style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">${updateButtonLabel}</button>
                         </div>
                     </div>
-                    ${progressLine}
                     ${expanded && logText ? `<div class="rule-update-log" data-ruleset="${name}">${escapeHtml(logText)}</div>` : ''}
                 </div>
             `;
         }
 
+        // Additive to renderRuleSection('suricata', ...) above - a
+        // collapsible checkbox list of the curated free/non-commercial
+        // suricata-update sources (info.suricata.availableSources, the
+        // single source of truth read from the server so this never drifts
+        // from suricata_analyzer.SURICATA_RULE_SOURCES). Collapsed by
+        // default, same disclosure pattern as the update log's View/Hide Log.
+        function renderSuricataSourcesSection(info) {
+            const available = (info.suricata && info.suricata.availableSources) || {};
+            const names = Object.keys(available);
+            if (!names.length) return '';
+            const rows = names.map(function(name) {
+                const src = available[name];
+                const checked = suricataSourceSelection[name] ? 'checked' : '';
+                // Surfaces per-source caveats worth knowing before enabling
+                // (e.g. ipfire/dbl's ~51 MiB / 30+ second first fetch) plus
+                // a generic "needs internet the first time" callout for any
+                // source bakedIn=false doesn't cover - both driven from
+                // SURICATA_RULE_SOURCES/BAKED_IN_SURICATA_SOURCES server-side,
+                // not hardcoded per-source here, so a future addition to
+                // either automatically gets the same treatment.
+                const notes = [];
+                if (src.note) notes.push(src.note);
+                if (src.bakedIn === false) notes.push("not included in the app image - needs internet the first time it's enabled");
+                // An inline "WARNING!" marker with the detail in its title
+                // tooltip, rather than always-visible text - a full note
+                // rendered inline forced a horizontal scrollbar in this
+                // list's narrow two-column layout (columns: 2 below). title
+                // only reaches mouse users though - iOS/Android don't show
+                // it on tap (no hover state) - so it's also a tap/click
+                // target that shows the same text as a toast, which works
+                // on touch.
+                const noteText = notes.join(' - ');
+                const noteHtml = notes.length
+                    ? `<span title="${escapeHtml(noteText)}" onclick="event.preventDefault(); event.stopPropagation(); showToast('${escapeJsString(noteText)}')" style="color: var(--badge-warning-text); font-size: 0.7rem; font-weight: bold; cursor: help; white-space: nowrap;">WARNING!</span>`
+                    : '';
+                // break-inside: avoid keeps one entry from being split
+                // across the column break below.
+                // Same checkbox-as-slider markup/class as helpShowAgain and
+                // every theme toggle (see .theme-switch/.theme-switch-slider
+                // in socrates.css) - reused rather than a new style, so it
+                // follows the current theme's palette like those already do.
+                return `
+                    <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 0.85rem; color: var(--text-primary); cursor: pointer; break-inside: avoid;">
+                        <span class="theme-switch">
+                            <input type="checkbox" ${checked} onchange="handleSuricataSourceToggle('${name}', this.checked)">
+                            <span class="theme-switch-slider"></span>
+                        </span>
+                        <span>${escapeHtml(src.label)}</span>
+                        <a href="${src.url}" target="_blank" rel="noopener noreferrer" style="color: var(--text-muted); font-size: 0.75rem; text-decoration: none;" onclick="event.stopPropagation()">(source)</a>
+                        ${noteHtml}
+                    </label>`;
+            }).join('');
+            // Excludes any not-baked-in source (currently just IPFire DBL)
+            // from "Enable All" rather than a blanket enable-everything -
+            // same bakedIn criterion the WARNING! marker uses above, so the
+            // button's label and its actual behavior can't drift apart, and
+            // a future source in the same situation is automatically
+            // excluded (and named here) too, without another code change.
+            // Users are otherwise liable to click Enable All without ever
+            // reading that source's warning and get hit with its slow first
+            // fetch unexpectedly.
+            const notBakedIn = names.filter(function(n) { return available[n].bakedIn === false; });
+            const enableAllLabel = notBakedIn.length
+                ? `Enable All (except ${notBakedIn.map(function(n) { return available[n].label; }).join(', ')})`
+                : 'Enable All';
+            const bulkLinks = `
+                <div style="display: flex; justify-content: center; gap: 10px; margin-bottom: 6px;">
+                    <button onclick="enableAllSuricataSources()" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.75rem; text-decoration: underline;">${escapeHtml(enableAllLabel)}</button>
+                    <button onclick="resetSuricataSourcesToDefault()" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.75rem; text-decoration: underline;">Revert to Default (ET Open)</button>
+                </div>`;
+            // A classtype-based filter, not a per-source choice - every
+            // curated source above bundles an identical copy of Suricata's
+            // own built-in stream/decoder anomaly rules (e.g. "SURICATA
+            // STREAM excessive retransmissions"), so this can't be one more
+            // row in the per-source list. Off by default (matches
+            // showProtocolDecodeAlerts's own default) - these events are
+            // noise for most analysts, not a per-traffic-content alert.
+            const decodeAlertsRow = `
+                <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--bg-hover);">
+                    <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 0.85rem; color: var(--text-primary); cursor: pointer;">
+                        <span class="theme-switch">
+                            <input type="checkbox" ${showProtocolDecodeAlerts ? 'checked' : ''} onchange="handleShowProtocolDecodeAlertsToggle(this.checked)">
+                            <span class="theme-switch-slider"></span>
+                        </span>
+                        <span>Show protocol-anomaly noise alerts <span style="color: var(--text-muted);">("Generic Protocol Command Decode", e.g. excessive retransmissions - off by default)</span></span>
+                    </label>
+                </div>`;
+            // No trigger button here anymore - the Suricata heading's own
+            // "(Enable/Disable Rulesets)"/"(Hide Rulesets)" link
+            // (renderRuleSection()) is the only way to expand/collapse
+            // this, so when collapsed there's nothing to render at all.
+            return suricataSourcesExpanded
+                ? `<div style="margin-top: 8px;">${decodeAlertsRow}${bulkLinks}<div class="suricata-sources-list" style="columns: 2; column-gap: 16px; max-height: 260px; overflow-y: auto; border: 1px solid var(--bg-hover); border-radius: 6px; padding: 4px 12px;">${rows}</div></div>`
+                : '';
+        }
+
+        // Only one of the three per-ruleset logs and the Suricata sources
+        // list may be open at a time - opening any of them collapses
+        // whichever of the other three was open, so the modal's total
+        // height stays bounded instead of stacking multiple long disclosed
+        // sections and forcing a vertical scrollbar.
+        function collapseAllRulesDisclosures() {
+            ruleLogExpanded = { suricata: false, yara: false, sigma: false };
+            suricataSourcesExpanded = false;
+        }
+
+        function toggleSuricataSources() {
+            const opening = !suricataSourcesExpanded;
+            collapseAllRulesDisclosures();
+            suricataSourcesExpanded = opening;
+            reRenderRulesModalFromCache();
+        }
+
+        function handleSuricataSourceToggle(name, checked) {
+            suricataSourceSelection[name] = checked;
+        }
+
+        function handleShowProtocolDecodeAlertsToggle(checked) {
+            showProtocolDecodeAlerts = checked;
+        }
+
+        // Skips any not-baked-in source (bakedIn === false) - see the
+        // enableAllLabel comment in renderSuricataSourcesSection() for why:
+        // the button's own label names exactly what this skips, driven from
+        // the same bakedIn field, so they can't disagree.
+        function enableAllSuricataSources() {
+            const available = (lastRulesInfo && lastRulesInfo.suricata && lastRulesInfo.suricata.availableSources) || {};
+            Object.keys(available).forEach(function(name) {
+                suricataSourceSelection[name] = available[name].bakedIn !== false;
+            });
+            reRenderRulesModalFromCache();
+        }
+
+        // Checks et/open and unchecks everything else, rather than
+        // unchecking everything - an all-unchecked state used to be how
+        // "Disable All" worked, relying on _reconcile_suricata_sources()'s
+        // empty-selection fallback to DEFAULT_SURICATA_SOURCES (['et/open'])
+        // once Update was actually clicked. That left the checkboxes lying
+        // about the pending state: closing the modal without clicking
+        // Update (nothing was ever POSTed) and reopening it re-synced
+        // suricataSourceSelection from the server's still-unchanged
+        // enabledSources, so et/open silently reappeared checked. Checking
+        // it here up front keeps the checkbox truthful before *and* after
+        // Update is clicked.
+        function resetSuricataSourcesToDefault() {
+            const available = (lastRulesInfo && lastRulesInfo.suricata && lastRulesInfo.suricata.availableSources) || {};
+            // Server-provided, not hardcoded here - DEFAULT_SURICATA_SOURCES
+            // in suricata_analyzer.py is the single source of truth (see
+            // /api/rules-info's defaultSources field), same reasoning as
+            // reading bakedIn instead of hardcoding which sources are
+            // baked in.
+            const defaultSources = (lastRulesInfo && lastRulesInfo.suricata && lastRulesInfo.suricata.defaultSources) || [];
+            Object.keys(available).forEach(function(name) {
+                suricataSourceSelection[name] = defaultSources.includes(name);
+            });
+            reRenderRulesModalFromCache();
+        }
+
         function toggleRuleLog(name) {
-            ruleLogExpanded[name] = !ruleLogExpanded[name];
-            if (lastRulesInfo && lastRulesStatus) {
-                renderRulesModalBodyIntoDom(lastRulesInfo, lastRulesStatus);
-            }
+            const opening = !ruleLogExpanded[name];
+            collapseAllRulesDisclosures();
+            ruleLogExpanded[name] = opening;
+            reRenderRulesModalFromCache();
         }
 
         function renderRulesModalBody(info, status) {
-            const suricataText = `${formatRuleCount(info.suricata.count)} — updated ${formatDateSpan(info.suricata.updated)}`;
-            const yaraText = `${formatRuleCount(info.yara.count)} — updated ${formatDateSpan(info.yara.updated)}`;
-            const sigmaText = `Windows: ${formatRuleCount(info.sigma.windows.count)} — updated ${formatDateSpan(info.sigma.windows.updated)}<br>Linux: ${formatRuleCount(info.sigma.linux.count)} — updated ${formatDateSpan(info.sigma.linux.updated)}`;
+            const t = _resolveStaleThresholdHours(info.staleThresholdHours);
+            const suricataText = `${formatRuleCount(info.suricata.count)} — updated ${formatDateSpan(info.suricata.updated, t)}`;
+            const yaraText = `${formatRuleCount(info.yara.count)} — updated ${formatDateSpan(info.yara.updated, t)}`;
+            // Combined into one count/date like Suricata/YARA - Windows and
+            // Linux stay two separate underlying files (analysis still
+            // auto-picks the matching one per artifact, see detect_os() in
+            // sigma_analyzer.py), this only changes what's *reported* here.
+            // null total only when neither has ever been downloaded; the
+            // reported "updated" is the older of the two dates present
+            // (mirrors get_suricata_rules_info()'s "oldest active file"
+            // convention - the least-fresh ruleset is what should count as
+            // stale, not whichever happened to refresh most recently).
+            const sigmaTotalCount = (info.sigma.windows.count === null && info.sigma.linux.count === null)
+                ? null
+                : (info.sigma.windows.count || 0) + (info.sigma.linux.count || 0);
+            const sigmaUpdated = [info.sigma.windows.updated, info.sigma.linux.updated]
+                .filter(function(e) { return e !== null && e !== undefined; })
+                .sort(function(a, b) { return a - b; })[0] ?? null;
+            const sigmaText = `${formatRuleCount(sigmaTotalCount)} — updated ${formatDateSpan(sigmaUpdated, t)}`;
             // Ordered shortest-to-longest output (YARA/Sigma are a couple
             // lines; Suricata's suricata-update log can run to dozens of
             // lines) so the two quick summaries are visible without
             // scrolling past the long, variable-length Suricata log first.
             return (
-                renderRuleSection('yara', 'YARA', yaraText, status.yara, false) +
-                renderRuleSection('sigma', 'Sigma', sigmaText, status.sigma, false) +
-                renderRuleSection('suricata', 'Suricata', suricataText, status.suricata, true)
+                renderRuleSection('yara', RULESET_LABELS.yara, yaraText, status.yara, false) +
+                renderRuleSection('sigma', RULESET_LABELS.sigma, sigmaText, status.sigma, false) +
+                renderRuleSection('suricata', RULESET_LABELS.suricata, suricataText, status.suricata, true) +
+                renderSuricataSourcesSection(info)
             );
         }
 
@@ -2447,16 +3370,48 @@
         // View/Hide Log button.
         function renderRulesModalBodyIntoDom(info, status) {
             const modalBody = document.getElementById('rulesModalBody');
+            // Replacing innerHTML destroys any in-progress text selection
+            // (e.g. the user highlighting a log line to copy it) even though
+            // the visible text is unchanged - a fresh DOM node isn't the same
+            // node the Selection API is anchored to. Skip this tick entirely
+            // while the user has an active selection inside the modal, same
+            // "don't yank it out from under them" idea as refreshRulesModal's
+            // document.activeElement guard on the days input.
+            const selection = window.getSelection();
+            if (selection && !selection.isCollapsed && modalBody.contains(selection.anchorNode)) {
+                return;
+            }
             const scrollPositions = {};
             modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
                 scrollPositions[el.dataset.ruleset] = el.scrollTop;
             });
+            // Same problem as the log boxes above - the checkbox list is
+            // its own scrollable container (see renderSuricataSourcesSection)
+            // and gets wiped by the innerHTML replacement below on every 2s
+            // poll tick just like they do.
+            const sourcesListEl = modalBody.querySelector('.suricata-sources-list');
+            const sourcesScrollTop = sourcesListEl ? sourcesListEl.scrollTop : null;
             modalBody.innerHTML = renderRulesModalBody(info, status);
             modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
                 if (el.dataset.ruleset in scrollPositions) {
                     el.scrollTop = scrollPositions[el.dataset.ruleset];
                 }
             });
+            if (sourcesScrollTop !== null) {
+                const newSourcesListEl = modalBody.querySelector('.suricata-sources-list');
+                if (newSourcesListEl) newSourcesListEl.scrollTop = sourcesScrollTop;
+            }
+        }
+
+        // Shared by every client-side-only change (log toggle, source
+        // checkbox, threshold input) that wants the modal to reflect it
+        // immediately from the last-fetched data, without waiting on the
+        // next 2s poll tick. A no-op before the first successful poll,
+        // since there's nothing cached yet to re-render.
+        function reRenderRulesModalFromCache() {
+            if (lastRulesInfo && lastRulesStatus) {
+                renderRulesModalBodyIntoDom(lastRulesInfo, lastRulesStatus);
+            }
         }
 
         // Polls while the modal is open (stops on close) rather than
@@ -2472,6 +3427,14 @@
                 ]);
                 const info = await infoResp.json();
                 const status = await statusResp.json();
+                if (!suricataSelectionInitialized) {
+                    suricataSourceSelection = {};
+                    (info.suricata.enabledSources || []).forEach(function(name) {
+                        suricataSourceSelection[name] = true;
+                    });
+                    showProtocolDecodeAlerts = !!info.suricata.showProtocolDecodeAlerts;
+                    suricataSelectionInitialized = true;
+                }
                 ['suricata', 'yara', 'sigma'].forEach(function(name) {
                     if (status[name].running && !ruleUpdateStartTimes[name]) {
                         ruleUpdateStartTimes[name] = Date.now();
@@ -2491,13 +3454,37 @@
                 renderRulesModalBodyIntoDom(info, status);
                 const anyRunning = ['suricata', 'yara', 'sigma'].some(n => status[n].running);
                 document.getElementById('updateAllRulesBtn').disabled = anyRunning;
+                if (anyRunning && !rulesTickInterval) {
+                    rulesTickInterval = setInterval(reRenderRulesModalFromCache, 1000);
+                } else if (!anyRunning && rulesTickInterval) {
+                    clearInterval(rulesTickInterval);
+                    rulesTickInterval = null;
+                }
+                // Reflects the effective threshold (override if set, else
+                // the server default) - but never while the user has this
+                // field focused, since refreshRulesModal() polls every 2s
+                // and would otherwise yank a value they're mid-typing.
+                const daysInput = document.getElementById('staleThresholdDaysInput');
+                if (daysInput && document.activeElement !== daysInput) {
+                    daysInput.value = getUserStaleThresholdDays() ?? Math.round(info.staleThresholdHours / 24);
+                }
             } catch (e) {
                 // Ignore -- next poll will retry.
             }
         }
 
-        async function showRulesModal() {
+        // expandSuricataSources: true opens the modal with the sources
+        // picker already expanded (e.g. the welcome help table's "Multiple
+        // Rulesets" link) rather than requiring an extra click on "(Show
+        // Rulesets)" once the modal is already open. Must be set before
+        // refreshRulesModal()'s first render below, not after.
+        async function showRulesModal(expandSuricataSources) {
             closeOtherMenuModals('rulesModal');
+            document.getElementById('checkForStaleRules').checked = safeStorageGet(localStorage, 'socrates_checkForStaleRules') === 'true';
+            if (expandSuricataSources) {
+                collapseAllRulesDisclosures();
+                suricataSourcesExpanded = true;
+            }
             document.getElementById('rulesModal').classList.add('active');
             await refreshRulesModal();
             if (!rulesPollInterval) {
@@ -2511,19 +3498,25 @@
                 clearInterval(rulesPollInterval);
                 rulesPollInterval = null;
             }
-        }
-
-        function handleRulesBackdropClick(event) {
-            if (event.target === document.getElementById('rulesModal')) {
-                closeRulesModal();
+            if (rulesTickInterval) {
+                clearInterval(rulesTickInterval);
+                rulesTickInterval = null;
             }
+            // Re-sync the checkbox selection from the server next time the
+            // modal opens, in case another tab/session changed it.
+            suricataSelectionInitialized = false;
         }
 
         async function triggerRulesetUpdate(name) {
+            const body = { ruleset: name };
+            if (name === 'suricata' || name === 'all') {
+                body.sources = Object.keys(suricataSourceSelection).filter(k => suricataSourceSelection[k]);
+                body.showProtocolDecodeAlerts = showProtocolDecodeAlerts;
+            }
             await fetch('/api/update-rules', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ruleset: name }),
+                body: JSON.stringify(body),
             });
             await refreshRulesModal();
             // Only (re)start polling if the modal is still open - closing it
@@ -2604,6 +3597,7 @@
         const typeLabels = {
             alert: 'Network Alerts',
             anomaly: 'Anomalies',
+            protocol_decode: 'Decoder Alerts',
             dns: 'DNS Queries',
             filealerts: 'File Alerts',
             fileinfo: 'File Info',
@@ -2613,7 +3607,19 @@
             log: 'Log Events',
             sigmaalert: 'Sigma Alerts',
             stats: 'Stats',
-            tls: 'TLS'
+            tls: 'TLS',
+            // Every other event_type falls back to type.toUpperCase() below
+            // (e.g. 'smtp' -> 'SMTP'), which is fine for a single short
+            // word/acronym - but bittorrent_dht and ftp_data are the only
+            // two raw type names with an underscore, and .stat-label's
+            // word-break: keep-all (so ordinary words never wrap mid-word)
+            // means an underscore-joined fallback can't wrap at all,
+            // overflowing a narrow stat-card (e.g. "BITTORRENT_DHT" on a
+            // sample with 20+ event types squeezing the grid). A real
+            // space here gives the label a wrap point like every other
+            // multi-word entry above already has.
+            bittorrent_dht: 'BitTorrent DHT',
+            ftp_data: 'FTP Data'
         };
         
         function buildSankeyData(events) {
@@ -2834,14 +3840,29 @@
             const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
             const eventType = visibleSection ? visibleSection.id.replace('section-', '') : null;
 
-            const gen = bumpFetchGeneration();
+            // bumpSankeyFetchGeneration(), not bumpFetchGeneration() - see
+            // that counter's own comment for why Sankey staleness must not
+            // be tracked against the shared one.
+            const gen = bumpSankeyFetchGeneration();
             let data;
-            if (canUseServerSankey(eventType)) {
-                data = await fetchSankeyData(eventType);
-            } else {
-                data = buildSankeyData(getSankeyEvents());
+            try {
+                if (canUseServerSankey(eventType)) {
+                    data = await fetchSankeyData(eventType);
+                } else {
+                    data = buildSankeyData(getSankeyEvents());
+                }
+            } catch (e) {
+                // Without this, a network hiccup or a bad/oversized
+                // response on a large sample (e.g. a 200K+ event analysis)
+                // left the panel stuck on "Loading Sankey diagram..."
+                // forever - the "Loading..." markup was already written
+                // above and nothing downstream ever ran to replace it.
+                if (isStaleSankeyFetch(gen)) return;
+                console.error('Failed to load Sankey diagram:', e);
+                sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▾ Sankey Diagram</div><div style="padding:20px;color:var(--text-muted);">Error loading Sankey diagram</div>';
+                return;
             }
-            if (isStaleFetch(gen)) return;
+            if (isStaleSankeyFetch(gen)) return;
 
             if (!data || !data.nodes || data.nodes.length === 0) {
                 sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▾ Sankey Diagram</div>';
@@ -2855,7 +3876,8 @@
         function getColumnsForType(eventType) {
             switch(eventType) {
                 case 'alert':
-                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Alert', 'Category', 'Severity'];
+                case 'protocol_decode':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Alert', 'Category', 'Ruleset', 'Severity'];
                 case 'dns':
                     return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Query', 'Type'];
                 case 'http':
@@ -2943,6 +3965,113 @@
             }
         }
         
+        // A fixed, unlabeled trailing note-icon cell shared by every row
+        // renderer - not one of the sortable `columns` a table declares
+        // (adding it there would shift every sort-column index), so it's
+        // baked directly into each renderer's own markup and into
+        // renderPaginatedTable's header instead.
+        //
+        // Only rendered for a row that already HAS a note - same
+        // omit-entirely convention as the Previous Analyses list's own
+        // notes button (has_notes: false -> no button at all), rather than
+        // a muted-vs-accent color distinction that's hard to tell apart on
+        // some themes. A note-less row shows nothing here; adding a first
+        // note happens from the expanded detail panel instead (see
+        // rowNoteDetailHtml below), not from this collapsed-row cell.
+        //
+        // id is passed through escapeJsString like note, not interpolated
+        // raw, even though it's always a real SQL integer in production -
+        // same "escape every onclick argument regardless of expected type"
+        // convention buildLogEventRow/buildSigmaAlertRow already use for
+        // their own detailId. openRowNoteEditor parses it back to a number.
+        function rowNoteIconHtml(table, id, note) {
+            if (!(note && note.trim())) return '<td class="row-note-cell"></td>';
+            const preview = note.slice(0, 200);
+            return `<td class="row-note-cell" onclick="event.preventDefault(); event.stopPropagation();"><span class="row-note-icon" onclick="openRowNoteEditor('${table}', '${escapeJsString(String(id))}', '${escapeJsString(note)}')" title="${escapeHtml(preview)}" style="cursor: pointer; color: var(--accent);">${NOTES_ICON_SVG}</span></td>`;
+        }
+
+        // The value half of the detail panel's Note row, split out from
+        // rowNoteDetailHtml below so saveAnalysisNotes() can refresh just
+        // this span in place after a save - the detail panel is rendered
+        // once and only toggled visible/hidden (see toggleRow), not
+        // re-rendered on each expand, so without this the panel would go
+        // on showing the pre-save "+ Add Note" link/stale text until the
+        // whole table next re-renders. The "detail-value" class matches
+        // every other value cell's styling; "row-note-detail-value" is the
+        // stable hook for that in-place replacement.
+        function rowNoteDetailValueHtml(table, id, note) {
+            const has = !!(note && note.trim());
+            const idJs = escapeJsString(String(id));
+            const noteJs = escapeJsString(note || '');
+            const editLink = `<a href="#" onclick="event.preventDefault(); openRowNoteEditor('${table}', '${idJs}', '${noteJs}');" style="color: var(--accent); text-decoration: none;">${has ? 'Edit' : '+ Add Note'}</a>`;
+            const value = has ? `${escapeHtml(note)} ${editLink}` : editLink;
+            return `<span class="detail-value row-note-detail-value">${value}</span>`;
+        }
+
+        // The "Add Note" / "Edit Note" row for an expanded detail panel -
+        // embeds directly into an already-open display:grid detail
+        // section, preceded by its own section divider (same htmlSection
+        // convention as "Connection"/"Alert Details"/"DNS Details" etc.)
+        // so it reads as a distinct section rather than one more row
+        // blended into whatever type-specific section happens to precede
+        // it. A fixed accent color (not a per-event-type COLORS.EVENT
+        // entry) since this section means the same thing regardless of
+        // which event type it's attached to, and ties visually to the
+        // note icon/links, which already use the same color. The
+        // label/value pair after it is a plain span pair, same shape
+        // htmlRow produces (not reused directly since the value half
+        // needs its own targetable class - see rowNoteDetailValueHtml
+        // above). This is the ONLY way to add a first note to a row (see
+        // rowNoteIconHtml above); editing an existing one works from
+        // either place.
+        function rowNoteDetailHtml(table, id, note) {
+            return htmlSection('Notes', 'var(--accent)') + `<span class="detail-label">Note</span>${rowNoteDetailValueHtml(table, id, note)}`;
+        }
+
+        // Row-cell pivot menu (Include/Exclude/Only, see handleRowCellClick)
+        // data, baked once per row at render time rather than resolved from
+        // a click-time id lookup - this is the ONE place that needs
+        // touching per table type (not every individual <td> in every
+        // event-type case of buildRowForEvent's switch) since it emits a
+        // single data-pivot attribute on the <tr> covering every cell.
+        //
+        // data-pivot is a JSON array of [column, value] pairs (or null),
+        // index-aligned with the row's rendered <td> DOM position - NOT
+        // filtered down to just the pivotable columns, since
+        // handleRowCellClick locates an entry purely by the clicked cell's
+        // DOM child index. 'Time' is always null: excluded for the same
+        // reason buildAggregationTablesCore's own excludeCols already
+        // excludes it from that click-to-filter feature - a raw timestamp
+        // is a poor Include/Exclude/Only target. An empty/missing value is
+        // also null, so clicking a blank cell just falls through to the
+        // normal row-expand behavior instead of offering to filter on ''.
+        //
+        // extractFn must be whichever of extractValue/extractAllValue/
+        // extractLogValue/extractSigmaValue this table's own filtering
+        // (matchesCurrentFilters call site) already uses for eventType, so
+        // a value clicked here is guaranteed to compare equal against that
+        // same column's value on every other row once applied as a filter.
+        function pivotDataAttrsHtml(e, eventType, columns, extractFn) {
+            const pairs = columns.map((col, i) => {
+                if (col === 'Time') return null;
+                const val = extractFn(e, col, i);
+                return (val === '' || val === null || val === undefined) ? null : [col, val];
+            });
+            // encodeURIComponent, not escapeHtml - a column value can be
+            // arbitrary attacker-influenced content (a log field, an HTTP
+            // header...) containing JSON's own '"' delimiter, which
+            // escapeHtml would turn into literal &quot; text sitting
+            // *inside* this already-double-quoted HTML attribute. Real
+            // browsers parse/serialize that back correctly (attribute
+            // values only strictly need their delimiter quote and '&'
+            // escaped, not '<'/'>'), so it isn't actually exploitable, but
+            // it does mean a naive "does the rendered HTML string contain
+            // '<script>'" check can false-positive on it. Percent-encoding
+            // sidesteps the whole question - the attribute value is plain
+            // ASCII with no HTML-meaningful characters at all.
+            return ` data-event-type="${escapeHtml(eventType)}" data-pivot="${encodeURIComponent(JSON.stringify(pairs))}"`;
+        }
+
         // Shared leading cells for every per-type event row: timestamp, proto
         // badge, and the source/dest IP:PORT columns.
         function rowPrefixCells(e) {
@@ -2952,7 +4081,9 @@
             const srcPort = e.src_port || '';
             const dstIp = e.dest_ip || '';
             const dstPort = e.dest_port || '';
-            return `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td>${valueDotSpan(DOT_COLORS.PROTO[proto.toUpperCase()])}${escapeHtml(proto)}</td><td class="mono-fixed" title="${escapeHtml(srcIp)}">${escapeHtml(srcIp)}</td><td class="mono-fixed">${escapeHtml(String(srcPort))}</td><td class="mono-fixed" title="${escapeHtml(dstIp)}">${escapeHtml(dstIp)}</td><td class="mono-fixed">${escapeHtml(String(dstPort))}</td>`;
+            const eventType = e.event_type || '';
+            const pivotAttrs = pivotDataAttrsHtml(e, eventType, getColumnsForType(eventType), extractValue);
+            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs} onclick="toggleRow(this, event)"><td class="timestamp">${escapeHtml(ts)}</td><td>${valueDotSpan(DOT_COLORS.PROTO[proto.toUpperCase()])}${escapeHtml(proto)}</td><td class="mono-fixed" title="${escapeHtml(srcIp)}">${escapeHtml(srcIp)}</td><td class="mono-fixed">${escapeHtml(String(srcPort))}</td><td class="mono-fixed" title="${escapeHtml(dstIp)}">${escapeHtml(dstIp)}</td><td class="mono-fixed">${escapeHtml(String(dstPort))}</td>`;
         }
 
         function buildRowForEvent(e) {
@@ -2964,12 +4095,14 @@
 
             switch(etype) {
                 case 'alert':
+                case 'protocol_decode':
                     const sig = e.alert?.signature || 'N/A';
                     const cat = e.alert?.category || '';
+                    const ruleset = classifyRuleset(e.alert?.signature_id);
                     const sev = e.alert?.severity || 0;
                     const sevColor = COLORS.SEVERITY[sev] || COLORS.SEVERITY.default;
-                    colSpan = 9;
-                    row = rowPrefixCells(e) + `<td>${escapeHtml(sig)}</td><td>${escapeHtml(cat)}</td><td>${valueDotSpan(sevColor)}Sev ${sev}</td></tr>`;
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(sig)}</td><td>${escapeHtml(cat)}</td><td>${escapeHtml(ruleset)}</td><td>${valueDotSpan(sevColor)}Sev ${sev}</td></tr>`;
                     break;
                 case 'dns':
                     // Suricata 8's new V3 DNS logging format moved rrname/
@@ -3237,7 +4370,14 @@
                     row = rowPrefixCells(e) + `</tr>`;
             }
 
-            return row + `<tr class="detail-row"><td colspan="${colSpan}"><div class="detail-content">${formatted}</div></td></tr>`;
+            // Every case above ends its row with a literal '</tr>' - insert
+            // the note-icon cell just before it rather than touching each
+            // of the ~30 cases individually, and bump colSpan by 1 here
+            // (its one point of consumption) to match, rather than at each
+            // case's own assignment.
+            row = row.slice(0, -'</tr>'.length) + rowNoteIconHtml('events', e.id, e.row_note) + '</tr>';
+
+            return row + `<tr class="detail-row"><td colspan="${colSpan + 1}"><div class="detail-content">${formatted}</div></td></tr>`;
         }
         
         function buildFileInfoHtml(events) {
@@ -3276,13 +4416,20 @@
             `;
         }
 
+        // buildBinaryYaraTable/buildBinaryAggregations each also define
+        // their own identical local ['Rule Name', 'Tags', 'Author'] array
+        // (pre-existing, left as-is) - this one is just for
+        // pivotDataAttrsHtml below, which needs it by name.
+        const BINARY_YARA_COLUMNS = ['Rule Name', 'Tags', 'Author'];
+
         function buildBinaryYaraRow(e) {
             const fa = e.filealerts || {};
             const ruleName = fa.rule_name || 'N/A';
             const tagsHtml = (fa.tags || []).map(t => yaraTagBadgeHtml(t)).join('');
             const author = fa.author || '';
             const formatted = formatEvent(e);
-            return `<tr onclick="toggleRow(this)"><td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(ruleName)}</td><td>${tagsHtml}</td><td>${escapeHtml(author)}</td></tr><tr class="detail-row"><td colspan="3"><div class="detail-content">${formatted}</div></td></tr>`;
+            const pivotAttrs = pivotDataAttrsHtml(e, 'binary', BINARY_YARA_COLUMNS, extractValue);
+            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs} onclick="toggleRow(this, event)"><td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(ruleName)}</td><td>${tagsHtml}</td><td>${escapeHtml(author)}</td>${rowNoteIconHtml('events', e.id, e.row_note)}</tr><tr class="detail-row"><td colspan="4"><div class="detail-content">${formatted}</div></td></tr>`;
         }
 
         function buildBinaryYaraTable(events) {
@@ -3354,9 +4501,17 @@
             // break out of the JS string after attribute decoding).
             const detailIdAttr = escapeHtml(String(detailId));
             const detailIdJs = escapeJsString(String(detailId));
-            const totalCols = 2 + (columns ? columns.length : 0); // Time + [cols] + Detail
+            const totalCols = 3 + (columns ? columns.length : 0); // Time + [cols] + Detail + Note
 
-            let row = `<tr onclick="toggleLogRow(this, '${detailIdJs}')">`;
+            // Mirrors getColumnsForType('log')'s own ['Time', ...labels,
+            // 'Detail'] shape, but built from the columns already passed in
+            // here rather than calling getColumnsForType('log') (which
+            // re-derives columns via discoverLogColumns() by rescanning
+            // every cached log event - fine once per table render, but
+            // O(rows) work that must not run again per row).
+            const pivotColumns = ['Time', ...(columns || []).map(c => c.label), 'Detail'];
+            const pivotAttrs = pivotDataAttrsHtml(evt, 'log', pivotColumns, extractLogValue);
+            let row = `<tr data-id="${escapeHtml(String(evt.id))}"${pivotAttrs} onclick="toggleLogRow(this, '${detailIdJs}', event)">`;
             row += `<td class="timestamp">${timestamp}</td>`;
             if (columns) {
                 columns.forEach(c => {
@@ -3372,14 +4527,25 @@
                 });
             }
             row += `<td>${detailTruncated ? escapeHtml(detailTruncated) : '<span style="color:var(--text-muted);">—</span>'}</td>`;
+            row += rowNoteIconHtml('events', evt.id, evt.row_note);
             row += '</tr>';
 
             const detailHtml = formatLogEventDetail(jsonData);
-            row += `<tr class="detail-row" id="${detailIdAttr}"><td colspan="${totalCols}"><div class="log-detail-panel">${detailHtml}</div></td></tr>`;
+            // formatLogEventDetail is also reused nested inside a Sigma
+            // alert's own detail panel (the "Matched Event" sub-section,
+            // see formatSigmaAlertDetail) where a note row would belong to
+            // the wrong thing - the embedded raw log, not the alert - so
+            // the note row is appended here at this call site instead of
+            // inside formatLogEventDetail itself, in its own small grid
+            // rather than assuming formatLogEventDetail's own grid is
+            // still open (it isn't - its markup is already closed).
+            const noteHtml = `<div style="display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 8px 12px; font-size: 0.9rem; margin-top: 10px;">${rowNoteDetailHtml('events', evt.id, evt.row_note)}</div>`;
+            row += `<tr class="detail-row" id="${detailIdAttr}"><td colspan="${totalCols}"><div class="log-detail-panel">${detailHtml}${noteHtml}</div></td></tr>`;
             return row;
         }
 
-        function toggleLogRow(tr, detailId) {
+        function toggleLogRow(tr, detailId, event) {
+            if (handleRowCellClick(tr, event)) return;
             const detailRow = document.getElementById(detailId);
             if (detailRow) {
                 tr.classList.toggle('expanded-row');
@@ -3402,24 +4568,31 @@
             const detailIdAttr = escapeHtml(String(detailId));
             const detailIdJs = escapeJsString(String(detailId));
 
-            let row = `<tr onclick="toggleSigmaRow(this, '${detailIdJs}')">`;
+            const pivotAttrs = pivotDataAttrsHtml(alert, 'sigmaalert', getColumnsForType('sigmaalert'), extractSigmaValue);
+            let row = `<tr data-id="${escapeHtml(String(alert.id))}"${pivotAttrs} onclick="toggleSigmaRow(this, '${detailIdJs}', event)">`;
             row += `<td class="timestamp">${timestamp}</td>`;
             row += `<td>${valueDotSpan(sevColor)}${escapeHtml(sev.toUpperCase())}</td>`;
             row += `<td><strong>${ruleTitle}</strong>${ruleId ? '<br><span style="color:var(--text-muted);font-size:0.8rem;">' + ruleId + '</span>' : ''}</td>`;
             row += `<td>${mitreHtml}</td>`;
             row += `<td>${logsource}</td>`;
+            row += rowNoteIconHtml('sigma_alerts', alert.id, alert.row_note);
             row += '</tr>';
 
             const detailHtml = formatSigmaAlertDetail(alert);
-            row += `<tr class="detail-row" id="${detailIdAttr}"><td colspan="5"><div class="log-detail-panel">${detailHtml}</div></td></tr>`;
+            row += `<tr class="detail-row" id="${detailIdAttr}"><td colspan="6"><div class="log-detail-panel">${detailHtml}</div></td></tr>`;
             return row;
         }
 
-        function toggleSigmaRow(tr, detailId) {
+        function toggleSigmaRow(tr, detailId, event) {
+            if (handleRowCellClick(tr, event)) return;
             const detailRow = document.getElementById(detailId);
             if (detailRow) {
+                const wasHidden = !detailRow.classList.contains('visible');
                 tr.classList.toggle('expanded-row');
                 detailRow.classList.toggle('visible');
+                if (wasHidden) {
+                    loadPlaybookSectionIfPresent(detailRow);
+                }
             }
         }
 
@@ -3591,9 +4764,25 @@
             return '';
         }
 
+        // currentFilters[col] is polymorphic: a plain string means "exact
+        // match" (the original shape, still written as-is by
+        // applyFilters() - now only reached via clicking a Sankey diagram
+        // link/node, since aggregation-table rows moved to the pivot menu
+        // below). An {include, exclude} object is the newer shape written
+        // by includeFilterValue()/excludeFilterValue()/onlyFilterValue()
+        // (the row-cell/aggregation-row pivot menu) - include acts as an
+        // OR-broadened allow-list for that one column, exclude as a
+        // deny-list, and both can be non-empty at once. Different columns
+        // still AND together either way.
         function matchesCurrentFilters(e, extractFn) {
-            for (const [col, val] of Object.entries(currentFilters)) {
-                if (extractFn(e, col) !== val) return false;
+            for (const [col, spec] of Object.entries(currentFilters)) {
+                if (typeof spec === 'string') {
+                    if (extractFn(e, col) !== spec) return false;
+                    continue;
+                }
+                const val = extractFn(e, col);
+                if (spec.include && spec.include.length > 0 && !spec.include.includes(val)) return false;
+                if (spec.exclude && spec.exclude.length > 0 && spec.exclude.includes(val)) return false;
             }
             return true;
         }
@@ -3754,7 +4943,20 @@
                 for (const [val, count] of entries) {
                     const escapedVal = escapeHtml(val);
                     const filterVal = val === '(empty)' ? '' : val;
-                    html += `<tr class="agg-row" onclick="applyFilter('${sectionId}', '${escapeJsString(col)}', '${escapeJsString(filterVal)}')">
+                    // data-agg-pivot (delegated, see the pivot-menu click
+                    // listener below), not a direct call to the old
+                    // (now-removed) single-value applyFilter helper -
+                    // val is arbitrary field content, and the pivot menu
+                    // needs the raw value for Hunt/Copy/the lookup sites,
+                    // not just a JS-string-escaped one for a single
+                    // hardcoded call. The "(empty)" bucket has nothing
+                    // meaningful to pivot on (matches pivotDataAttrsHtml/
+                    // htmlRowText's own empty-value exclusion) - left
+                    // without the attribute, so it's not clickable at all.
+                    const pivotAttr = filterVal
+                        ? ` data-agg-pivot="${encodeURIComponent(JSON.stringify([sectionId, col, filterVal]))}"`
+                        : '';
+                    html += `<tr class="agg-row"${pivotAttr}>
                         <td style="text-align:right;color:var(--text-muted);">${count}</td><td class="agg-cell" title="${escapedVal}">${escapedVal}</td>
                     </tr>`;
                 }
@@ -3936,7 +5138,7 @@
             return hasAny ? html : '<div style="color:var(--text-muted);padding:10px;">No event data available</div>';
         }
 
-                function formatSigmaAlertDetail(alert) {
+        function formatSigmaAlertDetail(alert) {
             let html = `<div style="display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 8px 12px; font-size: 0.9rem; overflow-wrap: break-word;">`;
 
             // Matched Event
@@ -3976,6 +5178,12 @@
                 html += htmlRowText('Tags', tagsText);
             }
 
+            // See renderAlertDetails' own comment - same hidden anchor,
+            // populated (or not) by loadPlaybookSectionIfPresent on first
+            // expand.
+            html += `<span class="playbook-section-placeholder" data-detection-type="sigma" data-rule-id="${escapeHtml(String(alert.rule_id || ''))}" style="display:none;"></span>`;
+
+            html += rowNoteDetailHtml('sigma_alerts', alert.id, alert.row_note);
             html += '</div>';
             return html;
         }
@@ -4094,8 +5302,21 @@
                     const term = currentSearch[i];
                     html += `<span class="filter-chip">${SEARCH_ICON_SVG} "${escapeHtml(term)}" <span class="filter-chip-remove" onclick="clearSearchTerm(${i})">&times;</span></span>`;
                 }
-                for (const [col, val] of Object.entries(currentFilters)) {
-                    html += `<span class="filter-chip">${escapeHtml(col)}: ${escapeHtml(val)} <span class="filter-chip-remove" onclick="clearFilter('${escapeJsString(col)}')">&times;</span></span>`;
+                for (const [col, spec] of Object.entries(currentFilters)) {
+                    if (typeof spec === 'string') {
+                        html += `<span class="filter-chip">${escapeHtml(col)}: ${escapeHtml(spec)} <span class="filter-chip-remove" onclick="clearFilter('${escapeJsString(col)}')">&times;</span></span>`;
+                        continue;
+                    }
+                    // Object shape (pivot menu's include/exclude) - one
+                    // removable chip per value, unlike the string shape's
+                    // one chip per column, since multiple include/exclude
+                    // values can be active on the same column at once.
+                    for (const val of (spec.include || [])) {
+                        html += `<span class="filter-chip">${escapeHtml(col)}: ${escapeHtml(val)} <span class="filter-chip-remove" onclick="clearFilterValue('${escapeJsString(col)}', 'include', '${escapeJsString(val)}')">&times;</span></span>`;
+                    }
+                    for (const val of (spec.exclude || [])) {
+                        html += `<span class="filter-chip filter-chip-exclude">${escapeHtml(col)} ≠ ${escapeHtml(val)} <span class="filter-chip-remove" onclick="clearFilterValue('${escapeJsString(col)}', 'exclude', '${escapeJsString(val)}')">&times;</span></span>`;
+                    }
                 }
                 html += '<button class="filter-clear-all" onclick="clearAllFilters()">Clear All</button></div>';
             }
@@ -4188,42 +5409,48 @@
         function buildStats(filteredStats) {
             const grid = document.getElementById('statsGrid');
             const stats = [];
-            const hasFilters = Object.keys(currentFilters).length > 0 || currentSearch.length > 0;
-            
+
             eventTypes.forEach(type => {
-                const total = baseEventStats[type] || 0;
                 const filtered = filteredStats ? (filteredStats[type] || 0) : (eventStats[type] || 0);
                 stats.push({
                     id: type,
                     label: typeLabels[type] || type.toUpperCase(),
                     count: filtered,
-                    total: total,
                     color: COLORS.EVENT[type] || COLORS.EVENT.tls
                 });
             });
-            
+
             if (!isLogAnalysisMode) {
                 const allFiltered = stats.reduce((a, s) => a + s.count, 0);
-                const allTotal = Object.values(baseEventStats).reduce((a, b) => a + b, 0) - (baseEventStats['stats'] || 0);
                 stats.push({
                     id: 'all',
                     label: 'All Events',
                     count: allFiltered,
-                    total: allTotal,
                     color: 'var(--text-bright)'
                 });
             }
-            
+
             const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
             const activeType = visibleSection ? visibleSection.id.replace('section-', '') : (stats[0] && stats[0].id);
-            grid.innerHTML = stats.map(s => {
-                const countDisplay = hasFilters ? `${s.count.toLocaleString()} / ${s.total.toLocaleString()}` : s.count.toLocaleString();
-                const isClickable = s.count > 0;
+            // A type only ever reaches eventTypes because it had at least
+            // one event in the unfiltered sample (see eventTypes' own
+            // derivation from baseEventStats), so count === 0 here only
+            // happens once a search/filter has narrowed it away entirely -
+            // dropped rather than shown disabled, so a heavily-filtered
+            // large sample (20+ event types, most zeroed out) doesn't turn
+            // into a wall of grayed-out cards.
+            grid.innerHTML = stats.filter(s => s.count > 0).map(s => {
+                // Filtered/searched-down counts show as just the filtered
+                // number, not "filtered / total" - the filter bar's own
+                // chips already signal that a filter is active, and a
+                // combined "count / total" string could run to twice the
+                // length of a lone count on a large sample (e.g. "229,378 /
+                // 229,831"), which no stat-card width/font-size could
+                // reliably keep from overflowing.
+                const countDisplay = s.count.toLocaleString();
                 const activeClass = s.id === activeType ? ' tab-active' : '';
-                const disabledClass = isClickable ? '' : ' stat-disabled';
-                const onclickAttr = isClickable ? `onclick="showTab('section-${s.id}', this)"` : '';
                 return `
-                    <div class="stat-card${activeClass}${disabledClass}" ${onclickAttr}>
+                    <div class="stat-card${activeClass}" onclick="showTab('section-${s.id}', this)">
                         <div class="stat-number" style="color: ${s.color}">${countDisplay}</div>
                         <div class="stat-label">${s.label}</div>
                     </div>
@@ -4260,7 +5487,8 @@
             // sortable/filterable via extractValue elsewhere.
             const detail = extractValue(e, 'Detail', -1);
             const formatted = formatEvent(e);
-            return `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td>${valueDotSpan(COLORS.EVENT[etype])}${escapeHtml(etype.toUpperCase())}</td><td>${valueDotSpan(DOT_COLORS.PROTO[proto.toUpperCase()])}${escapeHtml(proto)}</td><td class="mono-fixed" title="${escapeHtml(srcIp)}">${escapeHtml(srcIp)}</td><td class="mono-fixed">${escapeHtml(String(srcPort))}</td><td class="mono-fixed" title="${escapeHtml(dstIp)}">${escapeHtml(dstIp)}</td><td class="mono-fixed">${escapeHtml(String(dstPort))}</td><td class="mono">${escapeHtml(detail)}</td></tr><tr class="detail-row"><td colspan="8"><div class="detail-content">${formatted}</div></td></tr>`;
+            const pivotAttrs = pivotDataAttrsHtml(e, 'all', ALL_EVENTS_COLUMNS, extractAllValue);
+            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs} onclick="toggleRow(this, event)"><td class="timestamp">${escapeHtml(ts)}</td><td>${valueDotSpan(COLORS.EVENT[etype])}${escapeHtml(etype.toUpperCase())}</td><td>${valueDotSpan(DOT_COLORS.PROTO[proto.toUpperCase()])}${escapeHtml(proto)}</td><td class="mono-fixed" title="${escapeHtml(srcIp)}">${escapeHtml(srcIp)}</td><td class="mono-fixed">${escapeHtml(String(srcPort))}</td><td class="mono-fixed" title="${escapeHtml(dstIp)}">${escapeHtml(dstIp)}</td><td class="mono-fixed">${escapeHtml(String(dstPort))}</td><td class="mono">${escapeHtml(detail)}</td>${rowNoteIconHtml('events', e.id, e.row_note)}</tr><tr class="detail-row"><td colspan="9"><div class="detail-content">${formatted}</div></td></tr>`;
         }
 
         async function buildAllEvents() {
@@ -4403,6 +5631,7 @@
                     return e.alert?.category || '';
                 }
                 case 'Severity': return 'Sev ' + (e.alert?.severity || 0);
+                case 'Ruleset': return classifyRuleset(e.alert?.signature_id);
                 case 'Type': {
                     if (e.event_type === 'dnp3') return e.dnp3?.type || '';
                     if (e.event_type === 'anomaly') return e.anomaly?.type || '';
@@ -4594,6 +5823,7 @@
                 case 'Detail': {
                     const etype = e.event_type || '';
                     if (etype === 'alert') return e.alert?.signature || '';
+                    if (etype === 'protocol_decode') return e.alert?.signature || '';
                     if (etype === 'dns') return e.dns?.rrname || e.dns?.queries?.[0]?.rrname || '';
                     if (etype === 'mdns') return e.mdns?.queries?.[0]?.rrname || '';
                     if (etype === 'http') return (e.http?.http_method || '') + ' ' + (e.http?.url || '');
@@ -4674,6 +5904,11 @@
         var currentMd5 = '';
         var currentFileName = '';
         var currentNotes = '';
+        // Non-null while #notesModal is editing a row-scoped note instead
+        // of the whole-analysis one - {table, rowId} identifying which row.
+        // Reset to null on close so a stray reopen via the header icon
+        // can't inherit stale row scope.
+        var currentRowNoteScope = null;
         // NOTE: these must stay `var` (not let/const) so they attach to the
         // global object — the JSDOM test harness and inline handlers assign
         // them via separate script evaluations.
@@ -4711,6 +5946,27 @@
         let fetchGeneration = 0;
         function bumpFetchGeneration() { return ++fetchGeneration; }
         function isStaleFetch(gen) { return gen !== fetchGeneration; }
+
+        // Sankey gets its own, separate generation counter rather than
+        // sharing fetchGeneration above. REGRESSION (recurring): every
+        // unrelated caller of bumpFetchGeneration() (pagination, sort, a
+        // filter/search change, loadAnalysis, ...) invalidates whichever
+        // Sankey fetch happens to still be in flight from a just-prior tab
+        // load or filter change - if that caller's own chain doesn't
+        // itself end in a fresh updateSankeyDiagram() call (easy to miss,
+        // and already missed at least twice: loadAnalysis and
+        // sortCurrentTable both needed a dedicated follow-up call added
+        // after being caught stranding the panel on "Loading Sankey
+        // diagram..." forever), nothing ever repaints it. Since sort order
+        // and pagination have no bearing on the diagram's own content
+        // anyway (see sortCurrentTable's own comment), Sankey never needed
+        // to share staleness tracking with table fetches in the first
+        // place - an isolated counter means only another Sankey render can
+        // ever invalidate an in-flight one, so this whole bug class can no
+        // longer recur no matter what future code bumps fetchGeneration for.
+        let sankeyFetchGeneration = 0;
+        function bumpSankeyFetchGeneration() { return ++sankeyFetchGeneration; }
+        function isStaleSankeyFetch(gen) { return gen !== sankeyFetchGeneration; }
 
         // Fetches exactly one page (CONFIG.TABLE_PAGE_SIZE rows) of a per-type
         // or merged "all events" table directly from the server, plus the true
@@ -4985,6 +6241,11 @@
 
             let html = '<div class="table-scroll-wrapper"><table><thead><tr>';
             html += tableHeaderCellsHtml(columns, sectionKey);
+            // Fixed, unlabeled trailing column for the per-row note icon -
+            // not one of `columns` (those are index-correlated with
+            // currentSort.colIndex; inserting a sortable header here would
+            // shift every other column's sort index).
+            html += '<th style="width:32px;"></th>';
             html += '</tr></thead><tbody>';
             pageItems.forEach(item => { html += rowRenderer(item); });
             html += '</tbody></table></div>';
@@ -5052,6 +6313,28 @@
             currentPage = 1;
             await activeTableRender.rerender();
             updateFilterBarVisibility();
+            // Sort order has no bearing on the diagram's own content, so
+            // this is a resync rather than something sorting itself
+            // requires - Sankey now tracks its own staleness independently
+            // (see bumpSankeyFetchGeneration's comment), so the
+            // bumpFetchGeneration() above can no longer strand an in-flight
+            // Sankey fetch the way it used to. Kept anyway (cheap - the
+            // panel already shows a diagram for this exact eventType, so
+            // there's nothing to visibly change) as a resync in case
+            // something upstream ever needs it. applyFilters()/clearFilter()
+            // call updateSankeyDiagram() too, for the same reason.
+            //
+            // Skipped for log/sigmaalert - loadTabData never calls
+            // updateSankeyDiagram for either (they're the only two tabs
+            // reachable in log-analysis mode, where #sankeyPanel stays
+            // display:none for the whole session, set by
+            // clearAnalysisContainers() - see its comment). Calling it
+            // here anyway would be pure wasted work behind a hidden
+            // panel at best, since neither tab's data has the src_ip/
+            // dest_ip/dest_port shape a Sankey diagram needs.
+            if (eventType !== 'log' && eventType !== 'sigmaalert') {
+                await updateSankeyDiagram();
+            }
         }
 
         const EMPTY_FILTER_STATE_HTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.95rem;">${SEARCH_ICON_SVG} No events match the current filters</div>`;
@@ -5146,8 +6429,277 @@
             await updateSankeyDiagram();
         }
 
-        function applyFilter(sectionId, columnName, value) {
-            applyFilters(sectionId, [{column: columnName, value: value}]);
+        // Row-cell pivot menu (Include/Exclude/Only) support below. These
+        // write the {include, exclude} object shape into currentFilters -
+        // see matchesCurrentFilters()'s own comment for why that shape
+        // coexists with the older plain-string shape applyFilters() above
+        // still writes, rather than replacing it.
+
+        // Normalizes currentFilters[column] to the {include, exclude}
+        // shape, upgrading a pre-existing plain-string entry (e.g. left
+        // over from an aggregation-row click on this same column) into an
+        // equivalent one-item include list rather than clobbering it -
+        // this is the only place a string-shape entry ever gets converted.
+        function ensureFilterSpec(column) {
+            const existing = currentFilters[column];
+            if (existing && typeof existing === 'object') return existing;
+            const spec = { include: existing !== undefined ? [existing] : [], exclude: [] };
+            currentFilters[column] = spec;
+            return spec;
+        }
+
+        // Broadens column to also match value (OR'd with whatever it
+        // already allows), while every other column's filter is untouched -
+        // "show me this too". Un-excludes value on the same column first,
+        // since asking to include something just excluded is a clearer
+        // signal than leaving it excluded.
+        function includeFilterValue(sectionId, column, value) {
+            const spec = ensureFilterSpec(column);
+            if (!spec.include.includes(value)) spec.include.push(value);
+            const idx = spec.exclude.indexOf(value);
+            if (idx !== -1) spec.exclude.splice(idx, 1);
+            applyFilters(sectionId, []);
+        }
+
+        // Narrows column to also deny value, while every other column's
+        // filter is untouched - "hide this". Un-includes value on the same
+        // column first, mirroring includeFilterValue's symmetry.
+        function excludeFilterValue(sectionId, column, value) {
+            const spec = ensureFilterSpec(column);
+            if (!spec.exclude.includes(value)) spec.exclude.push(value);
+            const idx = spec.include.indexOf(value);
+            if (idx !== -1) spec.include.splice(idx, 1);
+            applyFilters(sectionId, []);
+        }
+
+        // Resets every other filter (every other column, and any other
+        // value already on this one) so column=value is the sole active
+        // filter - "start over with just this". Deliberately leaves
+        // currentSearch untouched: free-text search and column filters are
+        // separate, independently-cleared mechanisms everywhere else in
+        // this app (see clearAllFilters), and clearing a typed search query
+        // as a side effect of a table-cell click would be surprising.
+        function onlyFilterValue(sectionId, column, value) {
+            currentFilters = {};
+            currentFilters[column] = { include: [value], exclude: [] };
+            applyFilters(sectionId, []);
+        }
+
+        // Replaces currentSearch (the whole-analysis free-text search - the
+        // same mechanism the search box's performSearch() feeds, a
+        // server-side FTS5 match against the entire event, not scoped to
+        // the column it was clicked from) with just this one term, AND
+        // clears currentFilters - "start completely over, search for this
+        // and only this anywhere". Unlike onlyFilterValue() (which
+        // deliberately leaves currentSearch alone, since it's narrowing
+        // one specific field and a separately-typed search query is a
+        // distinct, probably-still-wanted criterion), Hunt is framed as a
+        // full reset: a lingering Include/Exclude/Only from earlier would
+        // keep narrowing the results underneath the new search term,
+        // which reads as "Hunt is combining with whatever I had before"
+        // even though only currentSearch actually changed.
+        function huntFilterValue(value) {
+            const term = String(value).trim();
+            if (!term) return;
+            resetPagination();
+            currentSearch = [term];
+            currentFilters = {};
+            updateFilterBarVisibility();
+            return refreshAnalysisData();
+        }
+
+        // Generalized form of copyMd5ToClipboard() below (kept separate,
+        // not refactored into a shared helper, since that function's own
+        // tests assert its exact body/behavior) - same
+        // secure-context-required handling, for the pivot menu's own Copy
+        // to Clipboard entry.
+        async function copyValueToClipboard(value) {
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                showToast('Clipboard access unavailable (requires HTTPS or localhost)');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(value);
+                showToast('Copied to clipboard');
+            } catch (e) {
+                showToast('Could not copy to clipboard');
+            }
+        }
+
+        // CyberChef takes its input pre-filled via a base64 blob in the URL
+        // fragment (#input=...), not a plain query string like the other
+        // lookup sites - unescape(encodeURIComponent(...)) is the standard
+        // idiom for UTF-8-safe btoa() (btoa() alone only accepts Latin1 and
+        // throws on e.g. multi-byte characters in a log field's value).
+        // Falls back to a bare (empty-input) CyberChef link on any encoding
+        // failure rather than the whole menu action silently doing nothing.
+        function cyberChefUrl(value) {
+            try {
+                const b64 = btoa(unescape(encodeURIComponent(String(value))));
+                return `https://gchq.github.io/CyberChef/#input=${encodeURIComponent(b64)}`;
+            } catch (e) {
+                return 'https://gchq.github.io/CyberChef/';
+            }
+        }
+
+        // OSINT/threat-intel lookup sites offered from the pivot menu -
+        // naive general-purpose links (no field-type detection: the same
+        // value is handed to every site regardless of whether it's
+        // actually an IP/domain/hash that site's syntax implies), matching
+        // this menu's own Include/Exclude/Only/Hunt pivots, which are
+        // equally naive about field type. Opened via window.open with
+        // noopener,noreferrer rather than a plain <a target="_blank">,
+        // since these are constructed and opened programmatically rather
+        // than rendered as real anchor elements.
+        const PIVOT_LOOKUP_SITES = [
+            { label: 'Google', urlTemplate: v => `https://www.google.com/search?q=${encodeURIComponent(v)}` },
+            { label: 'VirusTotal', urlTemplate: v => `https://www.virustotal.com/gui/search/${encodeURIComponent(v)}` },
+            { label: 'Shodan', urlTemplate: v => `https://www.shodan.io/search?query=${encodeURIComponent(v)}` },
+            { label: 'AbuseIPDB', urlTemplate: v => `https://www.abuseipdb.com/check/${encodeURIComponent(v)}` },
+            { label: 'urlscan.io', urlTemplate: v => `https://urlscan.io/search/#${encodeURIComponent(v)}` },
+            { label: 'CyberChef', urlTemplate: cyberChefUrl },
+        ];
+
+        // User-added lookup sites (Settings modal's "Custom Lookup Sites"
+        // section) - stored as plain {label, urlTemplate} data (a string
+        // template with a literal "{value}" placeholder), not a function
+        // like PIVOT_LOOKUP_SITES' own entries, since these come from
+        // localStorage/JSON rather than being written directly in this
+        // file. applyCustomLookupUrlTemplate does the substitution;
+        // showPivotMenu's click handler branches on typeof to call
+        // whichever form a given site actually has.
+        const CUSTOM_LOOKUP_SITES_KEY = 'socrates_customLookupSites';
+        const MAX_CUSTOM_LOOKUP_SITES = 20;
+        const MAX_CUSTOM_LOOKUP_LABEL_LENGTH = 40;
+        const MAX_CUSTOM_LOOKUP_URL_LENGTH = 500;
+
+        // null while adding a new site; the index being edited otherwise -
+        // see resetCustomLookupForm/startEditCustomLookupSite in the
+        // Settings modal section below.
+        let editingCustomLookupIndex = null;
+
+        function getCustomLookupSites() {
+            const raw = safeStorageGet(localStorage, CUSTOM_LOOKUP_SITES_KEY);
+            if (!raw) return [];
+            try {
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) return [];
+                return parsed.filter(s => s && typeof s.label === 'string' && typeof s.urlTemplate === 'string');
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function setCustomLookupSites(sites) {
+            safeStorageSet(localStorage, CUSTOM_LOOKUP_SITES_KEY, JSON.stringify(sites));
+        }
+
+        // http(s)-only, checked against the template with any "{value}"
+        // placeholder substituted for a harmless stand-in - a stored
+        // javascript:/data:/vbscript: URL would execute in this page's own
+        // context once opened via window.open, and unlike the built-in
+        // PIVOT_LOOKUP_SITES entries (fixed strings written directly in
+        // this file), a custom site's URL is attacker-reachable input:
+        // typed by whoever is at the keyboard, persisted to localStorage,
+        // and replayed later without further review.
+        function isSafeLookupUrlTemplate(template) {
+            try {
+                const parsed = new URL(String(template).replace(/\{value\}/g, 'x'));
+                return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // No "{value}" placeholder is left as a fixed link (e.g. a static
+        // internal dashboard bookmark) rather than an error - a deliberate
+        // allowance, not an oversight.
+        function applyCustomLookupUrlTemplate(template, value) {
+            if (template.indexOf('{value}') === -1) return template;
+            return template.replace(/\{value\}/g, encodeURIComponent(value));
+        }
+
+        // Shared validation for both add and edit (see
+        // renderCustomLookupSitesSection) - returns {valid, error} rather
+        // than throwing, so the caller can show the message inline instead
+        // of a toast.
+        function validateCustomLookupSite(label, urlTemplate) {
+            const trimmedLabel = String(label || '').trim();
+            const trimmedUrl = String(urlTemplate || '').trim();
+            if (!trimmedLabel) return { valid: false, error: 'Name is required.' };
+            if (trimmedLabel.length > MAX_CUSTOM_LOOKUP_LABEL_LENGTH) {
+                return { valid: false, error: `Name must be ${MAX_CUSTOM_LOOKUP_LABEL_LENGTH} characters or fewer.` };
+            }
+            if (!trimmedUrl) return { valid: false, error: 'URL template is required.' };
+            if (trimmedUrl.length > MAX_CUSTOM_LOOKUP_URL_LENGTH) {
+                return { valid: false, error: `URL template must be ${MAX_CUSTOM_LOOKUP_URL_LENGTH} characters or fewer.` };
+            }
+            if (!isSafeLookupUrlTemplate(trimmedUrl)) {
+                return { valid: false, error: 'URL template must be a valid http:// or https:// URL.' };
+            }
+            return { valid: true, label: trimmedLabel, urlTemplate: trimmedUrl };
+        }
+
+        // editIndex null adds a new entry; otherwise replaces the entry at
+        // that index in place (so editing doesn't reorder the list).
+        function saveCustomLookupSite(editIndex, label, urlTemplate) {
+            const result = validateCustomLookupSite(label, urlTemplate);
+            if (!result.valid) return result;
+            const sites = getCustomLookupSites();
+            if (editIndex === null || editIndex === undefined) {
+                if (sites.length >= MAX_CUSTOM_LOOKUP_SITES) {
+                    return { valid: false, error: `You can have at most ${MAX_CUSTOM_LOOKUP_SITES} custom lookup sites.` };
+                }
+                sites.push({ label: result.label, urlTemplate: result.urlTemplate });
+            } else {
+                if (editIndex < 0 || editIndex >= sites.length) return { valid: false, error: 'That entry no longer exists.' };
+                sites[editIndex] = { label: result.label, urlTemplate: result.urlTemplate };
+            }
+            setCustomLookupSites(sites);
+            return { valid: true };
+        }
+
+        function deleteCustomLookupSite(index) {
+            const sites = getCustomLookupSites();
+            if (index < 0 || index >= sites.length) return;
+            sites.splice(index, 1);
+            setCustomLookupSites(sites);
+        }
+
+        // Removes one value from one column's include/exclude list (the
+        // filter-bar chip's own remove button) - NOT a thin wrapper around
+        // clearFilter(column), which unconditionally deletes the whole
+        // column's entry; this needs to leave any other still-active
+        // value(s) on the same column alone. Duplicates clearFilter's own
+        // refresh tail (visible-section detection, binary early return)
+        // rather than factoring it out, since several existing tests slice
+        // clearFilter's exact function body and assert those calls appear
+        // directly inside it.
+        async function clearFilterValue(column, kind, value) {
+            resetPagination();
+            const spec = currentFilters[column];
+            if (spec && typeof spec === 'object') {
+                const list = spec[kind] || [];
+                const idx = list.indexOf(value);
+                if (idx !== -1) list.splice(idx, 1);
+                if (spec.include.length === 0 && spec.exclude.length === 0) {
+                    delete currentFilters[column];
+                }
+            } else {
+                delete currentFilters[column];
+            }
+            const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
+            if (!visibleSection) {
+                await ensureBinaryEventsBatch();
+                buildBinaryAnalysisView(allEvents);
+                updateFilterBarVisibility();
+                return;
+            }
+            const eventType = visibleSection.id.replace('section-', '');
+            await refreshCurrentView(visibleSection.id, eventType);
+            updateFilterBarVisibility();
+            buildStats(await computeFilteredStats());
+            await updateSankeyDiagram();
         }
 
         async function clearAllFilters() {
@@ -5288,14 +6840,18 @@
                     isLogAnalysisMode = true;
 
                     try {
-                        // Fetch unfiltered baseline counts for totals
-                        const baseCounts = await _fetchLogAnalysisCounts('');
-                        baseEventStats = baseCounts;
-
-                        // Fetch filtered counts if search is active
-                        let counts = baseCounts;
+                        // Unfiltered baseline counts (for totals) and, if a
+                        // search is active, filtered counts - independent
+                        // requests, fetched concurrently rather than back to
+                        // back when both are needed.
+                        let counts;
                         if (qParam) {
-                            counts = await _fetchLogAnalysisCounts(qParam);
+                            [baseEventStats, counts] = await Promise.all([
+                                _fetchLogAnalysisCounts(''),
+                                _fetchLogAnalysisCounts(qParam),
+                            ]);
+                        } else {
+                            counts = baseEventStats = await _fetchLogAnalysisCounts('');
                         }
                         await _renderLogAnalysisView(counts);
                     } catch(e) {
@@ -5311,10 +6867,16 @@
                     }
                     // Keep file info visible even when the current search filter
                     // excludes the fileinfo event by using unfiltered events.
-                    allEvents = await fetchBinaryEvents(qParam);
-                    let baseEvents = allEvents;
+                    // Both are independent requests, fetched concurrently
+                    // rather than back to back when both are needed.
+                    let baseEvents;
                     if (qParam) {
-                        baseEvents = await fetchBinaryEvents('');
+                        [allEvents, baseEvents] = await Promise.all([
+                            fetchBinaryEvents(qParam),
+                            fetchBinaryEvents(''),
+                        ]);
+                    } else {
+                        allEvents = baseEvents = await fetchBinaryEvents(qParam);
                     }
                     baseAllEvents = baseEvents;
                     buildBinaryAnalysisView(allEvents, baseEvents);
@@ -5440,17 +7002,40 @@
             return `<span id="appHeaderNotesIcon" onclick="showNotesModal()" style="cursor: pointer; white-space: nowrap; color: ${color};" title="${title}">${NOTES_ICON_SVG}</span>`;
         }
 
+        // Lets an analyst re-analyze the currently open sample without going
+        // back to the welcome screen's previous-analyses list first -
+        // openReanalyzeModal() is already self-contained (just md5/name), so
+        // this reuses it as-is rather than a second reanalyze code path.
+        function reanalyzeIconHtml() {
+            return `<span onclick="openReanalyzeModal(currentMd5, currentFileName)" style="cursor: pointer; white-space: nowrap; color: var(--text-muted);" title="Re-analyze">${REFRESH_ICON_SVG}</span>`;
+        }
+
         function updateNotesCountHint() {
             const textarea = document.getElementById('analysisNotesInput');
             document.getElementById('notesCountHint').textContent =
-                `${textarea.value.length.toLocaleString()} / ${NOTES_MAX_LENGTH.toLocaleString()}`;
+                `${textarea.value.length.toLocaleString()} / ${textarea.maxLength.toLocaleString()}`;
         }
 
-        function showNotesModal() {
+        // Called with no arguments for the existing whole-analysis note
+        // (unchanged behavior). Called with (table, rowId, initialNote) to
+        // edit a single row's note instead - same modal, same Save/Cancel
+        // buttons, just re-scoped, rather than a second component with its
+        // own focus/blur/escape/click-outside handling to build and test.
+        function showNotesModal(table, rowId, initialNote) {
             closeOtherMenuModals('notesModal');
             const textarea = document.getElementById('analysisNotesInput');
-            textarea.maxLength = NOTES_MAX_LENGTH;
-            textarea.value = currentNotes;
+            const titleEl = document.getElementById('notesModalTitle');
+            if (table !== undefined) {
+                currentRowNoteScope = { table, rowId };
+                textarea.maxLength = ROW_NOTE_MAX_LENGTH;
+                textarea.value = initialNote || '';
+                titleEl.textContent = 'Row Note';
+            } else {
+                currentRowNoteScope = null;
+                textarea.maxLength = NOTES_MAX_LENGTH;
+                textarea.value = currentNotes;
+                titleEl.textContent = 'Notes';
+            }
             textarea.oninput = updateNotesCountHint;
             document.getElementById('notesError').style.display = 'none';
             updateNotesCountHint();
@@ -5460,38 +7045,75 @@
 
         function closeNotesModal() {
             document.getElementById('notesModal').classList.remove('active');
+            // Reset so a stray reopen via the header icon can't inherit
+            // stale row scope from whatever was last edited.
+            currentRowNoteScope = null;
         }
 
-        function handleNotesBackdropClick(event) {
-            if (event.target === document.getElementById('notesModal')) {
-                closeNotesModal();
-            }
+        // The note-icon's onclick argument is a JS-string-escaped rowId
+        // (see rowNoteIconHtml), not a bare number - HTML attributes are
+        // always strings regardless, and this way the same escaping
+        // discipline covers it as covers the note text itself. Parsed back
+        // to a real number here before it's ever used as row-note state.
+        function openRowNoteEditor(table, rowIdStr, note) {
+            showNotesModal(table, parseInt(rowIdStr, 10), note);
         }
 
         async function saveAnalysisNotes() {
             const textarea = document.getElementById('analysisNotesInput');
             const errorEl = document.getElementById('notesError');
             const saveBtn = document.getElementById('notesSaveBtn');
+            const rowScope = currentRowNoteScope;
             errorEl.style.display = 'none';
             saveBtn.disabled = true;
             try {
-                const resp = await fetch('/api/analysis-notes', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ md5: currentMd5, notes: textarea.value })
-                });
-                const result = await resp.json();
-                if (resp.ok && result.success) {
-                    currentNotes = result.notes;
-                    const iconEl = document.getElementById('appHeaderNotesIcon');
-                    if (iconEl) iconEl.outerHTML = notesIconHtml();
-                    closeNotesModal();
+                if (rowScope) {
+                    const resp = await fetch('/api/row-note', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ md5: currentMd5, table: rowScope.table, rowId: rowScope.rowId, note: textarea.value })
+                    });
+                    const result = await resp.json();
+                    if (resp.ok && result.success) {
+                        const rowEl = document.querySelector('tr[data-id="' + rowScope.rowId + '"]');
+                        if (rowEl) {
+                            const cell = rowEl.querySelector('.row-note-cell');
+                            if (cell) cell.outerHTML = rowNoteIconHtml(rowScope.table, rowScope.rowId, result.note);
+                            // The detail panel is rendered once and only
+                            // toggled visible/hidden (see toggleRow), not
+                            // re-rendered on expand - without this it would
+                            // keep showing the pre-save Note value until the
+                            // whole table next re-renders.
+                            const detailRow = rowEl.nextElementSibling;
+                            const valueEl = (detailRow && detailRow.classList.contains('detail-row'))
+                                ? detailRow.querySelector('.row-note-detail-value')
+                                : null;
+                            if (valueEl) valueEl.outerHTML = rowNoteDetailValueHtml(rowScope.table, rowScope.rowId, result.note);
+                        }
+                        closeNotesModal();
+                    } else {
+                        errorEl.textContent = result.error || 'Could not save note';
+                        errorEl.style.display = 'block';
+                    }
                 } else {
-                    errorEl.textContent = result.error || 'Could not save notes';
-                    errorEl.style.display = 'block';
+                    const resp = await fetch('/api/analysis-notes', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ md5: currentMd5, notes: textarea.value })
+                    });
+                    const result = await resp.json();
+                    if (resp.ok && result.success) {
+                        currentNotes = result.notes;
+                        const iconEl = document.getElementById('appHeaderNotesIcon');
+                        if (iconEl) iconEl.outerHTML = notesIconHtml();
+                        closeNotesModal();
+                    } else {
+                        errorEl.textContent = result.error || 'Could not save notes';
+                        errorEl.style.display = 'block';
+                    }
                 }
             } catch (e) {
-                errorEl.textContent = 'Could not save notes';
+                errorEl.textContent = rowScope ? 'Could not save note' : 'Could not save notes';
                 errorEl.style.display = 'block';
             } finally {
                 saveBtn.disabled = false;
@@ -5582,6 +7204,7 @@
                         <span id="appHeaderMd5" style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; cursor: pointer;" title="Click to copy">${FOLDER_ICON_SVG}${escapeHtml(currentMd5)}</span>
                         <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${CALENDAR_ICON_SVG}${escapeHtml(dateDisplay)}</span>
                         ${notesIconHtml()}
+                        ${reanalyzeIconHtml()}
                     `;
                     document.getElementById('appHeaderMd5').onclick = () => copyMd5ToClipboard(currentMd5);
                     document.getElementById('appHeaderRight').innerHTML = renderGearMenu();
@@ -5886,12 +7509,6 @@
             document.getElementById('errorModal').classList.remove('active');
         }
 
-        function handleErrorBackdropClick(event) {
-            if (event.target.id === 'errorModal') {
-                closeErrorModal();
-            }
-        }
-        
         async function confirmDelete() {
             if (!pendingDelete) return;
             
@@ -5971,12 +7588,14 @@
         
         async function openReanalyzeModal(md5, name) {
             let phase = 'files';
+            let hasRowNotes = false;
             try {
                 const resp = await fetch('/api/status?md5=' + encodeURIComponent(md5) + '&t=' + Date.now());
                 const status = await resp.json();
                 const detectedType = status.meta?.detected_type || detectFileType(name);
                 if (detectedType === 'log') phase = 'logs';
                 else if (detectedType === 'pcap') phase = 'network';
+                hasRowNotes = !!status.hasRowNotes;
             } catch(err) {
                 // Fallback to filename-based detection if status API fails
                 const detectedType = detectFileType(name);
@@ -5985,6 +7604,12 @@
             }
             pendingReanalyze = { md5, name, phase };
             document.getElementById('reanalyzeFileName').textContent = name;
+            // Only shown when the analysis actually has row-level notes to
+            // lose - matches this app's existing "hide irrelevant info
+            // rather than show it as a no-op" convention (e.g. zero-count
+            // stat cards).
+            document.getElementById('reanalyzeRowNotesWarning').style.display = hasRowNotes ? 'block' : 'none';
+            document.querySelector('.reanalyze-confirm-btn').classList.toggle('danger', hasRowNotes);
             document.getElementById('reanalyzeConfirmModal').classList.add('active');
         }
         

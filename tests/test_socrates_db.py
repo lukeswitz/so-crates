@@ -49,6 +49,38 @@ class TestSQLite(unittest.TestCase):
         self.assertEqual(len(events), 2)
         self.assertTrue(all(e['event_type'] == 'alert' for e in events))
     
+    def test_create_sqlite_db_reclassifies_protocol_command_decode_alerts(self):
+        """Suricata's own built-in protocol-command-decode rules (opt-in via
+        show_protocol_decode_alerts) are noise, not real detections - see
+        docs/architecture/event-types.md's note on protocol_decode. Only an
+        alert whose category is exactly "Generic Protocol Command Decode"
+        gets reclassified; an ordinary alert with a different category must
+        be left as 'alert' (proves this discriminates, not "everything
+        becomes protocol_decode")."""
+        eve_file = self._write_eve('eve_protocol_decode.json', [
+            {'event_type': 'alert', 'timestamp': '2026-01-01T00:00:00', 'src_ip': '1.1.1.1',
+             'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+             'alert': {'signature': 'SURICATA STREAM bad TCP', 'category': 'Generic Protocol Command Decode', 'severity': 3}},
+            {'event_type': 'alert', 'timestamp': '2026-01-01T00:00:01', 'src_ip': '1.1.1.1',
+             'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+             'alert': {'signature': 'ET MALWARE Sig', 'category': 'Trojan', 'severity': 2}},
+        ])
+        db.create_sqlite_db(self.db_file, eve_file)
+        events = db.query_events_sqlite(self.db_file)
+        by_sig = {e['alert']['signature']: e for e in events}
+        self.assertEqual(by_sig['SURICATA STREAM bad TCP']['event_type'], 'protocol_decode')
+        self.assertEqual(by_sig['ET MALWARE Sig']['event_type'], 'alert')
+        # The stored json_data blob's own event_type field must match the
+        # indexed column too, not just the column (in case they ever drift).
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT event_type, json_data FROM events WHERE json_extract(json_data, '$.alert.signature') = ?",
+                ('SURICATA STREAM bad TCP',)
+            ).fetchone()
+            self.assertEqual(row['event_type'], 'protocol_decode')
+            self.assertEqual(json.loads(row['json_data'])['event_type'], 'protocol_decode')
+
     def test_query_events_sqlite_with_limit(self):
         db.create_sqlite_db(self.db_file, self.eve_file)
         events = db.query_events_sqlite(self.db_file, limit=2)
@@ -214,9 +246,10 @@ class TestSQLite(unittest.TestCase):
         events (content-equivalent, not necessarily byte-identical - key
         order/whitespace may differ) as query_events_sqlite's dict list."""
         expected = db.query_events_sqlite(self.db_file, **kwargs)
-        json_str = db.query_events_sqlite_json(self.db_file, **kwargs)
+        json_str, ids = db.query_events_sqlite_json(self.db_file, **kwargs)
         actual = json.loads(json_str)
         self.assertEqual(actual, expected)
+        self.assertEqual(ids, [e['id'] for e in expected])
         return actual
 
     def test_query_events_sqlite_json_no_filter(self):
@@ -260,23 +293,26 @@ class TestSQLite(unittest.TestCase):
 
     def test_query_events_sqlite_json_no_events_table(self):
         db.init_empty_db(self.db_file)
-        self.assertEqual(db.query_events_sqlite_json(self.db_file), '[]')
+        self.assertEqual(db.query_events_sqlite_json(self.db_file), ('[]', []))
 
     def test_query_events_sqlite_json_is_valid_parseable_json(self):
         """The raw-passthrough output must be directly usable as an HTTP
         response body - i.e. round-trip through json.loads without error,
         even though it's built from string concatenation, not json.dumps."""
         db.create_sqlite_db(self.db_file, self.eve_file)
-        json_str = db.query_events_sqlite_json(self.db_file)
+        json_str, ids = db.query_events_sqlite_json(self.db_file)
         parsed = json.loads(json_str)
         self.assertIsInstance(parsed, list)
         self.assertTrue(all(isinstance(e, dict) for e in parsed))
+        self.assertEqual(len(ids), len(parsed))
 
     def test_query_events_sqlite_json_malformed_row_becomes_empty_object(self):
         """A corrupted json_data blob must not break the entire response -
         query_events_sqlite_json's cheap shape check (not a full parse)
-        replaces it with '{}', matching query_events_sqlite's own
-        graceful-degradation behavior for the same scenario."""
+        replaces it with just its id, matching query_events_sqlite's own
+        graceful-degradation behavior for the same scenario (an empty dict,
+        now also carrying 'id' like every other row - see id-exposure
+        comment on query_events_sqlite_json)."""
         conn = sqlite3.connect(self.db_file)
         conn.executescript(db.SQLITE_SCHEMA)
         conn.execute('''INSERT INTO events (event_type, timestamp, json_data)
@@ -288,12 +324,127 @@ class TestSQLite(unittest.TestCase):
         conn.commit()
         conn.close()
 
-        json_str = db.query_events_sqlite_json(self.db_file)
+        json_str, ids = db.query_events_sqlite_json(self.db_file)
         events = json.loads(json_str)
         self.assertEqual(len(events), 3)
-        self.assertEqual(events[0], {'valid': True})
-        self.assertEqual(events[1], {})
-        self.assertEqual(events[2], {'valid': True})
+        self.assertEqual(events[0], {'valid': True, 'id': ids[0]})
+        self.assertEqual(events[1], {'id': ids[1]})
+        self.assertEqual(events[2], {'valid': True, 'id': ids[2]})
+
+    def test_get_row_notes_empty_row_ids_returns_empty_dict(self):
+        self.assertEqual(db.get_row_notes(self.db_file, 'events', []), {})
+
+    def test_get_row_notes_no_row_notes_table_returns_empty_dict(self):
+        """A db.py file created before this table existed must degrade
+        gracefully, not raise - same convention as _has_events_table
+        checks elsewhere in this file."""
+        conn = sqlite3.connect(self.db_file)
+        conn.execute('CREATE TABLE events (id INTEGER PRIMARY KEY)')
+        conn.commit()
+        conn.close()
+        self.assertEqual(db.get_row_notes(self.db_file, 'events', [1, 2, 3]), {})
+
+    def test_set_row_note_then_get_row_notes_round_trip(self):
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        event_id = db.query_events_sqlite(self.db_file)[0]['id']
+        db.set_row_note(self.db_file, 'events', event_id, 'a note')
+        self.assertEqual(db.get_row_notes(self.db_file, 'events', [event_id]), {event_id: 'a note'})
+
+    def test_set_row_note_overwrites(self):
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        event_id = db.query_events_sqlite(self.db_file)[0]['id']
+        db.set_row_note(self.db_file, 'events', event_id, 'first')
+        db.set_row_note(self.db_file, 'events', event_id, 'second')
+        self.assertEqual(db.get_row_notes(self.db_file, 'events', [event_id]), {event_id: 'second'})
+
+    def test_set_row_note_empty_deletes_row(self):
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        event_id = db.query_events_sqlite(self.db_file)[0]['id']
+        db.set_row_note(self.db_file, 'events', event_id, 'will be cleared')
+        db.set_row_note(self.db_file, 'events', event_id, '')
+        self.assertEqual(db.get_row_notes(self.db_file, 'events', [event_id]), {})
+
+    def test_get_row_notes_only_returns_requested_ids(self):
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        events = db.query_events_sqlite(self.db_file)
+        id_a, id_b = events[0]['id'], events[1]['id']
+        db.set_row_note(self.db_file, 'events', id_a, 'note a')
+        db.set_row_note(self.db_file, 'events', id_b, 'note b')
+        self.assertEqual(db.get_row_notes(self.db_file, 'events', [id_a]), {id_a: 'note a'})
+
+    def test_row_notes_discriminate_by_source_table(self):
+        """The same numeric id in events vs sigma_alerts must be
+        independent notes - proves UNIQUE(source_table, row_id) and the
+        WHERE clause both actually discriminate."""
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        db.insert_sigma_alerts(self.db_file, [{
+            'timestamp': '2026-01-01T00:00:00', 'rule_title': 'r', 'rule_id': 'r1',
+            'severity': 'high', 'level': 'high',
+        }])
+        event_id = db.query_events_sqlite(self.db_file)[0]['id']
+        sigma_id = db.query_sigma_alerts_sqlite(self.db_file)[0]['id']
+        db.set_row_note(self.db_file, 'events', event_id, 'events note')
+        self.assertEqual(db.get_row_notes(self.db_file, 'sigma_alerts', [sigma_id]), {})
+        self.assertEqual(db.get_row_notes(self.db_file, 'events', [event_id]), {event_id: 'events note'})
+
+    def test_row_notes_do_not_survive_events_db_rebuild(self):
+        """REGRESSION (intentional, not a bug): /api/reanalyze deletes
+        events.db entirely (os.unlink, both PCAP_ANALYSIS_ARTIFACTS and
+        FILE_ANALYSIS_ARTIFACTS include it) before rebuilding it from
+        scratch with fresh autoincrement ids from 1. Since row_notes lives
+        inside that same file, it's destroyed along with everything else -
+        proven here directly at the file level, matching what reanalyze
+        actually does, without needing a full HTTP-level reanalyze."""
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        event_id = db.query_events_sqlite(self.db_file)[0]['id']
+        db.set_row_note(self.db_file, 'events', event_id, 'will not survive')
+        self.assertEqual(db.get_row_notes(self.db_file, 'events', [event_id]), {event_id: 'will not survive'})
+
+        os.unlink(self.db_file)
+        db.create_sqlite_db(self.db_file, self.eve_file)
+
+        new_event_id = db.query_events_sqlite(self.db_file)[0]['id']
+        self.assertEqual(new_event_id, event_id, 'autoincrement restarts at 1 - same id, different row')
+        self.assertEqual(db.get_row_notes(self.db_file, 'events', [new_event_id]), {},
+                         'row_notes must not survive a rebuilt events.db, even at the same numeric id')
+
+    def test_has_row_notes_false_when_db_file_missing(self):
+        self.assertFalse(db.has_row_notes(self.db_file))
+
+    def test_has_row_notes_false_when_no_row_notes_table(self):
+        conn = sqlite3.connect(self.db_file)
+        conn.execute('CREATE TABLE events (id INTEGER PRIMARY KEY)')
+        conn.commit()
+        conn.close()
+        self.assertFalse(db.has_row_notes(self.db_file))
+
+    def test_has_row_notes_false_when_no_notes_set(self):
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        self.assertFalse(db.has_row_notes(self.db_file))
+
+    def test_has_row_notes_true_after_setting_one_note(self):
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        event_id = db.query_events_sqlite(self.db_file)[0]['id']
+        db.set_row_note(self.db_file, 'events', event_id, 'a note')
+        self.assertTrue(db.has_row_notes(self.db_file))
+
+    def test_has_row_notes_true_for_a_sigma_alert_note(self):
+        """Not scoped to 'events' only - a note on any source_table counts."""
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        db.insert_sigma_alerts(self.db_file, [{
+            'timestamp': '2026-01-01T00:00:00', 'rule_title': 'r', 'rule_id': 'r1',
+            'severity': 'high', 'level': 'high',
+        }])
+        sigma_id = db.query_sigma_alerts_sqlite(self.db_file)[0]['id']
+        db.set_row_note(self.db_file, 'sigma_alerts', sigma_id, 'a sigma note')
+        self.assertTrue(db.has_row_notes(self.db_file))
+
+    def test_has_row_notes_false_again_after_clearing_the_only_note(self):
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        event_id = db.query_events_sqlite(self.db_file)[0]['id']
+        db.set_row_note(self.db_file, 'events', event_id, 'temporary')
+        db.set_row_note(self.db_file, 'events', event_id, '')
+        self.assertFalse(db.has_row_notes(self.db_file))
 
     def test_get_event_count_sqlite(self):
         db.create_sqlite_db(self.db_file, self.eve_file)
@@ -710,6 +861,71 @@ class TestSQLite(unittest.TestCase):
         self.assertIn({'value': 'Sev 2', 'count': 2}, data['Severity'])
         self.assertIn({'value': 'Sev 0', 'count': 1}, data['Severity'])
         self.assertEqual(data['Protocol'], [{'value': 'TCP', 'count': 3}])
+
+    def test_get_aggregation_data_sqlite_alert_ruleset(self):
+        """'Ruleset' buckets alerts by signature_id via
+        suricata_sid_ranges.SURICATA_SID_RANGES (see
+        AGGREGATION_VALUE_TRANSFORMS[('alert', 'Ruleset')]) - two alerts
+        from et/open's SID range and one from oisf/trafficid's must group
+        into two distinct buckets, not get lumped together or misattributed
+        (this exact misattribution - trafficid getting swallowed by
+        urlhaus's then-unbounded range - was a real bug caught while
+        building this feature)."""
+        eve_file = self._write_eve('eve_alert_ruleset.json', [
+            {'event_type': 'alert', 'timestamp': '2026-01-01T00:00:00', 'src_ip': '1.1.1.1',
+             'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+             'alert': {'signature': 'ET Sig', 'category': 'Trojan', 'severity': 2, 'signature_id': 2010957}},
+            {'event_type': 'alert', 'timestamp': '2026-01-01T00:00:01', 'src_ip': '1.1.1.1',
+             'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+             'alert': {'signature': 'ET Sig 2', 'category': 'Trojan', 'severity': 2, 'signature_id': 2013000}},
+            {'event_type': 'alert', 'timestamp': '2026-01-01T00:00:02', 'src_ip': '3.3.3.3',
+             'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+             'alert': {'signature': 'Traffic ID Sig', 'category': 'Info', 'severity': 0, 'signature_id': 300000010}},
+        ])
+        db.create_sqlite_db(self.db_file, eve_file)
+        data = db.get_aggregation_data_sqlite(self.db_file, 'alert')
+        self.assertEqual(sorted(data['Ruleset'], key=lambda r: -r['count']), [
+            {'value': 'Emerging Threats Open', 'count': 2},
+            {'value': 'Suricata Traffic ID', 'count': 1},
+        ])
+
+    def test_sort_expr_supports_alert_ruleset(self):
+        self.assertIsNotNone(db._sort_expr('alert', 'Ruleset'))
+
+    def test_get_aggregation_data_sqlite_protocol_decode(self):
+        """protocol_decode's AGGREGATION_JSON_PATHS entry mirrors 'alert''s
+        verbatim - same underlying JSON shape, since reclassification only
+        rewrites event_type (see test_create_sqlite_db_reclassifies_
+        protocol_command_decode_alerts)."""
+        eve_file = self._write_eve('eve_protocol_decode_agg.json', [
+            {'event_type': 'alert', 'timestamp': '2026-01-01T00:00:00', 'src_ip': '1.1.1.1',
+             'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+             'alert': {'signature': 'SURICATA STREAM bad TCP', 'category': 'Generic Protocol Command Decode', 'severity': 3}},
+            {'event_type': 'alert', 'timestamp': '2026-01-01T00:00:01', 'src_ip': '1.1.1.1',
+             'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+             'alert': {'signature': 'SURICATA STREAM bad TCP', 'category': 'Generic Protocol Command Decode', 'severity': 3}},
+        ])
+        db.create_sqlite_db(self.db_file, eve_file)
+        data = db.get_aggregation_data_sqlite(self.db_file, 'protocol_decode')
+        self.assertEqual(data['Alert'], [{'value': 'SURICATA STREAM bad TCP', 'count': 2}])
+        self.assertEqual(data['Category'], [{'value': 'Generic Protocol Command Decode', 'count': 2}])
+        self.assertIn({'value': 'Sev 3', 'count': 2}, data['Severity'])
+
+    def test_all_events_detail_expr_protocol_decode(self):
+        """The merged 'All Events' view's Detail column must also show
+        protocol_decode's alert.signature, mirroring 'alert' (see
+        test_get_aggregation_data_sqlite_merged_all_events for the pattern
+        this extends)."""
+        eve_file = self._write_eve('eve_protocol_decode_detail.json', [
+            {'event_type': 'alert', 'timestamp': '2026-01-01T00:00:00', 'proto': 'TCP',
+             'alert': {'signature': 'SURICATA STREAM bad TCP', 'category': 'Generic Protocol Command Decode', 'severity': 3}},
+        ])
+        db.create_sqlite_db(self.db_file, eve_file)
+        data = db.get_aggregation_data_sqlite(self.db_file, None)
+        detail_values = {e['value'] for e in data['Detail']}
+        self.assertIn('SURICATA STREAM bad TCP', detail_values)
+        type_counts = {e['value']: e['count'] for e in data['Type']}
+        self.assertEqual(type_counts, {'PROTOCOL_DECODE': 1})
 
     def test_get_aggregation_data_sqlite_dns(self):
         eve_file = self._write_eve('eve_dns.json', [

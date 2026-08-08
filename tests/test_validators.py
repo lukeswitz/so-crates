@@ -483,5 +483,22 @@ class TestIsFileStale(unittest.TestCase):
             os.unlink(path)
 
 
+class TestIsEpochStale(unittest.TestCase):
+    """is_file_stale() is a thin path-to-mtime wrapper around this - a
+    caller that has already derived an mtime another way (e.g.
+    get_suricata_rules_info()'s min mtime across several active rule
+    files) uses this directly instead of re-deriving the same comparison
+    by hand."""
+
+    def test_fresh_epoch_is_not_stale(self):
+        self.assertFalse(validators.is_epoch_stale(time.time(), max_age_hours=24))
+
+    def test_old_epoch_is_stale(self):
+        self.assertTrue(validators.is_epoch_stale(time.time() - (25 * 3600), max_age_hours=24))
+
+    def test_boundary_just_under_threshold_is_not_stale(self):
+        self.assertFalse(validators.is_epoch_stale(time.time() - (23 * 3600), max_age_hours=24))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

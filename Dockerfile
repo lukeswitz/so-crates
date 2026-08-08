@@ -33,6 +33,77 @@ RUN git clone --depth 1 --branch v3.7.1 \
     /usr/local/lib/zircolite/pytest.ini /usr/local/lib/zircolite/requirements.txt
 
 
+FROM debian:13-slim AS playbooks-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Build-only stage: converts Security Onion's Playbooks repo (~125MB of
+# per-rule YAML, most of it Elasticsearch/Sigma-syntax query blocks
+# SO-CRATES doesn't use - see playbook_lookup.py) into two small
+# gzip-compressed JSON indexes, one per detection type, holding only the
+# plain-English investigation guidance. python3-yaml and the raw YAML
+# tree never need to exist in the final runtime image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    python3 \
+    python3-yaml \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 \
+    https://github.com/Security-Onion-Solutions/securityonion-resources-playbooks.git \
+    /tmp/playbooks-src
+
+# Consolidates each detection type's individual-rule playbooks plus its
+# single engine-wide fallback entry into one {rule_id: {...}, "_default":
+# {...}} dict, gzip-compressed - one compressed index per type beats
+# baking in ~58k separate small files: that many tiny files round up to
+# at least one filesystem block each regardless of content size, and
+# gzip compresses far better across many similar records at once than one
+# tiny file at a time (see playbook_lookup.py's own comment on this).
+# Category-tier playbooks are deliberately not baked in - only 3 files
+# exist upstream and their category key doesn't match this app's own
+# alert.category field, so the extra matching logic isn't worth it for
+# the little it would add on top of the individual+engine tiers.
+RUN mkdir -p /tmp/playbooks-out && python3 - <<'PY'
+import gzip
+import json
+import os
+import yaml
+
+SRC = '/tmp/playbooks-src/public'
+OUT = '/tmp/playbooks-out'
+
+
+def slim(entry):
+    return {
+        'name': entry.get('name', ''),
+        'description': entry.get('description', ''),
+        'questions': [
+            {'question': q.get('question', ''), 'context': q.get('context', '')}
+            for q in (entry.get('questions') or [])
+        ],
+    }
+
+
+for detection_type, engine_file in (('nids', 'engine_nids.yaml'), ('sigma', 'engine_sigma.yaml')):
+    index = {}
+    individual_dir = os.path.join(SRC, detection_type, 'individual')
+    for filename in os.listdir(individual_dir):
+        if not filename.endswith('.yaml'):
+            continue
+        rule_id = filename[:-len('.yaml')]
+        with open(os.path.join(individual_dir, filename)) as f:
+            entry = yaml.safe_load(f)
+        index[rule_id] = slim(entry)
+    with open(os.path.join(SRC, detection_type, 'engine', engine_file)) as f:
+        index['_default'] = slim(yaml.safe_load(f))
+    out_path = os.path.join(OUT, f'{detection_type}.json.gz')
+    with gzip.open(out_path, 'wt', encoding='utf-8') as f:
+        json.dump(index, f)
+    print(f'Baked {len(index)} {detection_type} playbook entries -> {out_path}')
+PY
+
+
 FROM debian:13-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -72,7 +143,7 @@ ENV PORT=8000
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
-COPY config.py db.py models.py validators.py suricata_analyzer.py yara_analyzer.py sigma_analyzer.py file_analyzer.py exif_analyzer.py ohmydebn_colors.py socrates.py socrates.html ./
+COPY config.py db.py models.py validators.py suricata_analyzer.py suricata_sid_ranges.py yara_analyzer.py sigma_analyzer.py file_analyzer.py exif_analyzer.py ohmydebn_colors.py playbook_lookup.py socrates.py socrates.html ./
 COPY static/ static/
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
@@ -92,8 +163,65 @@ for proto in ('pgsql', 'modbus', 'dnp3', 'enip'):
 with open('/etc/suricata/suricata.yaml', 'w') as f:
     f.write(content)
 PY
-RUN mkdir -p /usr/share/suricata/rules && \
-    suricata-update --no-test --suricata-conf /etc/suricata/suricata.yaml --data-dir /usr/share/suricata --output /usr/share/suricata/rules
+# One static rules file per curated source (not a single merged
+# suricata.rules) - lets an airgapped user toggle among whatever's baked
+# in here entirely offline at runtime (see suricata_analyzer.py's
+# rules-available/ library + _reconcile_suricata_sources()), instead of
+# depending on suricata-update's own enable-source/disable-source state,
+# which lives in a --data-dir with no relationship between this build-time
+# image and the runtime /data volume. Reuses today's exact per-source
+# merge mechanism (isolated scratch --data-dir with only one source
+# enabled), just run once per curated slug instead of once overall.
+#
+# BAKED_IN_SURICATA_SOURCES (suricata_analyzer.py) deliberately excludes
+# ipfire/dbl - measured as the single biggest space cost of the curated
+# set (~51 of ~83 MiB, via its dataset:-based domain lists) and, being a
+# content-filtering blocklist (ads/dating/gambling/social/streaming/etc.
+# categories) rather than threat detection, would mostly just add alert
+# noise on ordinary browsing traffic. It stays selectable for online users
+# to fetch on demand via the Rules modal.
+RUN mkdir -p /usr/share/suricata/rules-available && python3 - <<'PY'
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, '/app')
+from suricata_analyzer import BAKED_IN_SURICATA_SOURCES, _source_filename
+
+for slug in BAKED_IN_SURICATA_SOURCES:
+    scratch_data = tempfile.mkdtemp()
+    scratch_out = tempfile.mkdtemp()
+    try:
+        subprocess.run(
+            ['suricata-update', 'enable-source', slug, '--data-dir', scratch_data],
+            check=True,
+        )
+        # enable-source on a brand-new --data-dir always ALSO silently
+        # auto-enables et/open as its own "default source" regardless of
+        # what was actually requested - must be explicitly disabled again
+        # for every other source, or this isolated single-source fetch
+        # isn't actually isolated (verified: an unpatched fetch of
+        # oisf/trafficid alone produced a merged file with et/open's full
+        # ~52k rules mixed in, not just trafficid's 34).
+        if slug != 'et/open':
+            subprocess.run(
+                ['suricata-update', 'disable-source', 'et/open', '--data-dir', scratch_data],
+                check=True,
+            )
+        subprocess.run(
+            ['suricata-update', '--no-test', '--suricata-conf', '/etc/suricata/suricata.yaml',
+             '--data-dir', scratch_data, '--output', scratch_out],
+            check=True,
+        )
+        dest = f'/usr/share/suricata/rules-available/{_source_filename(slug)}'
+        shutil.move(os.path.join(scratch_out, 'suricata.rules'), dest)
+        print(f'Baked in {slug} -> {dest}')
+    finally:
+        shutil.rmtree(scratch_data, ignore_errors=True)
+        shutil.rmtree(scratch_out, ignore_errors=True)
+PY
 
 # Bake YARA Forge rules into image for air-gapped deployments
 RUN mkdir -p /usr/share/yara-rules && \
@@ -114,6 +242,12 @@ RUN mkdir -p /usr/share/sigma-rules && \
     "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_windows_merged.json" && \
     curl -fsSL -o /usr/share/sigma-rules/linux.json \
     "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_linux.json"
+
+# Bake Security Onion Playbooks (investigation guidance) into image for
+# air-gapped deployments - see the playbooks-builder stage above for how
+# the raw ~125MB upstream YAML repo becomes these two small
+# gzip-compressed indexes, and playbook_lookup.py for how they're read.
+COPY --from=playbooks-builder /tmp/playbooks-out/ /usr/share/playbooks/
 
 RUN mkdir -p /data && chown -R 1000:1000 /data
 

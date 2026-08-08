@@ -2,6 +2,7 @@
 import http.server
 import http.client
 import socketserver
+import concurrent.futures
 import json
 import os
 import ssl
@@ -25,6 +26,7 @@ from db import (
     query_sigma_alerts_sqlite, get_sigma_stats_sqlite,
     get_sigma_alert_count_sqlite, get_event_date_range_sqlite,
     get_sankey_data_sqlite, get_aggregation_data_sqlite,
+    set_row_note, has_row_notes,
 )
 from validators import (
     validate_ip, validate_port, sanitize_filename, is_safe_path,
@@ -35,6 +37,12 @@ from validators import (
 from suricata_analyzer import (
     check_executables, setup_suricata_config, spawn_suricata,
     _set_error, _set_phase, _clear_phase, get_suricata_rules_info,
+    get_suricata_enabled_sources, get_suricata_show_protocol_decode_alerts,
+    SURICATA_RULE_SOURCES, BAKED_IN_SURICATA_SOURCES,
+    DEFAULT_SURICATA_SOURCES,
+)
+from suricata_sid_ranges import (
+    SURICATA_SID_RANGES, SURICATA_BUILTIN_SID_RANGE, SURICATA_BUILTIN_LABEL,
 )
 from yara_analyzer import check_yara_executable, setup_yara_rules, scan_single_file, get_yara_rules_info
 from sigma_analyzer import (
@@ -44,10 +52,11 @@ from sigma_analyzer import (
 from ohmydebn_colors import (
     derive_theme_colors, derive_theme_colors_from_alacritty, derive_theme_colors_from_named_palette,
 )
+from playbook_lookup import get_playbook
 import config
 import tomllib
 
-VERSION = '3.1.0'
+VERSION = '3.2.0'
 GITHUB_RELEASES_API = 'https://api.github.com/repos/dougburks/so-crates/releases/latest'
 PORT = int(os.environ.get('PORT', 8000))
 BIND_ADDRESS = os.environ.get('BIND_ADDRESS', '127.0.0.1')
@@ -113,7 +122,7 @@ _rule_update_state = {
 _RULESET_LABELS = {'suricata': 'Suricata', 'yara': 'YARA', 'sigma': 'Sigma'}
 
 
-def _run_ruleset_update(name):
+def _run_ruleset_update(name, sources=None, show_protocol_decode_alerts=None):
     def on_progress(message):
         print(message)
         with _rule_update_lock:
@@ -121,7 +130,7 @@ def _run_ruleset_update(name):
 
     try:
         if name == 'suricata':
-            setup_suricata_config(DATA_DIR, enable_arp=bool(os.environ.get('ENABLE_ARP_LOGGING')), on_progress=on_progress)
+            setup_suricata_config(DATA_DIR, enable_arp=bool(os.environ.get('ENABLE_ARP_LOGGING')), on_progress=on_progress, enabled_sources=sources, show_protocol_decode_alerts=show_protocol_decode_alerts)
         elif name == 'yara':
             setup_yara_rules(DATA_DIR, on_progress=on_progress, force=True)
         elif name == 'sigma':
@@ -464,11 +473,7 @@ def _resolve_upload_size_limit(requested):
 def _hash_file(path):
     """MD5 of a file, streamed in HASH_CHUNK_SIZE chunks (mirrors the hashing
     pattern in yara_analyzer.scan_single_file)."""
-    h = hashlib.md5()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(config.HASH_CHUNK_SIZE), b''):
-            h.update(chunk)
-    return h.hexdigest()
+    return _hash_file_with_prefix(path)[0]
 
 
 def _hash_file_with_prefix(path, prefix_len=4096):
@@ -742,6 +747,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '/api/status': 'handle_get_status',
         '/api/rule-update-status': 'handle_get_rule_update_status',
         '/api/rules-info': 'handle_get_rules_info',
+        '/api/playbook': 'handle_get_playbook',
     }
 
     POST_ROUTES = {
@@ -752,6 +758,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '/api/delete-analysis': 'handle_post_delete_analysis',
         '/api/rename-analysis': 'handle_post_rename_analysis',
         '/api/analysis-notes': 'handle_post_analysis_notes',
+        '/api/row-note': 'handle_post_row_note',
         '/api/delete-all-analyses': 'handle_post_delete_all_analyses',
         '/api/update-rules': 'handle_post_update_rules',
     }
@@ -812,7 +819,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         db_file = os.path.join(dir_path, 'events.db')
         if os.path.exists(db_file):
             try:
-                json_str = query_events_sqlite_json(db_file, event_type, offset, limit, q, order_by, sort_dir)
+                json_str, _ids = query_events_sqlite_json(db_file, event_type, offset, limit, q, order_by, sort_dir)
                 self._send_raw_json(json_str)
             except Exception:
                 self._send_error(500, 'Database error')
@@ -955,10 +962,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             lines = self._extract_payload_lines(pcap, src, sport, dst, dport, 'tcp')
             if not lines:
                 lines = self._extract_payload_lines(pcap, src, sport, dst, dport, 'udp')
-            full_text = '\n'.join([l['text'] for l in lines])
-            truncated = len(full_text) > MAX_TRANSCRIPT_SIZE
-            if truncated:
+
+            truncated = False
+            if len(lines) > config.MAX_TRANSCRIPT_LINES:
                 lines = lines[:config.MAX_TRANSCRIPT_LINES]
+                truncated = True
+
+            # Enforce the character-size bound too: a handful of very long
+            # lines can exceed MAX_TRANSCRIPT_SIZE even under the line cap.
+            kept = []
+            total_chars = 0
+            for line in lines:
+                total_chars += len(line['text'])
+                if total_chars > MAX_TRANSCRIPT_SIZE:
+                    truncated = True
+                    break
+                kept.append(line)
+            lines = kept
+
             self._send_json({'lines': lines, 'truncated': truncated})
         except subprocess.TimeoutExpired:
             self._send_error(500, 'ASCII transcript extraction timed out')
@@ -1048,6 +1069,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def handle_get_analyses(self, params):
         analyses = []
         if os.path.exists(DATA_DIR):
+            candidates = []
             for md5_dir in os.listdir(DATA_DIR):
                 if not MD5_RE.match(md5_dir):
                     continue
@@ -1062,15 +1084,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         continue
 
                 if os.path.exists(eve_path) or os.path.exists(db_path):
-                    date_range = {'min': None, 'max': None}
-                    if os.path.exists(db_path):
-                        date_range = get_event_date_range_sqlite(db_path)
-                    analyses.append({
-                        'md5': md5_dir,
-                        'name': self._resolve_display_name(dir_path, md5_dir),
-                        'date_range': date_range,
-                        'has_notes': os.path.isfile(os.path.join(dir_path, 'notes.txt')),
-                    })
+                    candidates.append((md5_dir, dir_path, db_path if os.path.exists(db_path) else None))
+
+            # Each candidate's date-range query opens its own SQLite
+            # connection against an independent events.db - run them
+            # concurrently rather than one at a time, same pattern as
+            # db.py's Sankey/aggregation queries.
+            def _date_range(db_path):
+                return get_event_date_range_sqlite(db_path) if db_path else {'min': None, 'max': None}
+            if candidates:
+                max_workers = min(len(candidates), os.cpu_count() or 4)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    date_ranges = executor.map(_date_range, (c[2] for c in candidates))
+            else:
+                date_ranges = []
+
+            for (md5_dir, dir_path, _), date_range in zip(candidates, date_ranges):
+                analyses.append({
+                    'md5': md5_dir,
+                    'name': self._resolve_display_name(dir_path, md5_dir),
+                    'date_range': date_range,
+                    'has_notes': os.path.isfile(os.path.join(dir_path, 'notes.txt')),
+                })
 
             analyses.sort(key=lambda x: x['name'].lower())
 
@@ -1202,6 +1237,53 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         self._send_json({'success': True, 'notes': notes})
 
+    def handle_post_row_note(self):
+        """Create, overwrite, or (empty submission) clear the note on one
+        row of the events or sigma_alerts table - the row-scoped
+        counterpart to handle_post_analysis_notes above, same
+        clear-on-empty convention.
+        """
+        data = self._read_json_body(config.MAX_REQUEST_BODY_SIZE)
+        if data is None:
+            return
+        md5 = data.get('md5', '')
+        dir_path, error = self._resolve_md5_dir(md5)
+        if error:
+            self._send_error(400, error)
+            return
+        if not os.path.exists(dir_path) or not os.path.isdir(dir_path):
+            self._send_error(404, 'Analysis not found')
+            return
+
+        table = data.get('table', '')
+        if table not in ('events', 'sigma_alerts'):
+            self._send_error(400, 'Invalid table')
+            return
+
+        row_id = data.get('rowId')
+        # bool is a subclass of int in Python, so a bare isinstance(x, int)
+        # check would silently accept True/False from a malformed request.
+        if not isinstance(row_id, int) or isinstance(row_id, bool):
+            self._send_error(400, 'Invalid rowId')
+            return
+
+        note = data.get('note', '')
+        if not isinstance(note, str):
+            self._send_error(400, 'Invalid note')
+            return
+        note = note.strip()[:config.MAX_ROW_NOTE_LENGTH]
+
+        db_file = os.path.join(dir_path, 'events.db')
+        if not os.path.exists(db_file):
+            self._send_error(404, 'Analysis not found')
+            return
+        try:
+            set_row_note(db_file, table, row_id, note)
+        except OSError:
+            self._send_error(500, 'Could not save note')
+            return
+        self._send_json({'success': True, 'note': note})
+
     def handle_post_delete_all_analyses(self):
         deleted = 0
         errors = []
@@ -1237,6 +1319,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_error(400, "ruleset must be one of 'suricata', 'yara', 'sigma', 'all'")
             return
 
+        sources = data.get('sources')
+        if sources is not None:
+            if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
+                self._send_error(400, "sources must be a list of strings")
+                return
+            unknown = [s for s in sources if s not in SURICATA_RULE_SOURCES]
+            if unknown:
+                self._send_error(400, f"unknown suricata source(s): {', '.join(unknown)}")
+                return
+
+        show_protocol_decode_alerts = data.get('showProtocolDecodeAlerts')
+        if show_protocol_decode_alerts is not None and not isinstance(show_protocol_decode_alerts, bool):
+            self._send_error(400, "showProtocolDecodeAlerts must be a boolean")
+            return
+
         names = ('suricata', 'yara', 'sigma') if ruleset == 'all' else (ruleset,)
         # Check-and-set every targeted ruleset's 'running' flag under a
         # single lock acquisition - for 'all' this must check+set all three
@@ -1249,7 +1346,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             for n in names:
                 _rule_update_state[n] = {'running': True, 'lines': [], 'done': False, 'error': None}
         for n in names:
-            threading.Thread(target=_run_ruleset_update, args=(n,), daemon=True).start()
+            threading.Thread(
+                target=_run_ruleset_update,
+                args=(n, sources if n == 'suricata' else None, show_protocol_decode_alerts if n == 'suricata' else None),
+                daemon=True).start()
         self._send_json({'status': 'started'})
 
     def handle_get_rule_update_status(self, params):
@@ -1270,11 +1370,71 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._send_json(state)
 
     def handle_get_rules_info(self, params):
+        suricata_info = get_suricata_rules_info(DATA_DIR)
+        suricata_info['enabledSources'] = get_suricata_enabled_sources(DATA_DIR)
+        suricata_info['showProtocolDecodeAlerts'] = get_suricata_show_protocol_decode_alerts(DATA_DIR)
+        # bakedIn tells the Rules modal whether a not-yet-staged source
+        # needs internet the first time it's enabled (see
+        # BAKED_IN_SURICATA_SOURCES's own comment for why ipfire/dbl is the
+        # only current exception) - computed here rather than stored on
+        # SURICATA_RULE_SOURCES itself so there's exactly one place
+        # (BAKED_IN_SURICATA_SOURCES) that can ever disagree with the
+        # Dockerfile's own bake loop.
+        suricata_info['availableSources'] = {
+            slug: {**info, 'bakedIn': slug in BAKED_IN_SURICATA_SOURCES}
+            for slug, info in SURICATA_RULE_SOURCES.items()
+        }
+        # Lets "Revert to Default" in the Rules modal read the actual
+        # default instead of hardcoding 'et/open' client-side - the same
+        # reasoning as bakedIn above: DEFAULT_SURICATA_SOURCES is already
+        # the single source of truth (_reconcile_suricata_sources()'s own
+        # empty-selection fallback), so the frontend must not keep an
+        # independent copy that could silently drift from it.
+        suricata_info['defaultSources'] = list(DEFAULT_SURICATA_SOURCES)
+        # Single source of truth for classifying an alert's signature_id to
+        # the ruleset it came from - static/socrates.js's classifyRuleset()
+        # reads this instead of hardcoding a duplicate range table, mirroring
+        # db.py's sid_ranges_sql_case() (both generated from
+        # suricata_sid_ranges.SURICATA_SID_RANGES).
+        suricata_info['sidRanges'] = (
+            [{'min': min_sid, 'max': max_sid, 'label': label}
+             for min_sid, max_sid, _slug, label in SURICATA_SID_RANGES]
+            + [{'min': SURICATA_BUILTIN_SID_RANGE[0], 'max': SURICATA_BUILTIN_SID_RANGE[1],
+                'label': SURICATA_BUILTIN_LABEL}]
+        )
         self._send_json({
-            'suricata': get_suricata_rules_info(DATA_DIR),
+            'suricata': suricata_info,
             'yara': get_yara_rules_info(DATA_DIR),
             'sigma': get_sigma_rules_info(DATA_DIR),
+            # Single source of truth for "how old is too old", so the
+            # frontend's own staleness indicator (Rules modal's amber date
+            # warning) can't independently drift from the 'stale' fields
+            # above the way it used to (see config.RULES_MAX_AGE_HOURS).
+            'staleThresholdHours': config.RULES_MAX_AGE_HOURS,
         })
+
+    # Strict per-type allowlist for handle_get_playbook's `id` param - rule_id
+    # is a dict key into playbook_lookup's in-memory index, not a filesystem
+    # path component, so this isn't guarding against path traversal, but it's
+    # still unscoped client input and worth rejecting early with a clean 400
+    # rather than a silent miss on garbage.
+    _PLAYBOOK_ID_PATTERNS = {
+        'nids': re.compile(r'^[0-9]{1,10}$'),
+        'sigma': re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'),
+    }
+
+    def handle_get_playbook(self, params):
+        """Security Onion Playbooks - global static reference data baked
+        into the image (see playbook_lookup.py), deliberately not scoped
+        to an analysis - unlike almost every other route here, this one
+        takes no md5."""
+        detection_type = params.get('type', [''])[0]
+        rule_id = params.get('id', [''])[0]
+        pattern = self._PLAYBOOK_ID_PATTERNS.get(detection_type)
+        if not pattern or not pattern.match(rule_id):
+            self._send_error(400, 'Invalid type or id')
+            return
+        self._send_json({'playbook': get_playbook(detection_type, rule_id)})
 
     def handle_get_pcap_path(self, params):
         md5 = params.get('md5', [''])[0]
@@ -1329,32 +1489,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def handle_get_limits(self, params):
         self._send_json({'maxQueryLimit': config.MAX_QUERY_LIMIT, 'maxUploadSize': config.MAX_UPLOAD_SIZE})
 
+    def _read_ohmydebn_theme_name(self):
+        """Reads the raw contents of <OHMYDEBN_THEME_DIR>/current/theme.name,
+        or None if OHMYDEBN_THEME_DIR is unset or the file can't be read.
+        Callers apply their own notion of validity on top of this."""
+        if not OHMYDEBN_THEME_DIR:
+            return None
+        try:
+            name_path = os.path.join(OHMYDEBN_THEME_DIR, 'current', 'theme.name')
+            with open(name_path, 'r') as f:
+                return f.read(256).strip()
+        except OSError:
+            return None
+
     def handle_get_theme(self, params):
-        theme = None
-        if OHMYDEBN_THEME_DIR:
-            try:
-                name_path = os.path.join(OHMYDEBN_THEME_DIR, 'current', 'theme.name')
-                with open(name_path, 'r') as f:
-                    candidate = f.read(256).strip()
-                if THEME_NAME_RE.match(candidate):
-                    theme = candidate
-            except OSError:
-                pass
+        candidate = self._read_ohmydebn_theme_name()
+        theme = candidate if candidate and THEME_NAME_RE.match(candidate) else None
         self._send_json({'theme': theme, 'customColors': _get_ohmydebn_custom_colors()})
 
     def handle_get_theme_sync_available(self, params):
         """Lets the frontend hide the "Sync theme to OhMyDebn" toggle
         entirely rather than showing a control that can never do anything
         (OHMYDEBN_THEME_DIR unset, or its theme.name unreadable)."""
-        available = False
-        if OHMYDEBN_THEME_DIR:
-            try:
-                name_path = os.path.join(OHMYDEBN_THEME_DIR, 'current', 'theme.name')
-                with open(name_path, 'r'):
-                    available = True
-            except OSError:
-                pass
-        self._send_json({'available': available})
+        self._send_json({'available': self._read_ohmydebn_theme_name() is not None})
 
     def handle_get_sigma_alerts(self, params):
         md5 = params.get('md5', [''])[0]
@@ -1564,7 +1721,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             _set_phase(dir_path, 'files')
 
             try:
-                rules_file = setup_yara_rules(DATA_DIR)
+                # network_allowed=False: analysis must never silently reach
+                # out to refresh rules on its own - that's now an explicit,
+                # opt-in action (Rules modal, or the checkForStaleRules()
+                # notification). Uses whatever's already cached/baked-in,
+                # however old.
+                rules_file = setup_yara_rules(DATA_DIR, network_allowed=False)
                 db_file = os.path.join(dir_path, 'events.db')
                 name_path = os.path.join(dir_path, 'name.txt')
 
@@ -1877,7 +2039,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if error:
             self._send_error(400, error)
             return
-        self._send_json(self._build_status_response(dir_path))
+        response = self._build_status_response(dir_path)
+        # Only on this one-off GET (loadAnalysis/openReanalyzeModal), not
+        # the hot-polled POST /api/check-status - both share
+        # _build_status_response, but this extra query has no business
+        # running every 2s during active processing.
+        response['hasRowNotes'] = has_row_notes(os.path.join(dir_path, 'events.db'))
+        self._send_json(response)
 
     def handle_post_check_status(self):
         data = self._read_json_body(config.MAX_REQUEST_BODY_SIZE)

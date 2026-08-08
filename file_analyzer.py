@@ -49,8 +49,6 @@ def _extract_strings_from(data, min_len=4, max_count=50, max_len=100):
     return strings
 
 
-
-
 def analyze_file(file_path):
     """Analyze a file and return a metadata dict.
 

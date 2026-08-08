@@ -332,7 +332,29 @@ class TestGetSigmaRulesInfoNeverRaises(unittest.TestCase):
 
             result = sigma_analyzer.get_sigma_rules_info(data_dir=tmpdir)
 
-        self.assertEqual(result['windows'], {'count': None, 'updated': None})
+        self.assertEqual(result['windows'], {'count': None, 'updated': None, 'stale': None})
+
+    def test_stale_field_reflects_file_age(self):
+        """'stale' must be False for a just-written file and True once its
+        mtime is older than config.RULES_MAX_AGE_HOURS - purely a local
+        os.path.getmtime() comparison via validators.is_file_stale(), no
+        network access."""
+        import config
+        import time
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, 'sigma-rules')
+            os.makedirs(rules_dir, exist_ok=True)
+            rules_file = os.path.join(rules_dir, 'windows.json')
+            with open(rules_file, 'w') as f:
+                json.dump([{'title': 'rule1'}], f)
+
+            fresh = sigma_analyzer.get_sigma_rules_info(data_dir=tmpdir)
+            self.assertFalse(fresh['windows']['stale'], 'a just-written rules file must not be stale')
+
+            old_time = time.time() - (config.RULES_MAX_AGE_HOURS + 1) * 3600
+            os.utime(rules_file, (old_time, old_time))
+            stale = sigma_analyzer.get_sigma_rules_info(data_dir=tmpdir)
+            self.assertTrue(stale['windows']['stale'], 'a rules file older than RULES_MAX_AGE_HOURS must be stale')
 
 
 class TestSetupSigmaRulesFreshness(unittest.TestCase):
@@ -345,7 +367,7 @@ class TestSetupSigmaRulesFreshness(unittest.TestCase):
             path = os.path.join(rules_dir, f'{name}.json')
             with open(path, 'w') as f:
                 f.write('{"old": "rules"}')
-            old_time = time.time() - (25 * 3600)
+            old_time = time.time() - (config.RULES_MAX_AGE_HOURS + 1) * 3600
             os.utime(path, (old_time, old_time))
         return rules_dir
 
@@ -452,6 +474,21 @@ class TestNetworkAllowedFalseDoesNotClaimNoInternet(unittest.TestCase):
              unittest.mock.patch('sigma_analyzer.is_host_reachable', return_value=False):
             sigma_analyzer.setup_sigma_rules(tmpdir, on_progress=messages.append, network_allowed=True)
         self.assertTrue(any('no internet' in m.lower() for m in messages), messages)
+
+
+class TestRunSigmaPipelineNeverAllowsNetworkRefresh(unittest.TestCase):
+    """REGRESSION: analyzing a log file must never silently phone home to
+    refresh Sigma rules as a side effect of just uploading it - that's now
+    an explicit, opt-in action (Rules modal, or the checkForStaleRules()
+    notification), not something the analysis path triggers on its own.
+    See AGENTS.md and setup_sigma_rules()'s network_allowed parameter."""
+
+    @unittest.mock.patch('sigma_analyzer.setup_sigma_rules', return_value=None)
+    @unittest.mock.patch('sigma_analyzer.is_zircolite_available', return_value=True)
+    def test_run_sigma_pipeline_calls_setup_with_network_allowed_false(self, mock_available, mock_setup):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sigma_analyzer.run_sigma_pipeline(tmpdir, os.path.join(tmpdir, 'events.evtx'), data_dir=tmpdir)
+        mock_setup.assert_called_once_with(tmpdir, network_allowed=False)
 
 
 if __name__ == '__main__':

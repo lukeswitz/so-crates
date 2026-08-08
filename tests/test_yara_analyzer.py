@@ -123,5 +123,30 @@ class TestNetworkAllowedFalseDoesNotClaimNoInternet(unittest.TestCase):
         self.assertTrue(any('no internet' in m.lower() for m in messages), messages)
 
 
+class TestGetYaraRulesInfoStaleness(unittest.TestCase):
+    """'stale' must be False for a just-written file and True once its
+    mtime is older than config.RULES_MAX_AGE_HOURS - purely a local
+    os.path.getmtime() comparison via validators.is_file_stale(), no
+    network access."""
+
+    def test_stale_field_reflects_file_age(self):
+        import config
+        import time
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, yara_analyzer.YARA_RULES_SUBDIR)
+            os.makedirs(rules_dir, exist_ok=True)
+            rules_file = os.path.join(rules_dir, yara_analyzer.YARA_FORGE_FILENAME)
+            with open(rules_file, 'w') as f:
+                f.write('rule test_rule { condition: true }')
+
+            fresh = yara_analyzer.get_yara_rules_info(data_dir=tmpdir)
+            self.assertFalse(fresh['stale'], 'a just-written rules file must not be stale')
+
+            old_time = time.time() - (config.RULES_MAX_AGE_HOURS + 1) * 3600
+            os.utime(rules_file, (old_time, old_time))
+            stale = yara_analyzer.get_yara_rules_info(data_dir=tmpdir)
+            self.assertTrue(stale['stale'], 'a rules file older than RULES_MAX_AGE_HOURS must be stale')
+
+
 if __name__ == '__main__':
     unittest.main()

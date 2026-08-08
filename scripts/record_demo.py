@@ -73,20 +73,18 @@ CAPTION_JS = """
 CAPTION_REMOVE_JS = "() => { const el = document.getElementById('demoCaption'); if (el) el.remove(); }"
 
 # Registered via page.add_init_script so it runs before the app's own scripts
-# on the very first navigation - covers the page with an opaque overlay +
-# caption from the first paint, so there's no gap/flicker where the caption
-# disappears while the real page loads in behind it. document.documentElement
-# is null the instant this runs (before the HTML parser creates <html>), so
-# it retries via setTimeout rather than assuming it already exists.
-OVERLAY_INIT_JS_TEMPLATE = """
+# on the very first navigation - shows the caption from the first paint, over
+# the real page as it loads in behind it (matching what a real user actually
+# sees, rather than hiding the load behind an opaque cover - the app's own
+# inline FOUC-prevention script in <head> already applies the right theme
+# background before first paint, so there's nothing that needs covering).
+# document.documentElement is null the instant this runs (before the HTML
+# parser creates <html>), so it retries via setTimeout rather than assuming
+# it already exists.
+CAPTION_INIT_JS_TEMPLATE = """
 (() => {
     function tryInit() {
         if (!document.documentElement) { setTimeout(tryInit, 0); return; }
-        const overlay = document.createElement('div');
-        overlay.id = 'demoOverlay';
-        overlay.style.cssText = 'position:fixed;inset:0;background:#0d1117;z-index:2147483646;';
-        document.documentElement.appendChild(overlay);
-
         const el = document.createElement('div');
         el.id = 'demoCaption';
         el.style.cssText = [
@@ -135,21 +133,19 @@ async def main(base_url):
         )
         page = await context.new_page()
 
-        # Show the intro caption alone first, covering the page with an
-        # opaque overlay from the very first paint of the new document.
+        # Show the intro caption from the very first paint of the new
+        # document, over the real page as it loads in behind it.
         welcome_caption = ("Welcome to the SO-CRATES recorded demo!\n\n"
                            "When you first connect to SO-CRATES, you'll be greeted by a welcome "
                            "window that gives you an overview of what you can do with SO-CRATES.")
-        overlay_script = OVERLAY_INIT_JS_TEMPLATE.replace(
+        caption_init_script = CAPTION_INIT_JS_TEMPLATE.replace(
             '__CAPTION_TEXT__', json.dumps(welcome_caption))
-        await page.add_init_script(overlay_script)
+        await page.add_init_script(caption_init_script)
 
         # Welcome screen
         await page.goto(base_url, wait_until="networkidle")
-        await page.wait_for_timeout(3000)  # overlay+caption alone, covering the load
-        await page.evaluate("document.getElementById('demoOverlay')?.remove();")
         await page.wait_for_selector('#helpModal.active .modal-content', timeout=10000)
-        await caption(page, welcome_caption)  # reposition under the now-real header
+        await caption(page, welcome_caption)  # reposition now that the real header exists
         await page.wait_for_timeout(4300)
         await page.evaluate("closeHelpModal()")
         await caption(page, "When you dismiss the welcome window, you will see the main screen "
@@ -175,6 +171,46 @@ async def main(base_url):
             await caption(page, f"Viewing {label}")
             await page.wait_for_timeout(3200)
 
+            # Drill into a real Suricata alert to show the Playbook section -
+            # only reachable from here, since Network Alerts is the one card
+            # whose rows have a signature_id (see renderAlertDetails's own
+            # playbook-section-placeholder in static/socrates.js).
+            if label == 'NETWORK ALERTS':
+                alert_row_selector = '.section:not(.section-hidden):not(.agg-section) table tbody tr:not(.detail-row)'
+                alert_row = page.locator(alert_row_selector).first
+                if await alert_row.count() > 0:
+                    await alert_row.scroll_into_view_if_needed()
+                    await caption(page, "Drilling into a Suricata alert")
+                    await page.wait_for_timeout(2200)
+                    # Click the timestamp cell specifically, not the row's
+                    # default click point - clicking anywhere else in the
+                    # row opens the pivot menu instead of expanding it.
+                    await alert_row.locator('.timestamp').click()
+                    await page.wait_for_timeout(600)
+                    await alert_row.evaluate(
+                        "(row) => { "
+                        "const header = document.querySelector('.app-header'); "
+                        "const headerHeight = header ? header.getBoundingClientRect().height : 0; "
+                        "const rect = row.getBoundingClientRect(); "
+                        "window.scrollBy(0, rect.top - headerHeight - 8); }"
+                    )
+                    await page.wait_for_timeout(600)
+                    await caption(page, "SO-CRATES shows a Playbook with guidance to help "
+                                        "investigate this alert")
+                    playbook_toggle = page.locator('.detail-row.visible .playbook-questions-toggle').first
+                    try:
+                        await playbook_toggle.wait_for(state='visible', timeout=6000)
+                        await playbook_toggle.scroll_into_view_if_needed()
+                    except Exception:
+                        pass  # no playbook baked in for this rule/environment - caption still makes sense
+                    await page.wait_for_timeout(5200)  # linger on the expanded section
+                    # Collapse the row back before moving on, so its expanded
+                    # state (and the ASCII-transcript fetch that toggleDetailRow
+                    # kicks off for any alert row with a flow tuple) doesn't
+                    # linger into later steps.
+                    await alert_row.locator('.timestamp').click()
+                    await page.wait_for_timeout(400)
+
         # All Events
         await page.locator(".stat-card:has-text('All Events')").first.click()
         await caption(page, "Switching to the merged All Events view")
@@ -194,7 +230,11 @@ async def main(base_url):
         await caption(page, "Expanding Aggregation Tables")
         await page.wait_for_timeout(2800)
 
-        # "Expand" (click, applying it as a filter) the STOR PW_tyler... aggregation value
+        # Clicking an aggregation value now opens the pivot menu (Include/
+        # Exclude/Only/Hunt/...) rather than applying a filter directly -
+        # "Only" is the one that matches "filter down to a single matching
+        # event" (a fresh search scoped to just this value), so click that
+        # from the menu rather than the row itself.
         target = page.locator(
             ".agg-row:has-text('STOR PW_tyler-DESKTOP-W7F98GR_2026_02_03_16_13_59.html')"
         ).first
@@ -202,15 +242,23 @@ async def main(base_url):
         await caption(page, "Clicking a Detail value to filter down to a single matching event")
         await page.wait_for_timeout(3200)
         await target.click()
+        await page.wait_for_timeout(400)
+        await page.locator('[data-pivot-action="only"]').click()
         await page.wait_for_timeout(2600)
 
-        # Drill into the single remaining row in the Data Table
+        # Drill into the single remaining row in the Data Table - click the
+        # timestamp cell specifically, not the row's default click point:
+        # clicking anywhere else in the row now opens the pivot menu too
+        # (see static/socrates.js's handleRowCellClick), so a plain
+        # .click() on the row can land on a pivot-enabled cell instead of
+        # expanding it, same as a real user now has to target the
+        # timestamp column (or use the pivot menu's own "Expand Row" entry).
         row_selector = '.section:not(.section-hidden):not(.agg-section) table tbody tr:not(.detail-row)'
         data_row = page.locator(row_selector).first
         await data_row.scroll_into_view_if_needed()
         await caption(page, "Drilling into the single filtered row")
         await page.wait_for_timeout(2400)
-        await data_row.click()
+        await data_row.locator('.timestamp').click()
         await page.wait_for_timeout(800)
 
         # Anchor the summary row just below the fixed header - the ASCII

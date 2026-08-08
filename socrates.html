@@ -64,11 +64,11 @@
             </div>
         </div>
         
-        <div class="modal" id="errorModal" onclick="handleErrorBackdropClick(event)">
+        <div class="modal" id="errorModal" onclick="handleModalBackdropClick(event, closeErrorModal)">
             <div class="modal-content" style="max-width: 400px;" onclick="event.stopPropagation()">
                 <div class="modal-header">
                     <h3 style="color: #ff6b6b;">Error</h3>
-                    <button class="modal-close" onclick="closeErrorModal()">&times;</button>
+                    <button class="modal-close" title="Close (Esc)" onclick="closeErrorModal()">&times;</button>
                 </div>
                 <div style="padding: 20px;">
                     <p id="errorMessage" style="color: var(--text-primary); margin-bottom: 20px;"></p>
@@ -83,7 +83,7 @@
             <div class="modal-content" style="max-width: 400px;" onclick="event.stopPropagation()">
                 <div class="modal-header">
                     <h3 class="delete-modal-title">Confirm Delete</h3>
-                    <button class="modal-close" onclick="closeDeleteModal()">&times;</button>
+                    <button class="modal-close" title="Close (Esc)" onclick="closeDeleteModal()">&times;</button>
                 </div>
                 <div style="padding: 20px;">
                     <p style="color: var(--text-primary); margin-bottom: 20px; overflow-wrap: break-word;">Are you sure you want to delete <span id="deleteFileName" style="font-weight: 600; color: var(--text-bright);"></span>?</p>
@@ -99,7 +99,7 @@
             <div class="modal-content" style="max-width: 400px;" onclick="event.stopPropagation()">
                 <div class="modal-header">
                     <h3 class="delete-modal-title">Confirm Delete All</h3>
-                    <button class="modal-close" onclick="closeDeleteAllModal()">&times;</button>
+                    <button class="modal-close" title="Close (Esc)" onclick="closeDeleteAllModal()">&times;</button>
                 </div>
                 <div style="padding: 20px;">
                     <p style="color: var(--text-primary); margin-bottom: 20px;">Are you sure you want to delete all <span id="deleteAllCount" style="font-weight: 600; color: var(--text-bright);"></span> previous analyses? This cannot be undone.</p>
@@ -115,10 +115,11 @@
             <div class="modal-content" style="max-width: 400px;" onclick="event.stopPropagation()">
                 <div class="modal-header">
                     <h3 style="color: var(--accent);">Confirm Re-analyze</h3>
-                    <button class="modal-close" onclick="closeReanalyzeModal()">&times;</button>
+                    <button class="modal-close" title="Close (Esc)" onclick="closeReanalyzeModal()">&times;</button>
                 </div>
                 <div style="padding: 20px;">
                     <p style="color: var(--text-primary); margin-bottom: 20px; overflow-wrap: break-word;">This will delete the existing analysis for <span id="reanalyzeFileName" style="font-weight: 600; color: var(--text-bright);"></span> and re-run the analysis pipeline. The uploaded file will be preserved.</p>
+                    <p id="reanalyzeRowNotesWarning" style="display: none; color: var(--badge-danger-text); font-weight: 600; margin-top: -12px; margin-bottom: 20px; overflow-wrap: break-word;">WARNING! You have one or more notes on a table row and these will be destroyed.</p>
                     <div style="display: flex; gap: 10px; justify-content: flex-end;">
                         <button onclick="closeReanalyzeModal()" style="background: var(--bg-hover); color: var(--text-primary); border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Cancel</button>
                         <button class="reanalyze-confirm-btn" onclick="confirmReanalyze()" style="padding: 8px 16px; border-radius: 6px; cursor: pointer;">Re-analyze</button>
@@ -131,12 +132,15 @@
             <div class="modal-content" onclick="event.stopPropagation()">
                 <div class="modal-header">
                     <h3 id="helpModalTitle">Help</h3>
-                    <button class="modal-close" onclick="closeHelpModal()">&times;</button>
+                    <button class="modal-close" title="Close (Esc)" onclick="closeHelpModal()">&times;</button>
                 </div>
                 <div id="helpModalBody">Loading...</div>
                 <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 15px; border-top: 1px solid var(--bg-hover); margin-top: 10px;">
                     <label id="helpShowAgainContainer" style="color: var(--text-muted); font-size: 0.9rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                        <input type="checkbox" id="helpShowAgain" checked style="cursor: pointer;">
+                        <span class="theme-switch">
+                            <input type="checkbox" id="helpShowAgain" checked>
+                            <span class="theme-switch-slider"></span>
+                        </span>
                         Show this message each time I connect
                     </label>
                     <button onclick="closeHelpModal()" style="background: var(--accent); color: var(--bg-primary); border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Got it!</button>
@@ -144,11 +148,11 @@
             </div>
         </div>
 
-        <div class="modal" id="settingsModal" onclick="handleSettingsBackdropClick(event)">
+        <div class="modal" id="settingsModal" onclick="handleModalBackdropClick(event, closeSettingsModal)">
             <div class="modal-content" onclick="event.stopPropagation()">
                 <div class="modal-header">
                     <h3>Settings</h3>
-                    <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
+                    <button class="modal-close" title="Close (Esc)" onclick="closeSettingsModal()">&times;</button>
                 </div>
                 <div id="settingsModalBody">
                     <label for="maxQueryLimitInput" style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 8px;">
@@ -168,19 +172,37 @@
                     <div id="uploadSizeHint" style="color: var(--text-muted); font-size: 0.8rem; margin-top: 6px;"></div>
                     <div id="uploadSizeError" style="color: var(--badge-warning-text); font-size: 0.85rem; margin-top: 6px; display: none;"></div>
 
+                    <div style="border-top: 1px solid var(--bg-hover); margin: 18px 0;"></div>
+
+                    <div id="customLookupSitesSection">
+                        <label style="color: var(--text-muted); font-size: 0.9rem; display: block; margin-bottom: 8px;">
+                            Custom Lookup Sites
+                        </label>
+                        <div style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 10px;">Added to every row/detail-panel/aggregation pivot menu, alongside the built-in ones (Google, VirusTotal, ...). Use <code>{value}</code> in the URL as a placeholder for whatever was clicked.</div>
+                        <div id="customLookupSitesList"></div>
+                        <div id="customLookupSitesForm" style="margin-top: 10px;">
+                            <input type="text" id="customLookupNameInput" placeholder="Name (e.g. My SIEM)" maxlength="40" class="settings-text-input">
+                            <input type="text" id="customLookupUrlInput" placeholder="https://example.com/search?q={value}" maxlength="500" class="settings-text-input" style="margin-top: 6px;">
+                            <div id="customLookupError" style="color: var(--badge-warning-text); font-size: 0.85rem; margin-top: 6px; display: none;"></div>
+                            <div style="margin-top: 8px; display: flex; gap: 8px;">
+                                <button id="customLookupSaveBtn" onclick="handleSaveCustomLookupSite()" class="modal-btn-secondary">Add</button>
+                                <button id="customLookupCancelBtn" onclick="cancelEditCustomLookupSite()" class="modal-btn-secondary" style="display: none;">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 15px; border-top: 1px solid var(--bg-hover); margin-top: 10px;">
-                    <button onclick="closeSettingsModal()" style="background: transparent; color: var(--text-muted); border: 1px solid var(--bg-hover); padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Cancel</button>
-                    <button id="settingsSaveBtn" onclick="saveSettings()" style="background: var(--accent); color: var(--bg-primary); border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Save</button>
+                    <button onclick="closeSettingsModal()" class="modal-btn-secondary">Cancel</button>
+                    <button id="settingsSaveBtn" onclick="saveSettings()" class="modal-btn-primary">Save</button>
                 </div>
             </div>
         </div>
 
-        <div class="modal" id="aboutModal" onclick="handleAboutBackdropClick(event)">
+        <div class="modal" id="aboutModal" onclick="handleModalBackdropClick(event, closeAboutModal)">
             <div class="modal-content" style="max-width: 650px;" onclick="event.stopPropagation()">
                 <div class="modal-header">
                     <h3>About</h3>
-                    <button class="modal-close" onclick="closeAboutModal()">&times;</button>
+                    <button class="modal-close" title="Close (Esc)" onclick="closeAboutModal()">&times;</button>
                 </div>
                 <div id="aboutModalBody">
                     <div style="text-align: center; margin-bottom: 16px;">
@@ -194,13 +216,16 @@
                         by defenders for defenders - Sponsored by <a href="https://securityonion.com" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">Security Onion Solutions, LLC</a>
                     </div>
                     <div style="margin-bottom: 16px; display: flex; gap: 20px;">
-                        <a href="https://so-crates.org" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Documentation</a>
-                        <a href="https://github.com/dougburks/so-crates" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">GitHub repo</a>
+                        <a href="https://so-crates.org" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">SO-CRATES Documentation</a>
+                        <a href="https://github.com/dougburks/so-crates" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">SO-CRATES GitHub repo (give it a star!)</a>
                     </div>
                     <div style="border-top: 1px solid var(--bg-hover); margin: 18px 0;"></div>
                     <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
                         <label style="color: var(--text-muted); font-size: 0.9rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" id="checkForUpdates" onchange="handleCheckForUpdatesChange(this)" style="cursor: pointer;">
+                            <span class="theme-switch">
+                                <input type="checkbox" id="checkForUpdates" onchange="handleCheckForUpdatesChange(this)">
+                                <span class="theme-switch-slider"></span>
+                            </span>
                             Check GitHub for newer SO-CRATES releases
                         </label>
                         <button onclick="checkForAppUpdateNow()" style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">Check Now</button>
@@ -209,11 +234,21 @@
             </div>
         </div>
 
-        <div class="modal" id="themesModal" onclick="handleThemesBackdropClick(event)">
+        <div class="modal" id="securityOnionModal" onclick="handleModalBackdropClick(event, closeSecurityOnionModal)">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3>Security Onion</h3>
+                    <button class="modal-close" title="Close (Esc)" onclick="closeSecurityOnionModal()">&times;</button>
+                </div>
+                <div id="securityOnionModalBody"></div>
+            </div>
+        </div>
+
+        <div class="modal" id="themesModal" onclick="handleModalBackdropClick(event, closeThemesModal)">
             <div class="modal-content" onclick="event.stopPropagation()">
                 <div class="modal-header">
                     <h3>Themes</h3>
-                    <button class="modal-close" onclick="closeThemesModal()">&times;</button>
+                    <button class="modal-close" title="Close (Esc)" onclick="closeThemesModal()">&times;</button>
                 </div>
                 <div id="syncThemeWithOSContainer" style="display: none;">
                     <label style="color: var(--text-muted); font-size: 0.9rem; display: flex; align-items: center; gap: 8px; cursor: pointer; margin: 0 14px 4px 14px;">
@@ -238,11 +273,11 @@
             </div>
         </div>
 
-        <div class="modal" id="notesModal" onclick="handleNotesBackdropClick(event)">
+        <div class="modal" id="notesModal" onclick="handleModalBackdropClick(event, closeNotesModal)">
             <div class="modal-content" onclick="event.stopPropagation()">
                 <div class="modal-header">
-                    <h3>Notes</h3>
-                    <button class="modal-close" onclick="closeNotesModal()">&times;</button>
+                    <h3 id="notesModalTitle">Notes</h3>
+                    <button class="modal-close" title="Close (Esc)" onclick="closeNotesModal()">&times;</button>
                 </div>
                 <div id="notesModalBody">
                     <textarea id="analysisNotesInput" class="notes-textarea" placeholder="Add investigation notes for this analysis..."></textarea>
@@ -250,21 +285,39 @@
                     <div id="notesError" style="color: var(--badge-warning-text); font-size: 0.85rem; margin-top: 6px; display: none;"></div>
                 </div>
                 <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 15px; border-top: 1px solid var(--bg-hover); margin-top: 10px;">
-                    <button onclick="closeNotesModal()" style="background: transparent; color: var(--text-muted); border: 1px solid var(--bg-hover); padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Cancel</button>
-                    <button id="notesSaveBtn" onclick="saveAnalysisNotes()" style="background: var(--accent); color: var(--bg-primary); border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Save</button>
+                    <button onclick="closeNotesModal()" class="modal-btn-secondary">Cancel</button>
+                    <button id="notesSaveBtn" onclick="saveAnalysisNotes()" class="modal-btn-primary">Save</button>
                 </div>
             </div>
         </div>
 
-        <div class="modal" id="rulesModal" onclick="handleRulesBackdropClick(event)">
+        <div class="modal" id="rulesModal" onclick="handleModalBackdropClick(event, closeRulesModal)">
             <div class="modal-content" onclick="event.stopPropagation()">
                 <div class="modal-header">
                     <h3>Rules</h3>
-                    <button class="modal-close" onclick="closeRulesModal()">&times;</button>
+                    <button class="modal-close" title="Close (Esc)" onclick="closeRulesModal()">&times;</button>
                 </div>
                 <div id="rulesModalBody">Loading...</div>
-                <div style="display: flex; justify-content: flex-end; padding-top: 15px; border-top: 1px solid var(--bg-hover); margin-top: 10px;">
-                    <button id="updateAllRulesBtn" onclick="triggerRulesetUpdate('all')" style="background: var(--accent); color: var(--bg-primary); border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">Update All</button>
+                <div style="padding-top: 15px; border-top: 1px solid var(--bg-hover); margin-top: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                        <label style="color: var(--text-muted); font-size: 0.9rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <span class="theme-switch">
+                                <input type="checkbox" id="checkForStaleRules" onchange="handleCheckForStaleRulesChange(this)">
+                                <span class="theme-switch-slider"></span>
+                            </span>
+                            Notify me when detection rules are stale
+                        </label>
+                        <label style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center; gap: 6px; white-space: nowrap;">
+                            after
+                            <input type="number" id="staleThresholdDaysInput" min="1" max="365" step="1" onchange="handleStaleThresholdDaysChange(this)" class="settings-number-input" style="width: 56px; padding: 4px 6px;">
+                            days
+                        </label>
+                    </div>
+                    <div style="color: var(--text-muted); font-size: 0.8rem; margin-top: 6px;">Shows a notification on the Welcome screen if any ruleset above is showing stale.</div>
+                </div>
+                <div style="border-top: 1px solid var(--bg-hover); margin: 15px 0;"></div>
+                <div style="display: flex; justify-content: flex-end;">
+                    <button id="updateAllRulesBtn" onclick="triggerRulesetUpdate('all')" class="modal-btn-primary">Update All</button>
                 </div>
             </div>
         </div>
@@ -294,8 +347,13 @@
         <script src="static/socrates.js"></script>
     </div>
     <div class="footer">
-        <a href="#" onclick="showAboutModal(); return false;" style="color: var(--accent); text-decoration: none;" id="footerVersionLink">SO-CRATES</a><span id="footerUpdateBadge" style="display: none; margin-left: 8px;"><a href="https://github.com/dougburks/so-crates/releases/latest" target="_blank" rel="noopener noreferrer" style="color: var(--badge-warning-text); text-decoration: none;">Update available</a></span>
-        <a href="https://securityonion.com" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">&copy; 2026 Security Onion Solutions, LLC</a>
+        <div class="footer-left">
+            <a href="#" onclick="showAboutModal(); return false;" style="color: var(--accent); text-decoration: none;" id="footerVersionLink">SO-CRATES</a><span id="footerUpdateBadge" style="display: none; margin-left: 8px;"><a href="https://github.com/dougburks/so-crates/releases/latest" target="_blank" rel="noopener noreferrer" style="color: var(--badge-warning-text); text-decoration: none;">Update available</a></span>
+        </div>
+        <div class="footer-center" id="footerCenterTeaser"></div>
+        <div class="footer-right">
+            <a href="https://securityonion.com" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">&copy; 2026 Security Onion Solutions, LLC</a>
+        </div>
     </div>
 </body>
 </html>

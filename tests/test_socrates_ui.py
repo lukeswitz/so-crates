@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import ast
 import json
 import unittest
 import re
@@ -10,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'socrates.html')
 JS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'socrates.js')
 CSS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'socrates.css')
+CAPTURE_SCREENSHOTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'scripts', 'capture_screenshots.py')
 FAVICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon.svg')
 FAVICON_HACKER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-hacker.svg')
 FAVICON_MATTE_BLACK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'favicon-matte-black.svg')
@@ -64,6 +66,20 @@ class TestHTMLStructure(unittest.TestCase):
     def test_css_file_size(self):
         """Verify CSS file is complete (not truncated)"""
         self.assertGreater(len(CSS_CONTENT), 1000, 'CSS file appears truncated')
+
+    def test_all_modal_close_buttons_hint_escape_key(self):
+        """Every modal-close X button must hint that Esc also works, rather
+        than swapping the universally-recognized X glyph for less legible
+        'Esc' text - kept as a tooltip instead. Count must match every
+        close*Modal() call closeAllModals() makes (the function Escape
+        actually invokes), so a new modal added to one but not the other
+        doesn't silently drift."""
+        close_button_count = HTML_CONTENT.count('class="modal-close" title="Close (Esc)" onclick="')
+        close_all_modals_fn = JS_CONTENT.split('function closeAllModals() {')[1].split('\n        }')[0]
+        closes_called = len(re.findall(r'close\w*Modal\(\)', close_all_modals_fn))
+        self.assertGreater(close_button_count, 0)
+        self.assertEqual(close_button_count, closes_called,
+                         'every modal closeAllModals() closes must have a close button with the Esc hint')
 
     def test_html_references_css(self):
         self.assertIn('<link rel="stylesheet" href="static/socrates.css">', HTML_CONTENT)
@@ -221,7 +237,7 @@ class TestHTMLStructure(unittest.TestCase):
         """updateFavicon() must point faviconLink at the per-theme SVG that
         exists in static/ (plain favicon.svg for the default dark theme)."""
         from tests.jsdom_helper import js_statements
-        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'breadbin-blue', 'vaporwave', 'digital-frontier', 'retro-handheld', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'ohmydebn', 'catppuccin-latte', 'flexoki-light', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'luna-blue', 'amber', 'dos-blue']
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'breadbin-blue', 'vaporwave', 'digital-frontier', 'retro-handheld', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'ohmydebn', 'catppuccin-latte', 'flexoki-light', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'luna-blue', 'amber', 'dos-blue', 'dracula', 'solarized-dark', 'monokai']
         result = js_statements(f'''
             var link = document.getElementById('faviconLink');
             var out = {{}};
@@ -495,6 +511,19 @@ class TestJavaScriptFunctions(unittest.TestCase):
     def test_has_shouldShowHelpModal(self):
         self.assertIn('function shouldShowHelpModal', JS_CONTENT)
 
+    def test_helpShowAgain_checkbox_uses_slider_toggle(self):
+        """Styled as a slider toggle (.theme-switch, same component as the
+        OhMyDebn sync toggle, checkForUpdates, and checkForStaleRules) for
+        visual consistency across every boolean preference control - even
+        though this one's mechanics differ (its value is read once when
+        the modal closes, via no onchange handler at all, rather than
+        applying instantly like those three)."""
+        self.assertIn('id="helpShowAgain" checked', HTML_CONTENT)
+        self.assertRegex(
+            HTML_CONTENT,
+            r'<span class="theme-switch">\s*<input type="checkbox" id="helpShowAgain"[^>]*>\s*<span class="theme-switch-slider"></span>\s*</span>',
+            'helpShowAgain must be wrapped in the .theme-switch slider component')
+
     def test_has_handleHelpBackdropClick(self):
         self.assertIn('function handleHelpBackdropClick', JS_CONTENT)
 
@@ -586,13 +615,19 @@ class TestCardOrder(unittest.TestCase):
         result = js_expression("sortEventTypes(['dns', 'stats', 'all'])")
         self.assertEqual(result, ['all', 'dns', 'stats'])
 
-    def test_apply_filter_calls_both_section_and_aggregation(self):
-        """Verify applyFilter builds both section and aggregation when filtering"""
-        self.assertIn("function applyFilters(", JS_CONTENT,
-                      "applyFilter should delegate to applyFilters")
-        applyFunc = JS_CONTENT.split('function applyFilter(')[1].split('function clearFilter')[0]
-        self.assertIn("applyFilters", applyFunc,
-                      "applyFilter should delegate to applyFilters")
+    def test_sortEventTypes_full_priority_order(self):
+        """Network Alerts, File Alerts, Decoder Alerts, Anomalies (in that
+        order) take priority over every other pcap-mode tab, which then
+        falls back to alphabetical - e.g. dns/flow/http here, regardless of
+        input order."""
+        from tests.jsdom_helper import js_expression
+        result = js_expression(
+            "sortEventTypes(['http', 'anomaly', 'flow', 'protocol_decode', 'dns', 'filealerts', 'alert'])"
+        )
+        self.assertEqual(result, ['alert', 'filealerts', 'protocol_decode', 'anomaly', 'dns', 'flow', 'http'])
+
+    def test_refresh_current_view_calls_both_section_and_aggregation(self):
+        """Verify refreshCurrentView builds both section and aggregation when filtering"""
         refreshFunc = JS_CONTENT.split('function refreshCurrentView')[1].split('function ')[0]
         self.assertIn("buildAggregationsSection(eventType, filtered)", refreshFunc,
                       "refreshCurrentView should call buildAggregationsSection with filtered events")
@@ -603,6 +638,20 @@ class TestCardOrder(unittest.TestCase):
 class TestJavaScriptDataStructures(unittest.TestCase):
     def test_has_type_labels(self):
         self.assertIn('typeLabels', JS_CONTENT)
+
+    def test_underscore_event_types_have_wrappable_labels(self):
+        """REGRESSION: bittorrent_dht and ftp_data are the only two raw
+        event_type names containing an underscore. Any type missing from
+        typeLabels falls back to type.toUpperCase() (e.g. 'smtp' ->
+        'SMTP'), which is fine for a single word/acronym - but
+        .stat-label's word-break: keep-all (so ordinary words never wrap
+        mid-word) means an underscore-joined fallback like
+        'BITTORRENT_DHT' can't wrap at all, overflowing a narrow
+        stat-card on a sample with many event types squeezing the grid.
+        A real space gives each a wrap point like every other multi-word
+        typeLabels entry already has."""
+        self.assertIn("bittorrent_dht: 'BitTorrent DHT'", JS_CONTENT)
+        self.assertIn("ftp_data: 'FTP Data'", JS_CONTENT)
 
     def test_has_type_colors(self):
         self.assertIn('COLORS', JS_CONTENT)
@@ -1189,7 +1238,7 @@ class TestThemeAndMenu(unittest.TestCase):
                       'Themes modal container must exist in HTML')
         self.assertIn('id="themesModalBody"', HTML_CONTENT,
                       'Themes modal body container (populated by renderThemesModalGrid) must exist in HTML')
-        self.assertIn('onclick="handleThemesBackdropClick(event)"', HTML_CONTENT,
+        self.assertIn('onclick="handleModalBackdropClick(event, closeThemesModal)"', HTML_CONTENT,
                       'Themes modal must close on backdrop click')
         self.assertIn('onclick="closeThemesModal()"', HTML_CONTENT,
                       'Themes modal must have a close button')
@@ -1493,6 +1542,208 @@ class TestThemeAndMenu(unittest.TestCase):
         ''')
         self.assertTrue(result['ok'])
 
+    def test_checkForStaleRules_opt_in_checkbox_exists(self):
+        self.assertIn('id="checkForStaleRules"', HTML_CONTENT)
+        self.assertIn('onchange="handleCheckForStaleRulesChange(this)"', HTML_CONTENT)
+        # Styled as a slider toggle (.theme-switch, same component as the
+        # OhMyDebn sync toggle and checkForUpdates), not a plain checkbox -
+        # applies instantly with no Save step, same shape as those two.
+        self.assertRegex(
+            HTML_CONTENT,
+            r'<span class="theme-switch">\s*<input type="checkbox" id="checkForStaleRules"[^>]*>\s*<span class="theme-switch-slider"></span>\s*</span>',
+            'checkForStaleRules must be wrapped in the .theme-switch slider component')
+
+    def test_checkForStaleRulesNow_button_removed(self):
+        """REGRESSION: a separate manual 'Check Age Now' button/function
+        used to exist alongside the checkbox - removed as redundant once
+        the Rules modal's own amber-date warning (isRulesetStale()) was
+        unified onto the same threshold, since it already shows the same
+        staleness live without a click."""
+        self.assertNotIn('checkForStaleRulesNow', HTML_CONTENT)
+        self.assertNotIn('function checkForStaleRulesNow', JS_CONTENT)
+
+    def test_checkForStaleRules_does_not_fetch_when_opted_out(self):
+        """Default-off: with socrates_checkForStaleRules unset (or not
+        'true'), checkForStaleRules() must not even fetch /api/rules-info -
+        opting out means no background check at all, not just no toast."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) { return Promise.reject(new Error('unexpected fetch: ' + url)); };
+            await checkForStaleRules();
+            window.__jsdom_result = { toastPresent: document.querySelector('.socrates-toast') !== null };
+        ''')
+        self.assertFalse(result['toastPresent'])
+
+    def test_checkForStaleRules_shows_sticky_toast_when_opted_in_and_stale(self):
+        """Staleness is computed client-side from 'updated' + the effective
+        threshold (_resolveStaleThresholdHours()), not read from a
+        server-precomputed 'stale' field - epochs are computed relative to
+        "now" in JS (not hardcoded) so this doesn't rely on a fixed past
+        date always outliving the threshold."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_checkForStaleRules', 'true');
+            var nowSec = Date.now() / 1000;
+            var freshInfo = {
+                suricata: { count: 51552, updated: nowSec - (8 * 86400) },
+                yara: { count: 12364, updated: nowSec - 3600 },
+                sigma: { windows: { count: 4308, updated: nowSec - 3600 },
+                         linux: { count: 182, updated: nowSec - 3600 } },
+                staleThresholdHours: 168,
+            };
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(freshInfo) });
+                }
+                return Promise.reject(new Error('unexpected fetch: ' + url));
+            };
+            window.__calledShowRulesModal = false;
+            showRulesModal = function() { window.__calledShowRulesModal = true; };
+
+            await checkForStaleRules();
+            var toast = document.querySelector('.socrates-toast');
+            var link = toast ? toast.querySelector('a') : null;
+            if (link) { link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); }
+            window.__jsdom_result = {
+                toastText: toast ? toast.textContent : null,
+                linkText: link ? link.textContent : null,
+                calledShowRulesModal: window.__calledShowRulesModal
+            };
+        ''')
+        self.assertIn('Suricata rules are stale. Update via the Rules menu before analyzing.', result['toastText'])
+        self.assertEqual(result['linkText'], 'Open Rules')
+        self.assertTrue(result['calledShowRulesModal'], 'clicking the action link must open the Rules modal')
+
+    def test_checkForStaleRules_lists_multiple_stale_rulesets_with_and(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_checkForStaleRules', 'true');
+            var nowSec = Date.now() / 1000;
+            var mixedInfo = {
+                suricata: { count: 51552, updated: nowSec - (8 * 86400) },
+                yara: { count: 12364, updated: nowSec - (8 * 86400) },
+                sigma: { windows: { count: 4308, updated: nowSec - (8 * 86400) },
+                         linux: { count: 182, updated: nowSec - 3600 } },
+                staleThresholdHours: 168,
+            };
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(mixedInfo) });
+                }
+                return Promise.reject(new Error('unexpected fetch: ' + url));
+            };
+            await checkForStaleRules();
+            var toast = document.querySelector('.socrates-toast');
+            window.__jsdom_result = { toastText: toast ? toast.textContent : null };
+        ''')
+        self.assertIn('Suricata, YARA, and Sigma rules are stale. Update via the Rules menu before analyzing.',
+                      result['toastText'])
+
+    def test_checkForStaleRules_no_toast_when_stale_is_null_not_true(self):
+        """A ruleset that was never downloaded ('stale': null) must not be
+        reported here - that's checkForMissingRules()'s job, not this
+        one's, and the two must stay mutually exclusive."""
+        from tests.jsdom_helper import js_statements
+        never_downloaded = {
+            'suricata': {'count': None, 'updated': None, 'stale': None},
+            'yara': {'count': None, 'updated': None, 'stale': None},
+            'sigma': {'windows': {'count': None, 'updated': None, 'stale': None},
+                      'linux': {'count': None, 'updated': None, 'stale': None}},
+        }
+        result = js_statements('''
+            localStorage.setItem('socrates_checkForStaleRules', 'true');
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(''' + json.dumps(never_downloaded) + ''') });
+                }
+                return Promise.reject(new Error('unexpected fetch: ' + url));
+            };
+            await checkForStaleRules();
+            window.__jsdom_result = { toastPresent: document.querySelector('.socrates-toast') !== null };
+        ''')
+        self.assertFalse(result['toastPresent'])
+
+    def test_checkForStaleRules_no_toast_when_opted_in_but_nothing_stale(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_checkForStaleRules', 'true');
+            var nowSec = Date.now() / 1000;
+            var freshInfo = {
+                suricata: { count: 51552, updated: nowSec - 3600 },
+                yara: { count: 12364, updated: nowSec - 3600 },
+                sigma: { windows: { count: 4308, updated: nowSec - 3600 },
+                         linux: { count: 182, updated: nowSec - 3600 } },
+                staleThresholdHours: 168,
+            };
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(freshInfo) });
+                }
+                return Promise.reject(new Error('unexpected fetch: ' + url));
+            };
+            await checkForStaleRules();
+            window.__jsdom_result = { toastPresent: document.querySelector('.socrates-toast') !== null };
+        ''')
+        self.assertFalse(result['toastPresent'], 'nothing is older than the threshold, so nothing must fire')
+
+    def test_checkForStaleRules_ignores_fetch_failure(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_checkForStaleRules', 'true');
+            window.fetch = function() { return Promise.reject(new Error('network down')); };
+            await checkForStaleRules();
+            window.__jsdom_result = { ok: true };
+        ''')
+        self.assertTrue(result['ok'])
+
+    def test_handleCheckForStaleRulesChange_persists_and_triggers_check(self):
+        from tests.jsdom_helper import js_statements
+        stale_info = {
+            'suricata': {'count': 51552, 'updated': 1000.0},
+            'yara': {'count': 12364, 'updated': 2000.0},
+            'sigma': {'windows': {'count': 4308, 'updated': 3000.0},
+                      'linux': {'count': 182, 'updated': 4000.0}},
+            'staleThresholdHours': 168,
+        }
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(''' + json.dumps(stale_info) + ''') });
+                }
+                return Promise.reject(new Error('unexpected fetch: ' + url));
+            };
+            handleCheckForStaleRulesChange({ checked: true });
+            await new Promise(r => setTimeout(r, 20));
+            window.__jsdom_result = {
+                persisted: localStorage.getItem('socrates_checkForStaleRules'),
+                toastPresent: document.querySelector('.socrates-toast') !== null
+            };
+        ''')
+        self.assertEqual(result['persisted'], 'true')
+        self.assertTrue(result['toastPresent'], 'checking the box must trigger an immediate check')
+
+    def test_showWelcomeUI_triggers_stale_rules_check(self):
+        """The whole point of checking on every welcome-screen view (not
+        just once at init()) is to catch the analyst before they start a
+        new analysis, including returning to Welcome mid-session - so the
+        fetch must happen every time showWelcomeUI() runs, not just once."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_checkForStaleRules', 'true');
+            var fetchedRulesInfo = false;
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    fetchedRulesInfo = true;
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.reject(new Error('unexpected fetch: ' + url));
+            };
+            showWelcomeUI();
+            await new Promise(r => setTimeout(r, 20));
+            window.__jsdom_result = { fetchedRulesInfo: fetchedRulesInfo };
+        ''')
+        self.assertTrue(result['fetchedRulesInfo'], 'showWelcomeUI() must trigger checkForStaleRules()')
+
     def test_ohmydebn_unknown_theme_toast_is_sticky_with_open_themes_action(self):
         """REGRESSION: this toast reports an unprompted, important change
         (sync got disabled because OhMyDebn named a theme so-crates doesn't
@@ -1723,16 +1974,13 @@ class TestThemeAndMenu(unittest.TestCase):
         """A nested element (inside the preview iframe's own document) can't
         select 'dark' by omitting data-theme - it would fall back to
         whatever :root/inherited defaults exist there instead of showing the
-        actual dark palette. A [data-theme="dark"] rule mirroring :root
-        makes 'dark' explicitly selectable like every other theme, so
-        previewTheme('dark') works regardless of what's really active on
-        the real page."""
-        self.assertIn('[data-theme="dark"] {', CSS_CONTENT,
-                      'CSS must define an explicit [data-theme="dark"] rule mirroring :root')
-        root_block = CSS_CONTENT.split(':root {')[1].split('}')[0]
-        dark_block = CSS_CONTENT.split('[data-theme="dark"] {')[1].split('}')[0]
-        self.assertEqual(root_block, dark_block,
-                         '[data-theme="dark"] must declare exactly the same variables as :root')
+        actual dark palette. [data-theme="dark"] shares :root's own selector
+        list (rather than a separate rule with duplicated values) so it's
+        structurally guaranteed to match :root exactly, making 'dark'
+        explicitly selectable like every other theme so previewTheme('dark')
+        works regardless of what's really active on the real page."""
+        self.assertIn(':root, [data-theme="dark"] {', CSS_CONTENT,
+                      'CSS must define an explicit [data-theme="dark"] selector sharing :root\'s own rule')
 
     def test_show_themes_modal_initializes_preview_to_current_theme(self):
         """Opening the modal must show the preview as the currently-active
@@ -1780,7 +2028,7 @@ class TestThemeAndMenu(unittest.TestCase):
         """renderThemesModalGrid() must generate a tile with preview/commit
         handlers for every theme in the THEMES registry."""
         from tests.jsdom_helper import js_statements
-        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'breadbin-blue', 'vaporwave', 'digital-frontier', 'retro-handheld', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'ohmydebn', 'catppuccin-latte', 'flexoki-light', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'luna-blue', 'amber', 'dos-blue']
+        themes = ['dark', 'light', 'sguil', 'hacker', 'cga', 'breadbin-blue', 'vaporwave', 'digital-frontier', 'retro-handheld', 'matte-black', 'tokyo-night', 'retro-82', 'ethereal', 'lumon', 'catppuccin', 'ohmydebn', 'catppuccin-latte', 'flexoki-light', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord', 'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'luna-blue', 'amber', 'dos-blue', 'dracula', 'solarized-dark', 'monokai']
         result = js_statements(f'''
             var html = renderThemesModalGrid();
             var missing = [];
@@ -2287,8 +2535,8 @@ class TestThemeAndMenu(unittest.TestCase):
                       'showThemesModal function must exist')
         self.assertIn('function closeThemesModal(', JS_CONTENT,
                       'closeThemesModal function must exist')
-        self.assertIn('function handleThemesBackdropClick(', JS_CONTENT,
-                      'handleThemesBackdropClick function must exist')
+        self.assertIn('function handleModalBackdropClick(', JS_CONTENT,
+                      'handleModalBackdropClick function must exist')
 
     def test_css_theme_variables_exist(self):
         self.assertIn('--bg-primary:', CSS_CONTENT,
@@ -2303,7 +2551,7 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('--help-icon-color:', CSS_CONTENT,
                       'CSS must define --help-icon-color custom property')
         # Verify the variable appears inside each theme block.
-        root_block = CSS_CONTENT.split(':root {')[1].split('}')[0]
+        root_block = CSS_CONTENT.split(':root, [data-theme="dark"] {')[1].split('}')[0]
         light_block = CSS_CONTENT.split('[data-theme="light"] {')[1].split('}')[0]
         sguil_block = CSS_CONTENT.split('[data-theme="sguil"] {')[1].split('}')[0]
         hacker_block = CSS_CONTENT.split('[data-theme="hacker"] {')[1].split('}')[0]
@@ -2546,6 +2794,47 @@ class TestThemeAndMenu(unittest.TestCase):
         self.assertIn('const THEMES = {', JS_CONTENT,
                       'JS must define a THEMES registry')
 
+    def test_capture_screenshots_themes_list_matches_registry(self):
+        """scripts/capture_screenshots.py keeps its own separate, hardcoded
+        THEMES list (not derived from the registry - see AGENTS.md's "To
+        add a new theme" step 5) in sync with static/socrates.js's THEMES
+        registry. A theme present in one but not the other means either a
+        real theme silently gets no screenshot on release, or the script
+        tries to screenshot a theme that no longer exists."""
+        with open(CAPTURE_SCREENSHOTS_PATH, 'r') as f:
+            script_source = f.read()
+        tree = ast.parse(script_source, filename=CAPTURE_SCREENSHOTS_PATH)
+        script_themes = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == 'THEMES' for target in node.targets
+            ):
+                script_themes = ast.literal_eval(node.value)
+                break
+        self.assertIsNotNone(script_themes,
+                             'scripts/capture_screenshots.py must define a top-level THEMES list')
+
+        # THEMES itself is a top-level `const`, which (unlike a top-level
+        # `function` declaration) never becomes a window property, so it
+        # isn't reachable from outside socrates.js's own script scope -
+        # same reason _rendered_themes_modal_section_labels() above reads
+        # THEMES indirectly through renderThemesModalGrid()'s real output
+        # rather than referencing the registry object directly.
+        from tests.jsdom_helper import js_statements
+        registry_keys = js_statements('''
+            var html = renderThemesModalGrid();
+            var re = /data-theme-option="([^"]+)"/g, m, keys = [];
+            while ((m = re.exec(html)) !== null) keys.push(m[1]);
+            window.__jsdom_result = keys;
+        ''')
+
+        self.assertEqual(
+            set(script_themes), set(registry_keys),
+            'scripts/capture_screenshots.py THEMES must exactly match static/socrates.js THEMES '
+            f'registry keys - only in script: {set(script_themes) - set(registry_keys)}, '
+            f'only in registry: {set(registry_keys) - set(script_themes)}'
+        )
+
     def test_hacker_theme_in_registry(self):
         self.assertIn('hacker:', JS_CONTENT,
                       'THEMES registry must include the hacker theme')
@@ -2655,6 +2944,68 @@ class TestThemeAndMenu(unittest.TestCase):
                       'optional --interactive-highlight override for themes (like C64) where '
                       '--accent alone is not visually distinct from --border-color')
 
+    def test_sample_cards_hint_their_source_domain_on_hover(self):
+        """Each sample card fetches from a real third-party domain the
+        moment it's clicked, with no visible indication of that beforehand
+        - a title tooltip surfaces it on hover without changing the card's
+        appearance. Derived from the same URL constant the click uses
+        (_sampleCardTitle()), not a second hardcoded copy of the domain
+        that could drift from it."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            var cards = document.querySelectorAll('.sample-card');
+            window.__jsdom_result = Array.from(cards).map(function(c) {
+                return { label: c.querySelector('.sample-label').textContent, title: c.title };
+            });
+        ''')
+        titles = {r['label']: r['title'] for r in result}
+        self.assertEqual(titles.get('Sample pcap file'), 'Downloads from www.malware-traffic-analysis.net')
+        self.assertEqual(titles.get('Sample log file'), 'Downloads from github.com')
+        self.assertEqual(titles.get('Sample binary file'), 'Downloads from secure.eicar.org')
+
+    def test_sampleCardTitle_handles_invalid_url(self):
+        from tests.jsdom_helper import js_expression
+        result = js_expression("_sampleCardTitle('not a url')")
+        self.assertEqual(result, '')
+
+    def test_interactive_highlight_consumers_match_documented_list(self):
+        """AGENTS.md's --interactive-highlight bullet enumerates the exact
+        selectors that read var(--interactive-highlight, var(--accent)) for
+        hover/focus/preview border feedback. Locks both directions: every
+        listed selector must still use the fallback (catches a rule losing
+        it), and the total count of fallback usages in the CSS must match
+        the list length exactly (catches a new consumer being added without
+        updating this list and the matching AGENTS.md prose - which is
+        exactly how the list went stale before, missing 3 of 11 consumers)."""
+        documented_consumers = (
+            '.app-header-filename-input:focus',
+            '.stat-card:hover',
+            '.stat-card.tab-active',
+            '.pagination-page-input:focus',
+            '.settings-number-input:focus',
+            '.notes-textarea:focus',
+            '.settings-text-input:focus',
+            '.drop-zone-active',
+            '.view-tab.active',
+            '.search-input:focus',
+            '.sample-card:hover',
+            '.theme-tile:hover',
+        )
+        fallback = 'var(--interactive-highlight, var(--accent))'
+        for selector in documented_consumers:
+            match = re.search(re.escape(selector) + r'\s*\{([^}]*)\}', CSS_CONTENT)
+            self.assertIsNotNone(match, f'{selector} rule not found in CSS')
+            self.assertIn(fallback, match.group(1),
+                          f'{selector} must use {fallback} for its border-color')
+
+        actual_count = CSS_CONTENT.count(fallback)
+        self.assertEqual(actual_count, len(documented_consumers),
+                         f'Found {actual_count} uses of {fallback} in CSS but '
+                         f'{len(documented_consumers)} are documented in AGENTS.md - a consumer was '
+                         'added or removed without updating this test and the matching AGENTS.md list')
+
     def test_welcome_color_vars_removed(self):
         """--welcome-red/orange/yellow must be gone from themes and all consumers."""
         self.assertNotIn('--welcome-red', CSS_CONTENT,
@@ -2710,11 +3061,13 @@ class TestThemeAndMenu(unittest.TestCase):
         near-black bg-secondary every other theme uses there, with both
         --text-bright and --text-muted overridden to the CGA magenta
         accent (rather than black/dark-teal, per explicit user preference)
-        for legibility against that bright background. The themes modal (a
-        visual child of the header's menu, but rendered on its own dark
-        bg-secondary panel) must reset those same two variables back to
-        their normal CGA values so its own text doesn't inherit the
-        header's override."""
+        for legibility against that bright background. This override is
+        scoped to .app-header/.footer only - #themesModal and every other
+        modal are top-level siblings in the DOM, not descendants of
+        .app-header, so they never inherit it and need no reset of their
+        own (a #themesModal-specific reset rule existed here previously but
+        was dead CSS - a no-op restating the theme's own root values - and
+        was removed)."""
         header_footer_match = re.search(
             r'\[data-theme="cga"\] \.app-header,\s*\[data-theme="cga"\] \.footer\s*\{([^}]*)\}',
             CSS_CONTENT,
@@ -2728,18 +3081,9 @@ class TestThemeAndMenu(unittest.TestCase):
                      'CGA header/footer text-bright must switch to the CGA magenta accent for legibility on the bright cyan bg')
         self.assertIn('--text-muted: #ff55ff', body,
                      'CGA header/footer text-muted must also switch to the CGA magenta accent, per explicit user preference')
-
-        themes_modal_match = re.search(
-            r'\[data-theme="cga"\] \#themesModal\s*\{([^}]*)\}',
-            CSS_CONTENT,
-        )
-        self.assertIsNotNone(themes_modal_match,
-                             'CGA must reset the themes modal text vars back from the header override')
-        themes_modal_body = themes_modal_match.group(1)
-        self.assertIn('--text-bright: #ffffff', themes_modal_body,
-                     "Themes modal must reset --text-bright to CGA's normal (light) value")
-        self.assertIn('--text-muted: #55aaaa', themes_modal_body,
-                     "Themes modal must reset --text-muted to CGA's normal (light) value")
+        self.assertNotIn('[data-theme="cga"] #themesModal', CSS_CONTENT,
+                         'The #themesModal text-var reset is dead CSS (themesModal is not a '
+                         '.app-header descendant) and must not be reintroduced')
 
     def test_breadbin_blue_logo_text_uses_light_blue(self):
         """The 'SO-CRATES' header logo link is normally --text-bright (white
@@ -2759,6 +3103,181 @@ class TestThemeAndMenu(unittest.TestCase):
                       'the default --text-bright (white) with !important since the inline '
                       'style="color: var(--text-bright)" on the element itself outranks a '
                       'plain class selector')
+
+    def test_digital_frontier_neon_glow_overrides_exist(self):
+        """Digital Frontier's panels/cards/text glow with the theme's own
+        accent color at rest, flaring brighter on hover/focus, rather than
+        only using --accent for borders/text the way every other theme
+        does."""
+        idle_match = re.search(
+            r'\[data-theme="digital-frontier"\] \.stat-card,\s*'
+            r'\[data-theme="digital-frontier"\] \.sample-card,\s*'
+            r'\[data-theme="digital-frontier"\] \.theme-tile,\s*'
+            r'\[data-theme="digital-frontier"\] \.modal-content\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(idle_match, 'Digital Frontier must glow its panels/cards at rest')
+        self.assertIn('box-shadow:', idle_match.group(1))
+
+        hover_match = re.search(
+            r'\[data-theme="digital-frontier"\] \.stat-card:hover,\s*'
+            r'\[data-theme="digital-frontier"\] \.stat-card\.tab-active,\s*'
+            r'\[data-theme="digital-frontier"\] \.sample-card:hover,\s*'
+            r'\[data-theme="digital-frontier"\] \.theme-tile:hover\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(hover_match, 'Digital Frontier must flare brighter on hover/active')
+
+        self.assertIn('[data-theme="digital-frontier"] .app-header {', CSS_CONTENT)
+        # .stat-number keeps the accent color but not a text-shadow glow -
+        # glowing text was tried and dropped as a legibility/readability
+        # regression on the one thing in a stat card users actually read.
+        stat_number_match = re.search(r'\[data-theme="digital-frontier"\] \.stat-number\s*\{([^}]*)\}', CSS_CONTENT)
+        self.assertIsNotNone(stat_number_match, 'Digital Frontier .stat-number must still set the accent color')
+        self.assertIn('color:', stat_number_match.group(1))
+        self.assertNotIn('text-shadow', stat_number_match.group(1),
+                         'stat numbers must not glow - only the card border/panels do')
+        self.assertIn('[data-theme="digital-frontier"] .app-logo-text {', CSS_CONTENT)
+
+        button_match = re.search(
+            r'\[data-theme="digital-frontier"\] button:hover,\s*'
+            r'\[data-theme="digital-frontier"\] input:focus,\s*'
+            r'\[data-theme="digital-frontier"\] textarea:focus\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(button_match, 'Digital Frontier must glow buttons/inputs on hover/focus')
+
+    def test_vaporwave_neon_glow_is_two_tone_not_a_copy_of_digital_frontier(self):
+        """Vaporwave gets the same glow treatment as Digital Frontier, but
+        two-tone (pink + cyan, its own --accent/--border-color pair)
+        rather than reusing Digital Frontier's single cyan - otherwise
+        it'd just look like a duller copy of that theme's effect."""
+        idle_match = re.search(
+            r'\[data-theme="vaporwave"\] \.stat-card,\s*'
+            r'\[data-theme="vaporwave"\] \.sample-card,\s*'
+            r'\[data-theme="vaporwave"\] \.theme-tile,\s*'
+            r'\[data-theme="vaporwave"\] \.modal-content\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(idle_match, 'Vaporwave must glow its panels/cards at rest')
+        idle_body = idle_match.group(1)
+        self.assertIn('255, 113, 206', idle_body, 'must include the pink accent (#FF71CE) in the glow')
+        self.assertIn('1, 205, 254', idle_body, 'must include the cyan border color (#01CDFE) in the glow')
+
+        hover_match = re.search(
+            r'\[data-theme="vaporwave"\] \.stat-card:hover,\s*'
+            r'\[data-theme="vaporwave"\] \.stat-card\.tab-active,\s*'
+            r'\[data-theme="vaporwave"\] \.sample-card:hover,\s*'
+            r'\[data-theme="vaporwave"\] \.theme-tile:hover\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(hover_match, 'Vaporwave must flare brighter on hover/active')
+
+        self.assertIn('[data-theme="vaporwave"] .app-header {', CSS_CONTENT)
+        # .stat-number keeps the accent color but not a text-shadow glow -
+        # see the matching Digital Frontier test for why.
+        stat_number_match = re.search(r'\[data-theme="vaporwave"\] \.stat-number\s*\{([^}]*)\}', CSS_CONTENT)
+        self.assertIsNotNone(stat_number_match, 'Vaporwave .stat-number must still set the accent color')
+        self.assertIn('color:', stat_number_match.group(1))
+        self.assertNotIn('text-shadow', stat_number_match.group(1),
+                         'stat numbers must not glow - only the card border/panels do')
+        self.assertIn('[data-theme="vaporwave"] .app-logo-text {', CSS_CONTENT)
+
+        button_match = re.search(
+            r'\[data-theme="vaporwave"\] button:hover,\s*'
+            r'\[data-theme="vaporwave"\] input:focus,\s*'
+            r'\[data-theme="vaporwave"\] textarea:focus\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(button_match, 'Vaporwave must glow buttons/inputs on hover/focus')
+
+    def test_amber_neon_glow_is_monochrome_not_two_tone(self):
+        """Amber gets the same glow treatment, but single-toned like
+        Digital Frontier - unlike Vaporwave's fictional multi-color
+        synthwave palette, Amber models a real monochrome phosphor CRT
+        (amber-only), so a second glow color would misrepresent what the
+        theme is modeling, not just look different."""
+        idle_match = re.search(
+            r'\[data-theme="amber"\] \.stat-card,\s*'
+            r'\[data-theme="amber"\] \.sample-card,\s*'
+            r'\[data-theme="amber"\] \.theme-tile,\s*'
+            r'\[data-theme="amber"\] \.modal-content\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(idle_match, 'Amber must glow its panels/cards at rest')
+        idle_body = idle_match.group(1)
+        self.assertIn('255, 176, 0', idle_body, 'must glow with the amber accent (#FFB000)')
+        self.assertEqual(idle_body.count('rgba('), 2,
+                         'Amber glow must be monochrome (2 layers of the same color), not two-tone')
+
+        hover_match = re.search(
+            r'\[data-theme="amber"\] \.stat-card:hover,\s*'
+            r'\[data-theme="amber"\] \.stat-card\.tab-active,\s*'
+            r'\[data-theme="amber"\] \.sample-card:hover,\s*'
+            r'\[data-theme="amber"\] \.theme-tile:hover\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(hover_match, 'Amber must flare brighter on hover/active')
+
+        self.assertIn('[data-theme="amber"] .app-header {', CSS_CONTENT)
+        # No .stat-number override at all here (unlike Digital
+        # Frontier/Vaporwave) - stat numbers must not glow (see those
+        # themes' tests for why), and Amber's base --text-primary is
+        # already the accent color #FFB000, so there's nothing left to
+        # override once the glow is dropped; an empty rule would be dead
+        # CSS.
+        self.assertNotIn('[data-theme="amber"] .stat-number', CSS_CONTENT)
+        self.assertIn('[data-theme="amber"] .app-logo-text {', CSS_CONTENT)
+
+        button_match = re.search(
+            r'\[data-theme="amber"\] button:hover,\s*'
+            r'\[data-theme="amber"\] input:focus,\s*'
+            r'\[data-theme="amber"\] textarea:focus\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(button_match, 'Amber must glow buttons/inputs on hover/focus')
+
+    def test_hacker_neon_glow_is_monochrome_and_layers_on_code_rain(self):
+        """Hacker gets the same glow treatment as Amber (single-toned
+        green, a real monochrome phosphor CRT look), layered on top of
+        the existing code-rain background canvas rather than replacing
+        it - the two are independent effects (an animated background
+        canvas vs. a foreground panel style)."""
+        idle_match = re.search(
+            r'\[data-theme="hacker"\] \.stat-card,\s*'
+            r'\[data-theme="hacker"\] \.sample-card,\s*'
+            r'\[data-theme="hacker"\] \.theme-tile,\s*'
+            r'\[data-theme="hacker"\] \.modal-content\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(idle_match, 'Hacker must glow its panels/cards at rest')
+        idle_body = idle_match.group(1)
+        self.assertIn('0, 255, 65', idle_body, 'must glow with the green accent (#00ff41)')
+        self.assertEqual(idle_body.count('rgba('), 2,
+                         'Hacker glow must be monochrome (2 layers of the same color), not two-tone')
+
+        hover_match = re.search(
+            r'\[data-theme="hacker"\] \.stat-card:hover,\s*'
+            r'\[data-theme="hacker"\] \.stat-card\.tab-active,\s*'
+            r'\[data-theme="hacker"\] \.sample-card:hover,\s*'
+            r'\[data-theme="hacker"\] \.theme-tile:hover\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(hover_match, 'Hacker must flare brighter on hover/active')
+
+        self.assertIn('[data-theme="hacker"] .app-header {', CSS_CONTENT)
+        # No .stat-number override, same reasoning as Amber: --text-primary
+        # is already the accent color, and stat numbers must not glow.
+        self.assertNotIn('[data-theme="hacker"] .stat-number', CSS_CONTENT)
+        self.assertIn('[data-theme="hacker"] .app-logo-text {', CSS_CONTENT)
+
+        button_match = re.search(
+            r'\[data-theme="hacker"\] button:hover,\s*'
+            r'\[data-theme="hacker"\] input:focus,\s*'
+            r'\[data-theme="hacker"\] textarea:focus\s*\{([^}]*)\}',
+            CSS_CONTENT,
+        )
+        self.assertIsNotNone(button_match, 'Hacker must glow buttons/inputs on hover/focus')
 
     def test_hacker_previous_analysis_delete_overrides(self):
         self.assertIn('[data-theme="hacker"] .previous-analysis-delete', CSS_CONTENT,
@@ -2822,13 +3341,13 @@ class TestThemeAndMenu(unittest.TestCase):
         result = js_statements('''
             var order = [];
             setTheme('dark');
-            for (var i = 0; i < 32; i++) {
+            for (var i = 0; i < 35; i++) {
                 toggleTheme();
                 order.push(document.documentElement.getAttribute('data-theme') || 'dark');
             }
             window.__jsdom_result = { order: order };
         ''')
-        self.assertEqual(result['order'], ['nord', 'ohmydebn', 'osaka-jade', 'retro-82', 'ristretto', 'tokyo-night', 'vantablack', 'catppuccin-latte', 'light', 'flexoki-light', 'rose-pine', 'white', 'amber', 'breadbin-blue', 'cga', 'digital-frontier', 'dos-blue', 'hacker', 'luna-blue', 'retro-handheld', 'sguil', 'vaporwave', 'catppuccin', 'ethereal', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'lumon', 'matte-black', 'miasma', 'dark'],
+        self.assertEqual(result['order'], ['monokai', 'nord', 'ohmydebn', 'osaka-jade', 'retro-82', 'ristretto', 'solarized-dark', 'tokyo-night', 'vantablack', 'catppuccin-latte', 'light', 'flexoki-light', 'rose-pine', 'white', 'amber', 'breadbin-blue', 'cga', 'digital-frontier', 'dos-blue', 'hacker', 'luna-blue', 'retro-handheld', 'sguil', 'vaporwave', 'catppuccin', 'dracula', 'ethereal', 'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'lumon', 'matte-black', 'miasma', 'dark'],
                          't hotkey cycle order must match menu order')
 
     def test_hacker_mode_easter_egg_exists(self):
@@ -3342,7 +3861,11 @@ class TestAggregationTables(unittest.TestCase):
         self.assertEqual(result['pop3Command'], 'RETR')
 
     def test_agg_tables_have_click_handlers(self):
-        self.assertIn("onclick=\"applyFilter('${sectionId}', '${escapeJsString(col)}', '${escapeJsString(filterVal)}')\"", JS_CONTENT)
+        """Aggregation rows open the pivot menu (via a delegated listener
+        reading data-agg-pivot), not a direct onclick="applyFilter(...)"
+        call anymore - see the click listener's own comment for why."""
+        self.assertIn('data-agg-pivot="${encodeURIComponent(JSON.stringify([sectionId, col, filterVal]))}"', JS_CONTENT)
+        self.assertNotIn('onclick="applyFilter(', JS_CONTENT)
 
     def test_agg_tables_no_bar_charts(self):
         self.assertNotIn('.agg-bar', CSS_CONTENT)
@@ -3383,9 +3906,6 @@ class TestAggregationTables(unittest.TestCase):
 class TestFiltering(unittest.TestCase):
     def test_has_current_filters_state(self):
         self.assertIn('currentFilters', JS_CONTENT)
-
-    def test_has_apply_filter_function(self):
-        self.assertIn('function applyFilter', JS_CONTENT)
 
     def test_has_clear_filter_function(self):
         self.assertIn('function clearFilter', JS_CONTENT)
@@ -3440,6 +3960,14 @@ class TestFiltering(unittest.TestCase):
                       'Check-for-updates checkbox must live in the About modal')
         self.assertIn('onchange="handleCheckForUpdatesChange(this)"', about_block,
                       'Checkbox must apply immediately on change, matching the sync-with-OhMyDebn toggle - no Save-button trap')
+        # Styled as a slider toggle (reusing .theme-switch, the same
+        # component the OhMyDebn sync toggle uses), not a plain checkbox -
+        # both apply instantly with no Save step, so they should look the
+        # part too, not just behave the same underneath.
+        self.assertRegex(
+            about_block,
+            r'<span class="theme-switch">\s*<input type="checkbox" id="checkForUpdates"[^>]*>\s*<span class="theme-switch-slider"></span>\s*</span>',
+            'checkForUpdates must be wrapped in the .theme-switch slider component')
 
     def test_check_for_updates_checkbox_not_in_settings_modal(self):
         settings_block = HTML_CONTENT.split('id="settingsModal"')[1].split('id="aboutModal"')[0]
@@ -3654,7 +4182,7 @@ class TestFiltering(unittest.TestCase):
                       'renderGearMenu() output must also have an About item')
 
     def test_about_modal_skeleton_has_github_link(self):
-        self.assertIn('id="aboutModal" onclick="handleAboutBackdropClick(event)"', HTML_CONTENT,
+        self.assertIn('id="aboutModal" onclick="handleModalBackdropClick(event, closeAboutModal)"', HTML_CONTENT,
                       'aboutModal must exist with a backdrop-click handler wired up')
         about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
         self.assertIn('href="https://github.com/dougburks/so-crates"', about_block,
@@ -3666,8 +4194,9 @@ class TestFiltering(unittest.TestCase):
 
     def test_about_modal_link_labels_and_order(self):
         about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
-        self.assertIn('>GitHub repo</a>', about_block,
-                      'GitHub link label must be "GitHub repo", matching "Documentation" as a parallel noun label')
+        self.assertIn('>SO-CRATES GitHub repo (give it a star!)</a>', about_block,
+                      'GitHub link label must name SO-CRATES and invite a star, matching "SO-CRATES Documentation" as a parallel "SO-CRATES X" label')
+        self.assertIn('>SO-CRATES Documentation</a>', about_block)
         self.assertNotIn('View on GitHub', about_block)
         docs_pos = about_block.index('href="https://so-crates.org"')
         github_pos = about_block.index('href="https://github.com/dougburks/so-crates"')
@@ -3759,17 +4288,157 @@ class TestFiltering(unittest.TestCase):
         self.assertTrue(result['openBefore'])
         self.assertFalse(result['openAfter'], 'Escape must close the About modal')
 
-    def test_handleAboutBackdropClick_closes_only_on_backdrop(self):
+    def test_handleModalBackdropClick_closes_only_on_backdrop_for_about(self):
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             var modal = document.getElementById('aboutModal');
             modal.classList.add('active');
-            handleAboutBackdropClick({ target: modal });
+            handleModalBackdropClick({ target: modal, currentTarget: modal }, closeAboutModal);
             var closedOnBackdrop = !modal.classList.contains('active');
 
             modal.classList.add('active');
             var inner = document.querySelector('#aboutModal .modal-content');
-            handleAboutBackdropClick({ target: inner });
+            handleModalBackdropClick({ target: inner, currentTarget: modal }, closeAboutModal);
+            var stayedOpenOnContent = modal.classList.contains('active');
+
+            window.__jsdom_result = { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: stayedOpenOnContent };
+        ''')
+        self.assertTrue(result['closedOnBackdrop'])
+        self.assertTrue(result['stayedOpenOnContent'])
+
+    def test_footer_center_teaser_skeleton_empty_in_html(self):
+        """#footerCenterTeaser is empty in the static HTML - its content
+        (the same Security Onion plug on both welcome and analysis - see
+        the two tests below) is set by showWelcomeUI()/showAnalysisUI()
+        rather than baked in statically."""
+        self.assertIn('id="footerCenterTeaser"', HTML_CONTENT)
+        teaser = HTML_CONTENT.split('id="footerCenterTeaser"')[1].split('</div>')[0]
+        self.assertNotIn('<', teaser, 'must start empty - no static content, no leftover markup')
+
+    def test_welcome_footer_teaser_links_to_security_onion_modal_not_shown_inline(self):
+        """REGRESSION-avoidance: the full feature comparison table used to
+        be shown unconditionally on the welcome screen, then moved to a
+        short welcome-screen teaser, then moved again to a centered footer
+        sentence - in every case the comparison table itself must live only
+        in the Security Onion modal, reached by clicking 'advanced
+        functionality' in the footer teaser. The welcome-screen render
+        itself must not reference it at all anymore."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showWelcomeUI();
+            window.__jsdom_result = { teaserHtml: document.getElementById('footerCenterTeaser').innerHTML };
+        ''')
+        self.assertIn('showSecurityOnionModal()', result['teaserHtml'])
+        self.assertIn('>Need more advanced functionality?</a>', result['teaserHtml'],
+                      'the entire phrase must be the link, not just part of it')
+        self.assertNotIn('SO-CRATES provides basic analysis', result['teaserHtml'],
+                          'the intro sentence was dropped entirely, not just shortened')
+        self.assertNotIn('feature-table', result['teaserHtml'],
+                          'the comparison table must not be embedded in the footer teaser')
+        self.assertNotIn('WELCOME_FEATURES_HTML', JS_CONTENT,
+                          'the old welcome-screen teaser constant must be fully removed, not left as dead code')
+
+    def test_analysis_footer_teaser_matches_welcome_screen(self):
+        """The footer's center teaser must be identical during analysis and
+        on the welcome screen - same text, same Security Onion modal link -
+        rather than swapping to a distinct 'Need help?' prompt during
+        analysis."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showAnalysisUI();
+            window.__jsdom_result = { teaserHtml: document.getElementById('footerCenterTeaser').innerHTML };
+        ''')
+        self.assertIn('showSecurityOnionModal()', result['teaserHtml'])
+        self.assertIn('>Need more advanced functionality?</a>', result['teaserHtml'],
+                      'the entire phrase must be the link, not just part of it')
+        self.assertNotIn('showHelpModal', result['teaserHtml'],
+                          'the analysis screen must not show a distinct Need help? prompt')
+
+    def test_welcome_header_tagline_centered_but_analysis_metadata_untouched(self):
+        """The header tagline ('Security Onion Containerized...') is
+        centered via its own .app-header-tagline class, scoped only to
+        showWelcomeUI()'s call site - the other #appHeaderMeta.innerHTML
+        assignment (analysis mode's file-metadata line, set elsewhere) must
+        not pick up that class, or its metadata would get pulled away from
+        the filename it's describing."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showWelcomeUI();
+            window.__jsdom_result = {
+                metaHtml: document.getElementById('appHeaderMeta').innerHTML
+            };
+        ''')
+        self.assertIn('class="app-header-tagline"', result['metaHtml'])
+        self.assertIn('Security Onion Containerized Rapid Analysis of Threats, Evil, and Sus', result['metaHtml'])
+        # The analysis-mode call site is a separate, unrelated template -
+        # confirm the tagline class string doesn't leak into it too.
+        analysis_meta_assignment = JS_CONTENT.split("document.getElementById('appHeaderMeta').innerHTML = `")[1].split('`;')[0]
+        self.assertNotIn('app-header-tagline', analysis_meta_assignment)
+
+    def test_header_tagline_links_to_about_modal_and_looks_clickable(self):
+        """The tagline must be an actual link (not just decorative text
+        with an onclick bolted on) that opens the About modal, and must be
+        visually styled to look clickable (accent color + hover underline)
+        rather than looking like the plain muted subtitle it used to be -
+        a hidden click target with no visual affordance is a bad pattern."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showWelcomeUI();
+            var tagline = document.querySelector('.app-header-tagline');
+            window.__jsdom_result = {
+                tagName: tagline.tagName,
+                aboutModalOpenBefore: document.getElementById('aboutModal').classList.contains('active'),
+            };
+            tagline.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result.aboutModalOpenAfter = document.getElementById('aboutModal').classList.contains('active');
+        ''')
+        self.assertEqual(result['tagName'], 'A', 'the tagline must be a real <a> element, not a span with a fake onclick')
+        self.assertFalse(result['aboutModalOpenBefore'])
+        self.assertTrue(result['aboutModalOpenAfter'], 'clicking the tagline must open the About modal')
+        self.assertIn(
+            "color: var(--accent)",
+            CSS_CONTENT.split('.app-header-tagline {')[1].split('}')[0],
+            'must use the accent color, not var(--text-muted), so it reads as a link')
+        self.assertIn('.app-header-tagline:hover', CSS_CONTENT)
+
+    def test_showSecurityOnionModal_opens_and_renders_comparison(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            showSecurityOnionModal();
+            window.__jsdom_result = {
+                modalOpen: document.getElementById('securityOnionModal').classList.contains('active'),
+                bodyHtml: document.getElementById('securityOnionModalBody').innerHTML,
+            };
+        ''')
+        self.assertTrue(result['modalOpen'], 'showSecurityOnionModal must open the modal')
+        self.assertIn('feature-table', result['bodyHtml'])
+        self.assertIn('Security Onion Pro', result['bodyHtml'])
+
+    def test_escape_closes_security_onion_modal(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            document.getElementById('securityOnionModal').classList.add('active');
+            var openBefore = document.getElementById('securityOnionModal').classList.contains('active');
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+            window.__jsdom_result = {
+                openBefore: openBefore,
+                openAfter: document.getElementById('securityOnionModal').classList.contains('active')
+            };
+        ''')
+        self.assertTrue(result['openBefore'])
+        self.assertFalse(result['openAfter'], 'Escape must close the Security Onion modal')
+
+    def test_handleModalBackdropClick_closes_only_on_backdrop_for_security_onion(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var modal = document.getElementById('securityOnionModal');
+            modal.classList.add('active');
+            handleModalBackdropClick({ target: modal, currentTarget: modal }, closeSecurityOnionModal);
+            var closedOnBackdrop = !modal.classList.contains('active');
+
+            modal.classList.add('active');
+            var inner = document.querySelector('#securityOnionModal .modal-content');
+            handleModalBackdropClick({ target: inner, currentTarget: modal }, closeSecurityOnionModal);
             var stayedOpenOnContent = modal.classList.contains('active');
 
             window.__jsdom_result = { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: stayedOpenOnContent };
@@ -3948,24 +4617,12 @@ class TestFilterOnclickQuoting(unittest.TestCase):
     use single-quoted string arguments with escaped internal single quotes instead.
     """
 
-    def test_no_json_stringify_in_apply_filter_onclick(self):
-        """applyFilter onclick must not use JSON.stringify (causes double-quote collision)"""
-        apply_filter_matches = re.findall(r'onclick="applyFilter\([^"]*\)"', JS_CONTENT)
-        for match in apply_filter_matches:
-            self.assertNotIn('JSON.stringify', match,
-                f'applyFilter onclick uses JSON.stringify which breaks in double-quoted onclick: {match[:80]}')
-
     def test_no_json_stringify_in_clear_filter_onclick(self):
         """clearFilter onclick must not use JSON.stringify (causes double-quote collision)"""
         clear_filter_matches = re.findall(r'onclick="clearFilter\([^"]*\)"', JS_CONTENT)
         for match in clear_filter_matches:
             self.assertNotIn('JSON.stringify', match,
                 f'clearFilter onclick uses JSON.stringify which breaks in double-quoted onclick: {match[:80]}')
-
-    def test_apply_filter_uses_single_quoted_args(self):
-        """applyFilter onclick should use single-quoted string arguments via escapeJsString"""
-        self.assertRegex(JS_CONTENT, r"onclick=\"applyFilter\('[^']+',\s*'\$\{escapeJsString\([^)]+\)\}',\s*'\$\{escapeJsString\([^)]+\)\}'\)\"",
-            'applyFilter onclick should use single-quoted escapeJsString expressions')
 
     def test_clear_filter_uses_single_quoted_args(self):
         """clearFilter onclick should use single-quoted string argument"""
@@ -4052,7 +4709,7 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
 
     def test_applyFilters_calls_updateFilterBarVisibility(self):
         """applyFilters must call updateFilterBarVisibility and rebuild stats after refreshing the view."""
-        func = JS_CONTENT.split('function applyFilters(')[1].split('function applyFilter(')[0]
+        func = JS_CONTENT.split('function applyFilters(')[1].split('async function clearFilter(')[0]
         self.assertIn('refreshCurrentView(sectionId, eventType)', func,
                       'applyFilters must call refreshCurrentView')
         self.assertIn('updateFilterBarVisibility()', func,
@@ -4065,7 +4722,7 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
         using the narrower binary-events fetch instead of ensureCappedBatch('all').
         Must NOT rebuild stats: binary mode hides #statsGrid entirely, so
         buildStats(await computeFilteredStats()) is dead work there."""
-        func = JS_CONTENT.split('function applyFilters(')[1].split('function applyFilter(')[0]
+        func = JS_CONTENT.split('function applyFilters(')[1].split('async function clearFilter(')[0]
         self.assertIn("if (sectionId === 'section-binary')", func,
                       'applyFilters must check for section-binary')
         self.assertIn('updateFilterBarVisibility()', func,
@@ -4202,22 +4859,41 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
         buildAggregationsSection, buildAggregationsSectionAll, getFilteredEvents."""
         self.assertNotIn("const filters = currentFilters[sectionId]", JS_CONTENT)
 
-    def test_buildStats_shows_count_over_total_when_filtered(self):
-        """buildStats must display 'count / total' when filters are active,
+    def test_buildStats_always_shows_count_only_not_count_over_total(self):
+        """REGRESSION: buildStats used to show 'filtered / total' (e.g.
+        '229,378 / 229,831') once a search/filter was active - roughly
+        double the length of a plain count, which no stat-card
+        width/font-size could reliably keep from overflowing its border on
+        a large sample. Always shows just the filtered count now,
         comma-formatted (toLocaleString) so a large analysis (e.g. a
-        1,000,000-row dataset) doesn't render as an unbroken digit string."""
+        1,000,000-row dataset) doesn't render as an unbroken digit string -
+        the filter bar's own chips already signal that a filter is active,
+        so the count alone isn't ambiguous."""
         func = JS_CONTENT.split('function buildStats(')[1].split('function buildSections(')[0]
-        self.assertIn('${s.count.toLocaleString()} / ${s.total.toLocaleString()}', func,
-                      'buildStats must show filtered count over total when hasFilters is true')
+        self.assertIn('const countDisplay = s.count.toLocaleString();', func,
+                      'buildStats must show the filtered count alone, comma-formatted')
+        self.assertNotIn('${s.total', func,
+                         'buildStats must not reference a total field it no longer displays')
 
-    def test_buildStats_shows_count_only_when_unfiltered(self):
-        """buildStats must display just the count when no filters are active,
-        comma-formatted (toLocaleString), matching the rest of the app's
-        existing number-formatting convention (flow Pkts/Bytes, file size,
-        the query-limit settings hint)."""
+    def test_buildStats_hides_cards_a_filter_reduces_to_zero(self):
+        """A type only ever reaches eventTypes because it had at least one
+        event in the unfiltered sample, so count === 0 here only happens
+        once a search/filter has narrowed it away entirely - dropped from
+        the grid rather than shown grayed-out/disabled, so a heavily
+        filtered large sample (20+ event types, most zeroed out) doesn't
+        turn into a wall of disabled cards. The old disabled-but-visible
+        styling (isClickable/stat-disabled) is removed along with it, since
+        every remaining card is guaranteed clickable once zero-count ones
+        are filtered out first."""
         func = JS_CONTENT.split('function buildStats(')[1].split('function buildSections(')[0]
-        self.assertIn('s.count.toLocaleString()', func,
-                      'buildStats must show only count when hasFilters is false')
+        self.assertIn('stats.filter(s => s.count > 0).map(s => {', func,
+                      'buildStats must filter out zero-count cards before rendering')
+        self.assertNotIn('stat-disabled', func,
+                         'the old disabled-card styling is dead now that zero-count cards are dropped, not disabled')
+        self.assertNotIn('isClickable', func,
+                         'isClickable is dead now that every rendered card is guaranteed count > 0')
+        self.assertNotIn('.stat-card.stat-disabled', CSS_CONTENT,
+                         'the now-unused disabled-card CSS should be removed, not left dangling')
 
     def test_buildBinaryAnalysisView_preserves_file_info_on_search(self):
         """REGRESSION: buildBinaryAnalysisView must use unfiltered baseAllEvents
@@ -4232,6 +4908,1571 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
                       'buildBinaryAnalysisView must fall back to baseAllEvents for file info')
         self.assertIn('buildFileInfoHtml(fileInfoSource)', func,
                       'buildBinaryAnalysisView must pass fileInfoSource to buildFileInfoHtml')
+
+
+class TestPivotFilterLogic(unittest.TestCase):
+    """Include/Exclude/Only (the row-cell pivot menu, see TestPivotMenu)
+    write a {include, exclude} object into currentFilters[column], a
+    second shape alongside the pre-existing plain-string shape
+    applyFilters()/applyFilter() (the aggregation view's own click-a-row
+    feature) still writes unchanged - see matchesCurrentFilters' and
+    ensureFilterSpec's own comments for why. These tests exercise that
+    logic directly (currentFilters state, matchesCurrentFilters,
+    buildFilterBarHtml) without needing a real table/click - TestPivotMenu
+    covers the click-to-menu-to-filter wiring end to end."""
+
+    def _setup_js(self, event_type='dns'):
+        # tabDataCache is one of this file's own `let`-declared top-level
+        # bindings (see jsdom_helper.py's own notes on this) - test code
+        # runs in a separate window.eval() from socrates.js itself, so
+        # directly assigning tabDataCache[...] here wouldn't reach the real
+        # module-level object at all (ReferenceError: tabDataCache is not
+        # defined). Left to populate itself via ensureCappedBatch()'s own
+        # real fetch + assignment instead, which runs inside socrates.js's
+        # own eval'd scope and so mutates the real thing.
+        return f'''
+            var section = document.createElement('div');
+            section.className = 'section';
+            section.id = 'section-{event_type}';
+            document.body.appendChild(section);
+            currentMd5 = 'a'.repeat(32);
+            currentFilters = {{}};
+            window.fetch = function(url) {{
+                if (url.indexOf('/api/sankey-data') >= 0) {{
+                    return Promise.resolve({{ json: () => Promise.resolve({{ nodes: [], links: [] }}) }});
+                }}
+                if (url.indexOf('/api/count') >= 0 || url.indexOf('/api/sigma-count') >= 0) {{
+                    return Promise.resolve({{ json: () => Promise.resolve({{ count: 0 }}) }});
+                }}
+                return Promise.resolve({{ json: () => Promise.resolve([]) }});
+            }};
+        '''
+
+    def test_include_creates_object_shape_with_value(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await includeFilterValue('section-dns', 'Source IP', '1.2.3.4');
+            window.__jsdom_result = { spec: currentFilters['Source IP'] };
+        ''')
+        self.assertEqual(result['spec'], {'include': ['1.2.3.4'], 'exclude': []})
+
+    def test_include_twice_is_additive_not_duplicated(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await includeFilterValue('section-dns', 'Source IP', '1.2.3.4');
+            await includeFilterValue('section-dns', 'Source IP', '5.6.7.8');
+            await includeFilterValue('section-dns', 'Source IP', '1.2.3.4');
+            window.__jsdom_result = { include: currentFilters['Source IP'].include };
+        ''')
+        self.assertEqual(sorted(result['include']), ['1.2.3.4', '5.6.7.8'])
+
+    def test_exclude_creates_object_shape_with_value(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await excludeFilterValue('section-dns', 'Query', 'noisy.example.com');
+            window.__jsdom_result = { spec: currentFilters['Query'] };
+        ''')
+        self.assertEqual(result['spec'], {'include': [], 'exclude': ['noisy.example.com']})
+
+    def test_include_then_exclude_same_value_moves_it_not_both(self):
+        """Asking to exclude a value that was included (or vice versa) is a
+        clearer signal than leaving it in both lists - the later action
+        wins outright."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await includeFilterValue('section-dns', 'Query', 'a.com');
+            await excludeFilterValue('section-dns', 'Query', 'a.com');
+            window.__jsdom_result = { spec: currentFilters['Query'] };
+        ''')
+        self.assertEqual(result['spec'], {'include': [], 'exclude': ['a.com']})
+
+    def test_only_clears_other_columns_and_other_values(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await includeFilterValue('section-dns', 'Source IP', '9.9.9.9');
+            await includeFilterValue('section-dns', 'Query', 'a.com');
+            await onlyFilterValue('section-dns', 'Query', 'b.com');
+            window.__jsdom_result = { filters: currentFilters };
+        ''')
+        self.assertEqual(result['filters'], {'Query': {'include': ['b.com'], 'exclude': []}})
+
+    def test_only_leaves_currentSearch_untouched(self):
+        """Seeds currentSearch via huntFilterValue() (a real function
+        mutating currentSearch from inside socrates.js's own scope) and
+        verifies via buildFilterBarHtml(), rather than a bare
+        `currentSearch` read/write from test code - currentSearch is one of
+        this file's `let`-declared top-level bindings (see
+        jsdom_helper.py's own notes on this), so a direct assignment from
+        test code would silently create an unrelated global instead of
+        touching the real thing, making this assertion true regardless of
+        whether onlyFilterValue actually left it alone."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            huntFilterValue('deliberate search term');
+            await onlyFilterValue('section-dns', 'Query', 'b.com');
+            window.__jsdom_result = { html: buildFilterBarHtml() };
+        ''')
+        self.assertIn('deliberate search term', result['html'])
+
+    def test_include_upgrades_a_preexisting_string_shape_entry(self):
+        """A column already filtered via the old aggregation-row-click
+        (plain string) must not be clobbered by a later Include - it
+        becomes the first item of the new include list instead."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            currentFilters['Protocol'] = 'TCP';
+            await includeFilterValue('section-dns', 'Protocol', 'UDP');
+            window.__jsdom_result = { spec: currentFilters['Protocol'] };
+        ''')
+        self.assertEqual(sorted(result['spec']['include']), ['TCP', 'UDP'])
+        self.assertEqual(result['spec']['exclude'], [])
+
+    def test_clearFilterValue_removes_one_value_keeps_others(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await includeFilterValue('section-dns', 'Source IP', '1.2.3.4');
+            await includeFilterValue('section-dns', 'Source IP', '5.6.7.8');
+            await clearFilterValue('Source IP', 'include', '1.2.3.4');
+            window.__jsdom_result = { spec: currentFilters['Source IP'] };
+        ''')
+        self.assertEqual(result['spec']['include'], ['5.6.7.8'])
+
+    def test_clearFilterValue_removing_last_value_deletes_column_entry(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            await includeFilterValue('section-dns', 'Source IP', '1.2.3.4');
+            await clearFilterValue('Source IP', 'include', '1.2.3.4');
+            window.__jsdom_result = { hasColumn: 'Source IP' in currentFilters };
+        ''')
+        self.assertFalse(result['hasColumn'])
+
+    def test_clearFilterValue_on_old_string_shape_clears_whole_column(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            currentFilters['Protocol'] = 'TCP';
+            await clearFilterValue('Protocol', 'include', 'TCP');
+            window.__jsdom_result = { hasColumn: 'Protocol' in currentFilters };
+        ''')
+        self.assertFalse(result['hasColumn'])
+
+    def test_matchesCurrentFilters_string_shape_unchanged(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentFilters = { 'Protocol': 'TCP' };
+            var extract = function(e, col) { return e[col]; };
+            window.__jsdom_result = {
+                matches: matchesCurrentFilters({ Protocol: 'TCP' }, extract),
+                nonMatch: matchesCurrentFilters({ Protocol: 'UDP' }, extract)
+            };
+        ''')
+        self.assertTrue(result['matches'])
+        self.assertFalse(result['nonMatch'])
+
+    def test_matchesCurrentFilters_include_is_an_or(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentFilters = { 'Source IP': { include: ['1.1.1.1', '2.2.2.2'], exclude: [] } };
+            var extract = function(e, col) { return e[col]; };
+            window.__jsdom_result = {
+                first: matchesCurrentFilters({ 'Source IP': '1.1.1.1' }, extract),
+                second: matchesCurrentFilters({ 'Source IP': '2.2.2.2' }, extract),
+                other: matchesCurrentFilters({ 'Source IP': '3.3.3.3' }, extract)
+            };
+        ''')
+        self.assertTrue(result['first'])
+        self.assertTrue(result['second'])
+        self.assertFalse(result['other'])
+
+    def test_matchesCurrentFilters_exclude_denies(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentFilters = { 'Source IP': { include: [], exclude: ['1.1.1.1'] } };
+            var extract = function(e, col) { return e[col]; };
+            window.__jsdom_result = {
+                excluded: matchesCurrentFilters({ 'Source IP': '1.1.1.1' }, extract),
+                other: matchesCurrentFilters({ 'Source IP': '9.9.9.9' }, extract)
+            };
+        ''')
+        self.assertFalse(result['excluded'])
+        self.assertTrue(result['other'])
+
+    def test_matchesCurrentFilters_different_columns_still_and(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentFilters = {
+                'Protocol': 'TCP',
+                'Source IP': { include: ['1.1.1.1'], exclude: [] }
+            };
+            var extract = function(e, col) { return e[col]; };
+            window.__jsdom_result = {
+                both: matchesCurrentFilters({ Protocol: 'TCP', 'Source IP': '1.1.1.1' }, extract),
+                onlyOne: matchesCurrentFilters({ Protocol: 'TCP', 'Source IP': '9.9.9.9' }, extract)
+            };
+        ''')
+        self.assertTrue(result['both'])
+        self.assertFalse(result['onlyOne'])
+
+    def test_filter_bar_renders_one_chip_per_include_value(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentFilters = { 'Source IP': { include: ['1.1.1.1', '2.2.2.2'], exclude: [] } };
+            currentSearch = [];
+            var html = buildFilterBarHtml();
+            window.__jsdom_result = {
+                firstChip: html.indexOf('Source IP: 1.1.1.1') >= 0,
+                secondChip: html.indexOf('Source IP: 2.2.2.2') >= 0
+            };
+        ''')
+        self.assertTrue(result['firstChip'])
+        self.assertTrue(result['secondChip'])
+
+    def test_filter_bar_exclude_chip_uses_exclude_class_and_symbol(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentFilters = { 'Source IP': { include: [], exclude: ['1.1.1.1'] } };
+            currentSearch = [];
+            var html = buildFilterBarHtml();
+            window.__jsdom_result = {
+                hasExcludeClass: html.indexOf('filter-chip-exclude') >= 0,
+                hasSymbol: html.indexOf('Source IP ≠ 1.1.1.1') >= 0
+            };
+        ''')
+        self.assertTrue(result['hasExcludeClass'])
+        self.assertTrue(result['hasSymbol'])
+
+    def test_filter_bar_chip_remove_calls_clearFilterValue(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentFilters = { 'Source IP': { include: ['1.1.1.1'], exclude: [] } };
+            currentSearch = [];
+            var html = buildFilterBarHtml();
+            window.__jsdom_result = {
+                hasCall: html.indexOf("clearFilterValue('Source IP', 'include', '1.1.1.1')") >= 0
+            };
+        ''')
+        self.assertTrue(result['hasCall'])
+
+    def test_filter_bar_old_string_shape_still_renders_via_clearFilter(self):
+        """REGRESSION: the pre-existing plain-string shape's own chip
+        rendering (one chip per column, clearFilter(column) to remove) must
+        keep working exactly as before, unaffected by the new object-shape
+        branch added alongside it."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentFilters = { 'Protocol': 'TCP' };
+            currentSearch = [];
+            var html = buildFilterBarHtml();
+            window.__jsdom_result = {
+                hasChip: html.indexOf('Protocol: TCP') >= 0,
+                hasCall: html.indexOf("clearFilter('Protocol')") >= 0
+            };
+        ''')
+        self.assertTrue(result['hasChip'])
+        self.assertTrue(result['hasCall'])
+
+
+class TestPivotDataAttrs(unittest.TestCase):
+    """pivotDataAttrsHtml() and its five call sites (rowPrefixCells via
+    buildRowForEvent, buildAllEventRow, buildSigmaAlertRow,
+    buildLogEventRow, buildBinaryYaraRow) - each must emit a data-pivot
+    attribute whose [col, value] pairs are index-aligned with the row's
+    actual rendered <td> DOM order, or handleRowCellClick's purely
+    DOM-index-based lookup silently pairs a click with the wrong column."""
+
+    def test_excludes_time_column(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var extract = function(e, col) { return e[col]; };
+            var html = pivotDataAttrsHtml({ Time: '2024-01-01', Protocol: 'TCP' }, 'dns', ['Time', 'Protocol'], extract);
+            var table = document.createElement('table');
+            table.innerHTML = '<tr' + html + '></tr>';
+            var pivot = JSON.parse(decodeURIComponent(table.querySelector('tr').dataset.pivot));
+            window.__jsdom_result = { pivot: pivot };
+        ''')
+        self.assertIsNone(result['pivot'][0], 'Time must always be excluded from pivot targets')
+        self.assertEqual(result['pivot'][1], ['Protocol', 'TCP'])
+
+    def test_excludes_empty_values(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var extract = function(e, col) { return e[col] || ''; };
+            var html = pivotDataAttrsHtml({ Protocol: '' }, 'dns', ['Protocol'], extract);
+            var table = document.createElement('table');
+            table.innerHTML = '<tr' + html + '></tr>';
+            window.__jsdom_result = { pivot: JSON.parse(decodeURIComponent(table.querySelector('tr').dataset.pivot)) };
+        ''')
+        self.assertIsNone(result['pivot'][0])
+
+    def test_sets_event_type_attribute(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var extract = function(e, col) { return e[col]; };
+            var html = pivotDataAttrsHtml({ Protocol: 'TCP' }, 'dns', ['Protocol'], extract);
+            var table = document.createElement('table');
+            table.innerHTML = '<tr' + html + '></tr>';
+            window.__jsdom_result = { eventType: table.querySelector('tr').dataset.eventType };
+        ''')
+        self.assertEqual(result['eventType'], 'dns')
+
+    def test_buildRowForEvent_row_has_pivot_data_aligned_with_cells(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var e = { id: 1, event_type: 'dns', timestamp: '2024-01-01T00:00:00', proto: 'UDP',
+                      src_ip: '1.1.1.1', src_port: 111, dest_ip: '2.2.2.2', dest_port: 53,
+                      dns: { rrname: 'example.com', rrtype: 'A' } };
+            var html = buildRowForEvent(e);
+            var table = document.createElement('table');
+            table.innerHTML = html;
+            var tr = table.querySelector('tr');
+            var pivot = JSON.parse(decodeURIComponent(tr.dataset.pivot));
+            var cells = Array.from(tr.children);
+            window.__jsdom_result = {
+                eventType: tr.dataset.eventType,
+                pivotLength: pivot.length,
+                cellCount: cells.length,
+                queryPair: pivot[cells.length - 2 >= 0 ? 6 : -1],
+            };
+        ''')
+        self.assertEqual(result['eventType'], 'dns')
+        # rowPrefixCells emits 6 <td>s (Time..Dest Port) then buildRowForEvent's
+        # dns case appends 2 more (Query, Type) before the note-icon <td> -
+        # index 6 is 'Query', the first cell past the shared prefix.
+        self.assertEqual(result['queryPair'], ['Query', 'example.com'])
+
+    def test_buildAllEventRow_has_pivot_data(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var e = { id: 1, event_type: 'dns', timestamp: '2024-01-01T00:00:00', proto: 'UDP',
+                      src_ip: '1.1.1.1', src_port: 111, dest_ip: '2.2.2.2', dest_port: 53,
+                      dns: { rrname: 'example.com', rrtype: 'A' } };
+            var html = buildAllEventRow(e);
+            var table = document.createElement('table');
+            table.innerHTML = html;
+            var tr = table.querySelector('tr');
+            window.__jsdom_result = {
+                eventType: tr.dataset.eventType,
+                pivot: JSON.parse(decodeURIComponent(tr.dataset.pivot))
+            };
+        ''')
+        self.assertEqual(result['eventType'], 'all')
+        self.assertIn(['Type', 'DNS'], result['pivot'])
+
+    def test_buildSigmaAlertRow_has_pivot_data(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var alert = { id: 1, severity: 'high', rule_title: 'Suspicious Thing', logsource: 'windows', mitre_techniques: '[]', original_log: '{}' };
+            var html = buildSigmaAlertRow(alert);
+            var table = document.createElement('table');
+            table.innerHTML = html;
+            var tr = table.querySelector('tr');
+            window.__jsdom_result = {
+                eventType: tr.dataset.eventType,
+                pivot: JSON.parse(decodeURIComponent(tr.dataset.pivot))
+            };
+        ''')
+        self.assertEqual(result['eventType'], 'sigmaalert')
+        self.assertIn(['Rule', 'Suspicious Thing'], result['pivot'])
+        self.assertIn(['Log Source', 'windows'], result['pivot'])
+
+    def test_buildLogEventRow_has_pivot_data(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var evt = { id: 1, timestamp: '2024-01-01T00:00:00', app_proto: 'json',
+                        json_data: JSON.stringify({ Channel: 'Security', EventID: 4624 }) };
+            var columns = [{ type: 'base', field: 'Channel', label: 'Channel' }];
+            var html = buildLogEventRow(evt, columns);
+            var table = document.createElement('table');
+            table.innerHTML = html;
+            var tr = table.querySelector('tr');
+            window.__jsdom_result = {
+                eventType: tr.dataset.eventType,
+                pivot: JSON.parse(decodeURIComponent(tr.dataset.pivot))
+            };
+        ''')
+        self.assertEqual(result['eventType'], 'log')
+        self.assertIn(['Channel', 'Security'], result['pivot'])
+
+    def test_buildBinaryYaraRow_has_pivot_data(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var e = { id: 1, filealerts: { rule_name: 'EVIL_RULE', tags: [], author: 'someone' } };
+            var html = buildBinaryYaraRow(e);
+            var table = document.createElement('table');
+            table.innerHTML = html;
+            var tr = table.querySelector('tr');
+            window.__jsdom_result = {
+                eventType: tr.dataset.eventType,
+                pivot: JSON.parse(decodeURIComponent(tr.dataset.pivot))
+            };
+        ''')
+        self.assertEqual(result['eventType'], 'binary')
+        self.assertIn(['Rule Name', 'EVIL_RULE'], result['pivot'])
+        self.assertIn(['Author', 'someone'], result['pivot'])
+
+
+class TestPivotMenu(unittest.TestCase):
+    """handleRowCellClick + showPivotMenu/closePivotMenu - the click-time
+    half of the pivot menu feature (TestPivotDataAttrs covers the
+    render-time data; TestPivotFilterLogic covers what Include/Exclude/Only
+    actually do to currentFilters once clicked)."""
+
+    def _row_html(self):
+        return '''
+            var e = { id: 1, event_type: 'dns', timestamp: '2024-01-01T00:00:00', proto: 'UDP',
+                      src_ip: '1.1.1.1', src_port: 111, dest_ip: '2.2.2.2', dest_port: 53,
+                      dns: { rrname: 'example.com', rrtype: 'A' } };
+            var table = document.createElement('table');
+            table.innerHTML = buildRowForEvent(e);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-pivot]');
+        '''
+
+    def test_clicking_a_pivotable_cell_opens_menu_not_expand(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2]; // Source IP, per rowPrefixCells' own column order
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                menuOpen: !!document.querySelector('.pivot-menu'),
+                rowExpanded: tr.classList.contains('expanded-row')
+            };
+        ''')
+        self.assertTrue(result['menuOpen'])
+        self.assertFalse(result['rowExpanded'], 'opening the pivot menu must not also expand the row')
+
+    def test_menu_shows_column_and_value(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = { label: document.querySelector('.pivot-menu-label').textContent };
+        ''')
+        self.assertIn('Source IP', result['label'])
+        self.assertIn('1.1.1.1', result['label'])
+
+    def test_menu_items_have_explanatory_tooltips(self):
+        """Include/Exclude/Only/Hunt each get a title tooltip spelling out
+        what clicking them will do, with the real column/value substituted
+        in - deliberately worded as "search" for all four (not "filter"
+        for Include/Exclude/Only), since the currentFilters-vs-currentSearch
+        split is an implementation detail a tooltip reader has no reason
+        to care about."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                include: document.querySelector('[data-pivot-action="include"]').title,
+                exclude: document.querySelector('[data-pivot-action="exclude"]').title,
+                only: document.querySelector('[data-pivot-action="only"]').title,
+                hunt: document.querySelector('[data-pivot-action="hunt"]').title
+            };
+        ''')
+        self.assertEqual(result['include'], 'Include Source IP: 1.1.1.1 in current search')
+        self.assertEqual(result['exclude'], 'Exclude Source IP: 1.1.1.1 from current search results')
+        self.assertEqual(result['only'], 'Start a new search for Source IP: 1.1.1.1')
+        self.assertEqual(result['hunt'], 'Start a new search for 1.1.1.1 across all fields')
+
+    def test_tooltips_escape_malicious_values(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var e = { id: 1, event_type: 'dns', timestamp: '2024-01-01T00:00:00', proto: 'UDP',
+                      src_ip: '1.1.1.1', src_port: 111, dest_ip: '2.2.2.2', dest_port: 53,
+                      dns: { rrname: '"><img src=x onerror=alert(1)>', rrtype: 'A' } };
+            var table = document.createElement('table');
+            table.innerHTML = buildRowForEvent(e);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-pivot]');
+            var queryCell = tr.children[6];
+            queryCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                imgCount: document.querySelectorAll('.pivot-menu img').length,
+                includeTitle: document.querySelector('[data-pivot-action="include"]').title
+            };
+        ''')
+        self.assertEqual(result['imgCount'], 0, 'a malicious field value must not create a live element via the tooltip')
+        self.assertIn('"><img src=x onerror=alert(1)>', result['includeTitle'],
+                      'the title attribute must still decode back to the real value (browsers unescape attribute values)')
+
+    def test_menu_items_have_an_icon(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            var items = document.querySelectorAll('.pivot-menu-item');
+            window.__jsdom_result = {
+                count: items.length,
+                allHaveSvg: Array.from(items).every(function(el) { return !!el.querySelector('svg'); })
+            };
+        ''')
+        # Expand Row, Include, Exclude, Only, Hunt, Copy to Clipboard, 6
+        # built-in lookup sites (Google, VirusTotal, Shodan, AbuseIPDB,
+        # urlscan.io, CyberChef), and "Add Custom Lookup...".
+        self.assertEqual(result['count'], 13)
+        self.assertTrue(result['allHaveSvg'], 'every menu item must show an icon')
+        self.assertTrue(result['allHaveSvg'], 'every menu item must show the magnifying glass icon')
+
+    def test_menu_icons_are_color_coded_not_the_button_text(self):
+        """Include's icon is green, Exclude's red, Only's blue - reusing the
+        existing tag-red/green/blue trio (already defined in every theme
+        for YARA tag badges) rather than introducing new theme variables.
+        The color must land on the icon only (its own wrapping span), not
+        the button - the button keeps the plain, uncolored menu-item text
+        color every other item (including Hunt) also uses."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            function iconClass(action) {
+                return document.querySelector('[data-pivot-action="' + action + '"] .pivot-menu-icon').className;
+            }
+            window.__jsdom_result = {
+                includeButtonClass: document.querySelector('[data-pivot-action="include"]').className,
+                includeIconClass: iconClass('include'),
+                excludeIconClass: iconClass('exclude'),
+                onlyIconClass: iconClass('only'),
+                huntIconClass: iconClass('hunt')
+            };
+        ''')
+        self.assertNotIn('pivot-menu-icon', result['includeButtonClass'], 'the color class must be on the icon span, not the button itself')
+        self.assertIn('pivot-menu-icon-include', result['includeIconClass'])
+        self.assertIn('pivot-menu-icon-exclude', result['excludeIconClass'])
+        self.assertIn('pivot-menu-icon-only', result['onlyIconClass'])
+        self.assertEqual(result['huntIconClass'], 'pivot-menu-icon', "Hunt's icon must not be color-coded")
+        self.assertIn('.pivot-menu-icon-include { color: var(--tag-green-text)', CSS_CONTENT)
+        self.assertIn('.pivot-menu-icon-exclude { color: var(--tag-red-text)', CSS_CONTENT)
+        self.assertIn('.pivot-menu-icon-only { color: var(--tag-blue-text)', CSS_CONTENT)
+
+    def test_menu_shows_expand_row_entry_when_row_has_a_detail_row(self):
+        """The pivot menu's own way back to the expand/collapse behavior
+        that clicking a pivotable cell bypasses (see handleRowCellClick) -
+        added so a first-time user who clicks any cell hoping to see the
+        full row, and gets this menu instead, has an obvious way out."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            var btn = document.querySelector('[data-pivot-action="expand-row"]');
+            window.__jsdom_result = { found: !!btn, label: btn ? btn.textContent : null, title: btn ? btn.title : null };
+        ''')
+        self.assertTrue(result['found'])
+        self.assertEqual(result['label'], 'Expand Row')
+        self.assertEqual(result['title'], 'View full details for this row')
+
+    def test_menu_says_collapse_row_when_already_expanded(self):
+        """The entry always toggles (see toggleDetailRow); the label/tooltip
+        must describe whatever it's about to do next, not stay hardcoded to
+        "Expand Row" once the row is already open - a stale label there
+        would tell the user the opposite of what the click will actually
+        do."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var detailRow = tr.nextElementSibling;
+            tr.classList.add('expanded-row');
+            detailRow.classList.add('visible');
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            var btn = document.querySelector('[data-pivot-action="expand-row"]');
+            window.__jsdom_result = { label: btn.textContent, title: btn.title };
+        ''')
+        self.assertEqual(result['label'], 'Collapse Row')
+        self.assertEqual(result['title'], 'Hide full details for this row')
+
+    def test_clicking_collapse_row_collapses_an_already_expanded_row(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var detailRow = tr.nextElementSibling;
+            tr.classList.add('expanded-row');
+            detailRow.classList.add('visible');
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            document.querySelector('[data-pivot-action="expand-row"]').click();
+            window.__jsdom_result = {
+                rowExpanded: tr.classList.contains('expanded-row'),
+                detailVisible: detailRow.classList.contains('visible')
+            };
+        ''')
+        self.assertFalse(result['rowExpanded'])
+        self.assertFalse(result['detailVisible'])
+
+    def test_clicking_expand_row_expands_the_row_and_closes_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            document.querySelector('[data-pivot-action="expand-row"]').click();
+            var detailRow = tr.nextElementSibling;
+            window.__jsdom_result = {
+                menuGone: !document.querySelector('.pivot-menu'),
+                rowExpanded: tr.classList.contains('expanded-row'),
+                detailVisible: detailRow.classList.contains('visible')
+            };
+        ''')
+        self.assertTrue(result['menuGone'])
+        self.assertTrue(result['rowExpanded'])
+        self.assertTrue(result['detailVisible'])
+
+    def test_clicking_expand_row_twice_collapses_it_again(self):
+        """toggleDetailRow (shared with toggleRow's own fallthrough
+        behavior) toggles rather than always expanding, so reopening the
+        menu and clicking Expand Row a second time collapses the row."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            document.querySelector('[data-pivot-action="expand-row"]').click();
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            document.querySelector('[data-pivot-action="expand-row"]').click();
+            var detailRow = tr.nextElementSibling;
+            window.__jsdom_result = {
+                rowExpanded: tr.classList.contains('expanded-row'),
+                detailVisible: detailRow.classList.contains('visible')
+            };
+        ''')
+        self.assertFalse(result['rowExpanded'])
+        self.assertFalse(result['detailVisible'])
+
+    def test_menu_has_no_expand_row_entry_without_a_detail_row_sibling(self):
+        """Defends canExpandRow's guard directly - a tr with no detail-row
+        sibling (shouldn't happen for any real renderer, but showPivotMenu
+        must not assume one exists) gets no Expand Row entry."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var tr = document.createElement('tr');
+            document.body.appendChild(tr);
+            var fakeEvent = { clientX: 10, clientY: 10, stopPropagation: function(){} };
+            showPivotMenu(fakeEvent, 'section-dns', 'Source IP', '1.1.1.1', false, tr);
+            window.__jsdom_result = { hasExpandRow: !!document.querySelector('[data-pivot-action="expand-row"]') };
+        ''')
+        self.assertFalse(result['hasExpandRow'])
+
+    def test_hunt_button_calls_huntFilterValue_and_closes_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            currentMd5 = '';  // refreshAnalysisData() no-ops without a loaded analysis
+            var calls = [];
+            var realHunt = huntFilterValue;
+            huntFilterValue = function(value) {
+                calls.push(value);
+                return realHunt(value);
+            };
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            document.querySelector('[data-pivot-action="hunt"]').click();
+            window.__jsdom_result = {
+                calls: calls,
+                menuGone: !document.querySelector('.pivot-menu')
+            };
+        ''')
+        self.assertEqual(result['calls'], ['1.1.1.1'])
+        self.assertTrue(result['menuGone'])
+
+    def test_huntFilterValue_sets_term_as_the_only_search(self):
+        """Verifies via buildFilterBarHtml() (a real function that reads
+        currentSearch from inside socrates.js's own scope) rather than a
+        bare `currentSearch` reference from test code - currentSearch is
+        one of this file's `let`-declared top-level bindings (see
+        jsdom_helper.py's own notes on this), so test code assigning to it
+        directly would silently create an unrelated global instead of
+        touching the real thing."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentMd5 = '';
+            huntFilterValue('needle in a haystack');
+            window.__jsdom_result = { html: buildFilterBarHtml() };
+        ''')
+        self.assertIn('needle in a haystack', result['html'])
+
+    def test_huntFilterValue_replaces_any_existing_search_terms(self):
+        """Hunt is a reset-and-replace, not an add - the search-box
+        equivalent of Only, not Include. A prior search (whether typed or
+        from an earlier Hunt) must be gone once a new one is hunted, not
+        layered alongside it."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentMd5 = '';
+            huntFilterValue('first term');
+            huntFilterValue('second term');
+            window.__jsdom_result = { html: buildFilterBarHtml() };
+        ''')
+        self.assertNotIn('first term', result['html'])
+        self.assertIn('second term', result['html'])
+
+    def test_huntFilterValue_same_term_twice_is_idempotent(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentMd5 = '';
+            huntFilterValue('already there');
+            huntFilterValue('already there');
+            window.__jsdom_result = {
+                count: (buildFilterBarHtml().match(/already there/g) || []).length
+            };
+        ''')
+        self.assertEqual(result['count'], 1)
+
+    def test_huntFilterValue_ignores_empty_value(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentMd5 = '';
+            huntFilterValue('   ');
+            window.__jsdom_result = { html: buildFilterBarHtml() };
+        ''')
+        self.assertNotIn('filter-chip', result['html'])
+
+    def test_huntFilterValue_clears_leftover_field_filters(self):
+        """REGRESSION: a prior Include/Exclude/Only left currentFilters
+        active - without also clearing it here, Hunt's new search term
+        was still narrowed by those leftover field filters underneath it,
+        which reads as "Hunt is combining with my previous criteria" even
+        though currentSearch itself was correctly replaced."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentMd5 = '';
+            currentFilters = { 'Protocol': { include: ['TCP'], exclude: [] } };
+            huntFilterValue('needle');
+            window.__jsdom_result = { filters: currentFilters, html: buildFilterBarHtml() };
+        ''')
+        self.assertEqual(result['filters'], {})
+        self.assertNotIn('Protocol', result['html'])
+        self.assertIn('needle', result['html'])
+
+    def test_clicking_time_cell_falls_through_to_expand(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var timeCell = tr.children[0];
+            timeCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                menuOpen: !!document.querySelector('.pivot-menu'),
+                rowExpanded: tr.classList.contains('expanded-row')
+            };
+        ''')
+        self.assertFalse(result['menuOpen'], 'Time is excluded from pivot targets')
+        self.assertTrue(result['rowExpanded'], 'a non-pivotable cell click must still expand the row as before')
+
+    def test_include_button_calls_includeFilterValue_and_closes_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            currentMd5 = 'a'.repeat(32);
+            window.fetch = function(url) {
+                return Promise.resolve({ json: () => Promise.resolve(url.indexOf('count') >= 0 ? { count: 0 } : []) });
+            };
+            var calls = [];
+            var realInclude = includeFilterValue;
+            includeFilterValue = function(sectionId, col, value) {
+                calls.push([sectionId, col, value]);
+                return realInclude(sectionId, col, value);
+            };
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            document.querySelector('[data-pivot-action="include"]').click();
+            await new Promise(function(r) { setTimeout(r, 10); });
+            window.__jsdom_result = {
+                calls: calls,
+                menuGone: !document.querySelector('.pivot-menu')
+            };
+        ''')
+        self.assertEqual(result['calls'], [['section-dns', 'Source IP', '1.1.1.1']])
+        self.assertTrue(result['menuGone'])
+
+    def test_opening_click_does_not_immediately_self_close(self):
+        """REGRESSION: the document-level outside-click listener that
+        closes the menu would otherwise also see the very click that OPENED
+        it (the menu isn't a DOM ancestor of the cell that was clicked),
+        and remove it in the same tick before it's ever visible - guarded
+        by handleRowCellClick's own stopPropagation()."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = { menuOpen: !!document.querySelector('.pivot-menu') };
+        ''')
+        self.assertTrue(result['menuOpen'], 'the menu must still be open immediately after the opening click')
+
+    def test_outside_click_closes_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            var outside = document.createElement('div');
+            document.body.appendChild(outside);
+            outside.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = { menuOpen: !!document.querySelector('.pivot-menu') };
+        ''')
+        self.assertFalse(result['menuOpen'])
+
+    def test_escape_closes_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+            window.__jsdom_result = { menuOpen: !!document.querySelector('.pivot-menu') };
+        ''')
+        self.assertFalse(result['menuOpen'])
+
+    def test_only_one_menu_open_at_a_time(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var srcIpCell = tr.children[2];
+            var dstIpCell = tr.children[4];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            dstIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = { menuCount: document.querySelectorAll('.pivot-menu').length };
+        ''')
+        self.assertEqual(result['menuCount'], 1)
+
+    def test_menu_label_truncates_long_values(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var e = { id: 1, event_type: 'dns', timestamp: '2024-01-01T00:00:00', proto: 'UDP',
+                      src_ip: '1.1.1.1', src_port: 111, dest_ip: '2.2.2.2', dest_port: 53,
+                      dns: { rrname: 'a'.repeat(200), rrtype: 'A' } };
+            var table = document.createElement('table');
+            table.innerHTML = buildRowForEvent(e);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-pivot]');
+            var queryCell = tr.children[6];
+            queryCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            var label = document.querySelector('.pivot-menu-label');
+            window.__jsdom_result = {
+                displayedLength: label.textContent.length,
+                fullValueInTitle: label.getAttribute('title').indexOf('a'.repeat(200)) >= 0
+            };
+        ''')
+        self.assertLess(result['displayedLength'], 100, 'a very long value must be truncated in the visible label')
+        self.assertTrue(result['fullValueInTitle'], 'the full untruncated value must still be reachable via the title tooltip')
+
+    def test_menu_value_with_html_is_escaped(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var e = { id: 1, event_type: 'dns', timestamp: '2024-01-01T00:00:00', proto: 'UDP',
+                      src_ip: '1.1.1.1', src_port: 111, dest_ip: '2.2.2.2', dest_port: 53,
+                      dns: { rrname: '<img src=x onerror=alert(1)>', rrtype: 'A' } };
+            var table = document.createElement('table');
+            table.innerHTML = buildRowForEvent(e);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-pivot]');
+            var queryCell = tr.children[6];
+            queryCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = { imgCount: document.querySelectorAll('.pivot-menu img').length };
+        ''')
+        self.assertEqual(result['imgCount'], 0, 'a malicious field value must not create a live element in the menu label')
+
+    def test_copy_to_clipboard_button_copies_value_and_closes_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var written = null;
+            navigator.clipboard = { writeText: function(text) { written = text; return Promise.resolve(); } };
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            document.querySelector('[data-pivot-action="copy"]').click();
+            await new Promise(function(r) { setTimeout(r, 10); });
+            window.__jsdom_result = {
+                written: written,
+                menuGone: !document.querySelector('.pivot-menu')
+            };
+        ''')
+        self.assertEqual(result['written'], '1.1.1.1')
+        self.assertTrue(result['menuGone'])
+
+    def test_lookup_site_buttons_open_correct_url(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var opened = [];
+            window.open = function(url, target, features) { opened.push({ url: url, target: target, features: features }); };
+            var srcIpCell = tr.children[2];
+
+            function clickSite(label) {
+                srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                var btn = Array.from(document.querySelectorAll('.pivot-menu-item')).find(function(b) {
+                    return b.textContent.trim() === label;
+                });
+                btn.click();
+            }
+
+            clickSite('Google');
+            clickSite('VirusTotal');
+            clickSite('Shodan');
+            clickSite('AbuseIPDB');
+            clickSite('urlscan.io');
+            window.__jsdom_result = { opened: opened };
+        ''')
+        opened = {o['url']: o for o in result['opened']}
+        self.assertTrue(any('google.com/search?q=1.1.1.1' in u for u in opened))
+        self.assertTrue(any('virustotal.com/gui/search/1.1.1.1' in u for u in opened))
+        self.assertTrue(any('shodan.io/search?query=1.1.1.1' in u for u in opened))
+        self.assertTrue(any('abuseipdb.com/check/1.1.1.1' in u for u in opened))
+        self.assertTrue(any('urlscan.io/search/#1.1.1.1' in u for u in opened))
+        for o in result['opened']:
+            self.assertEqual(o['target'], '_blank')
+            self.assertEqual(o['features'], 'noopener,noreferrer')
+
+    def test_lookup_site_button_closes_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            window.open = function() {};
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            var googleBtn = Array.from(document.querySelectorAll('.pivot-menu-item')).find(function(b) {
+                return b.textContent.trim() === 'Google';
+            });
+            googleBtn.click();
+            window.__jsdom_result = { menuGone: !document.querySelector('.pivot-menu') };
+        ''')
+        self.assertTrue(result['menuGone'])
+
+    def test_cyberchef_button_opens_base64_encoded_input(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            var opened = null;
+            window.open = function(url) { opened = url; };
+            var srcIpCell = tr.children[2];
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            var btn = Array.from(document.querySelectorAll('.pivot-menu-item')).find(function(b) {
+                return b.textContent.trim() === 'CyberChef';
+            });
+            btn.click();
+            window.__jsdom_result = { url: opened };
+        ''')
+        self.assertTrue(result['url'].startswith('https://gchq.github.io/CyberChef/#input='))
+        # 1.1.1.1 base64-encoded and then URL-encoded (the trailing '='
+        # padding becomes %3D).
+        self.assertIn('MS4xLjEuMQ%3D%3D', result['url'])
+
+    def test_cyberChefUrl_is_utf8_safe(self):
+        """REGRESSION: btoa() alone throws on non-Latin1 characters (e.g. a
+        log field containing non-ASCII text) - cyberChefUrl() must not
+        propagate that as an uncaught error."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var threw = false;
+            var url = null;
+            try { url = cyberChefUrl('héllo wörld 日本語'); } catch (e) { threw = true; }
+            window.__jsdom_result = { threw: threw, url: url };
+        ''')
+        self.assertFalse(result['threw'])
+        self.assertTrue(result['url'].startswith('https://gchq.github.io/CyberChef/#input='))
+
+
+class TestDetailPanelPivotMenu(unittest.TestCase):
+    """The pivot menu also opens from values inside an expanded row's
+    detail panel (htmlRowText's ~120 call sites), not just the collapsed
+    row's own cells - full Include/Exclude/Only/Hunt when the field's
+    label matches a real filterable column for that event type, a trimmed
+    Hunt/Copy/lookup-sites-only menu otherwise (most detail-panel labels
+    don't match a table column name exactly, e.g. DNS's 'Query Name' vs
+    the column 'Query' - see detailColumnsForEventType's own comment)."""
+
+    def _row_and_detail_html(self):
+        return '''
+            var e = { id: 1, event_type: 'dns', timestamp: '2024-01-01T00:00:00', proto: 'UDP',
+                      src_ip: '1.1.1.1', src_port: 111, dest_ip: '2.2.2.2', dest_port: 53,
+                      dns: { rrname: 'example.com', rrtype: 'A' } };
+            var table = document.createElement('table');
+            table.innerHTML = buildRowForEvent(e);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-pivot]');
+            var detailRow = tr.nextElementSibling;
+
+            function findDetailValueByLabel(label) {
+                var spans = Array.from(detailRow.querySelectorAll('[data-detail-pivot]'));
+                return spans.find(function(s) {
+                    var pair = JSON.parse(decodeURIComponent(s.dataset.detailPivot));
+                    return pair[0] === label;
+                });
+            }
+        '''
+
+    def test_htmlRowText_wraps_nonempty_value_in_clickable_span(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var html = htmlRowText('Source IP', '1.2.3.4');
+            var div = document.createElement('div');
+            div.innerHTML = html;
+            var span = div.querySelector('.detail-value-pivot');
+            window.__jsdom_result = {
+                found: !!span,
+                text: span ? span.textContent : null,
+                pair: span ? JSON.parse(decodeURIComponent(span.dataset.detailPivot)) : null
+            };
+        ''')
+        self.assertTrue(result['found'])
+        self.assertEqual(result['text'], '1.2.3.4')
+        self.assertEqual(result['pair'], ['Source IP', '1.2.3.4'])
+
+    def test_htmlRowText_leaves_empty_value_unwrapped(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var html = htmlRowText('Empty Field', '');
+            var div = document.createElement('div');
+            div.innerHTML = html;
+            window.__jsdom_result = { found: !!div.querySelector('.detail-value-pivot') };
+        ''')
+        self.assertFalse(result['found'])
+
+    def test_htmlRowText_still_escapes_malicious_values(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var html = htmlRowText('Field', '<img src=x onerror=alert(1)>');
+            var div = document.createElement('div');
+            div.innerHTML = html;
+            window.__jsdom_result = { imgCount: div.querySelectorAll('img').length };
+        ''')
+        self.assertEqual(result['imgCount'], 0)
+
+    def test_clicking_value_matching_a_real_column_opens_full_menu(self):
+        """Source IP is both a detail-panel label (from _formatEventCommon)
+        and a real getColumnsForType('dns') column - full menu."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_and_detail_html() + '''
+            var span = findDetailValueByLabel('Source IP');
+            span.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                hasInclude: !!document.querySelector('[data-pivot-action="include"]'),
+                hasHunt: !!document.querySelector('[data-pivot-action="hunt"]'),
+                label: document.querySelector('.pivot-menu-label').textContent
+            };
+        ''')
+        self.assertTrue(result['hasInclude'], 'a field matching a real column must get the full menu')
+        self.assertTrue(result['hasHunt'])
+        self.assertIn('Source IP', result['label'])
+        self.assertIn('1.1.1.1', result['label'])
+
+    def test_clicking_value_with_no_matching_column_opens_trimmed_menu(self):
+        """'Query Name' (renderDnsDetails's own label) has no matching
+        getColumnsForType('dns') column (the real column is 'Query') -
+        trimmed menu: no Include/Exclude/Only, but Hunt/Copy/lookup sites
+        still work since they need no column at all."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_and_detail_html() + '''
+            var span = findDetailValueByLabel('Query Name');
+            span.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                hasInclude: !!document.querySelector('[data-pivot-action="include"]'),
+                hasExclude: !!document.querySelector('[data-pivot-action="exclude"]'),
+                hasOnly: !!document.querySelector('[data-pivot-action="only"]'),
+                hasHunt: !!document.querySelector('[data-pivot-action="hunt"]'),
+                hasCopy: !!document.querySelector('[data-pivot-action="copy"]'),
+                lookupCount: document.querySelectorAll('[data-pivot-lookup-index]').length
+            };
+        ''')
+        self.assertFalse(result['hasInclude'])
+        self.assertFalse(result['hasExclude'])
+        self.assertFalse(result['hasOnly'])
+        self.assertTrue(result['hasHunt'], 'Hunt needs no column and must still be offered')
+        self.assertTrue(result['hasCopy'])
+        self.assertEqual(result['lookupCount'], 6)
+
+    def test_trimmed_menu_hunt_button_still_works(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_and_detail_html() + '''
+            currentMd5 = '';
+            var span = findDetailValueByLabel('Query Name');
+            span.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            document.querySelector('[data-pivot-action="hunt"]').click();
+            window.__jsdom_result = { html: buildFilterBarHtml() };
+        ''')
+        self.assertIn('example.com', result['html'])
+
+    def test_clicking_detail_value_does_not_collapse_the_row(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_and_detail_html() + '''
+            detailRow.classList.add('visible');
+            tr.classList.add('expanded-row');
+            var span = findDetailValueByLabel('Source IP');
+            span.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                stillExpanded: tr.classList.contains('expanded-row'),
+                stillVisible: detailRow.classList.contains('visible')
+            };
+        ''')
+        self.assertTrue(result['stillExpanded'])
+        self.assertTrue(result['stillVisible'])
+
+    def test_no_matching_collapsed_row_falls_back_to_trimmed(self):
+        """A detail-pivot span with no resolvable ancestor row/eventType
+        (e.g. malformed DOM) must degrade to the trimmed menu rather than
+        throwing - Hunt/Copy/lookups don't need a column at all."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var div = document.createElement('div');
+            div.innerHTML = htmlRowText('Orphan Field', 'some value');
+            document.body.appendChild(div);
+            var span = div.querySelector('.detail-value-pivot');
+            var threw = false;
+            try {
+                span.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            } catch (e) { threw = true; }
+            window.__jsdom_result = {
+                threw: threw,
+                hasInclude: !!document.querySelector('[data-pivot-action="include"]'),
+                hasHunt: !!document.querySelector('[data-pivot-action="hunt"]')
+            };
+        ''')
+        self.assertFalse(result['threw'])
+        self.assertFalse(result['hasInclude'])
+        self.assertTrue(result['hasHunt'])
+
+    def test_detail_panel_menu_has_no_expand_row_entry(self):
+        """A detail-panel value's row is already expanded - that's the only
+        way its panel could be visible to click in - so Expand Row would be
+        meaningless here. The detail-value click listener never passes a tr
+        to showPivotMenu at all (see its own comment), so this falls out
+        automatically rather than needing its own check."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_and_detail_html() + '''
+            var span = findDetailValueByLabel('Source IP');
+            span.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = { hasExpandRow: !!document.querySelector('[data-pivot-action="expand-row"]') };
+        ''')
+        self.assertFalse(result['hasExpandRow'])
+
+
+class TestAggregationPivotMenu(unittest.TestCase):
+    """Aggregation-table rows (the "Advanced" per-column top-10 view) open
+    the pivot menu instead of instantly applying a filter on click, same
+    as the row-cell and detail-panel values - see _renderAggTablesHtml's
+    own comment for why this replaced the old onclick="applyFilter(...)".
+    Always the full menu (never trimmed): a column here is always real,
+    since these tables are literally grouped by it."""
+
+    def _agg_table_html(self, counts=None):
+        counts = counts if counts is not None else {'Protocol': {'TCP': 5, 'UDP': 2}}
+        return f'''
+            var html = _renderAggTablesHtml({json.dumps(counts)}, {json.dumps(list(counts.keys()))}, 'section-dns');
+            var div = document.createElement('div');
+            div.innerHTML = html;
+            document.body.appendChild(div);
+        '''
+
+    def test_agg_row_click_opens_full_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._agg_table_html() + '''
+            var row = Array.from(div.querySelectorAll('.agg-row')).find(function(r) {
+                return r.textContent.indexOf('TCP') >= 0;
+            });
+            row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                hasInclude: !!document.querySelector('[data-pivot-action="include"]'),
+                hasExclude: !!document.querySelector('[data-pivot-action="exclude"]'),
+                hasOnly: !!document.querySelector('[data-pivot-action="only"]'),
+                hasHunt: !!document.querySelector('[data-pivot-action="hunt"]'),
+                label: document.querySelector('.pivot-menu-label').textContent
+            };
+        ''')
+        self.assertTrue(result['hasInclude'], 'aggregation rows always have a real column, so the menu is never trimmed')
+        self.assertTrue(result['hasExclude'])
+        self.assertTrue(result['hasOnly'])
+        self.assertTrue(result['hasHunt'])
+        self.assertIn('Protocol', result['label'])
+        self.assertIn('TCP', result['label'])
+
+    def test_agg_row_menu_has_no_expand_row_entry(self):
+        """Aggregation rows have no detail-row sibling at all, and the
+        agg-row click listener never passes a tr to showPivotMenu (see its
+        own comment), so this falls out automatically."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._agg_table_html() + '''
+            var row = Array.from(div.querySelectorAll('.agg-row')).find(function(r) {
+                return r.textContent.indexOf('TCP') >= 0;
+            });
+            row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = { hasExpandRow: !!document.querySelector('[data-pivot-action="expand-row"]') };
+        ''')
+        self.assertFalse(result['hasExpandRow'])
+
+    def test_agg_row_only_button_applies_the_filter(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._agg_table_html() + '''
+            var section = document.createElement('div');
+            section.className = 'section';
+            section.id = 'section-dns';
+            document.body.appendChild(section);
+            currentMd5 = 'a'.repeat(32);
+            currentFilters = {};
+            window.fetch = function(url) {
+                return Promise.resolve({ json: () => Promise.resolve(url.indexOf('count') >= 0 ? { count: 0 } : []) });
+            };
+            var row = Array.from(div.querySelectorAll('.agg-row')).find(function(r) {
+                return r.textContent.indexOf('TCP') >= 0;
+            });
+            row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            document.querySelector('[data-pivot-action="only"]').click();
+            await new Promise(function(r) { setTimeout(r, 10); });
+            window.__jsdom_result = { filters: currentFilters };
+        ''')
+        self.assertEqual(result['filters'], {'Protocol': {'include': ['TCP'], 'exclude': []}})
+
+    def test_agg_row_empty_bucket_is_not_clickable(self):
+        """REGRESSION: the '(empty)' value bucket (a field that was blank
+        for some events) has nothing meaningful to pivot on - matches
+        pivotDataAttrsHtml/htmlRowText's own exclusion of empty values from
+        their menus."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._agg_table_html({'Protocol': {'(empty)': 3, 'TCP': 5}}) + '''
+            var emptyRow = Array.from(div.querySelectorAll('.agg-row')).find(function(r) {
+                return r.textContent.indexOf('(empty)') >= 0;
+            });
+            emptyRow.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                hasPivotAttr: emptyRow.hasAttribute('data-agg-pivot'),
+                menuOpen: !!document.querySelector('.pivot-menu')
+            };
+        ''')
+        self.assertFalse(result['hasPivotAttr'])
+        self.assertFalse(result['menuOpen'], 'clicking the (empty) bucket must not open a pivot menu')
+
+
+class TestCustomLookupSites(unittest.TestCase):
+    """User-added pivot-menu lookup sites (Settings modal's "Custom Lookup
+    Sites" section, reached directly or via the pivot menu's own "Add
+    Custom Lookup..." entry) - storage/validation, pivot-menu integration,
+    and the Settings UI's add/edit/delete flow."""
+
+    # --- storage / validation ---
+
+    def test_getCustomLookupSites_defaults_to_empty(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('window.__jsdom_result = { sites: getCustomLookupSites() };')
+        self.assertEqual(result['sites'], [])
+
+    def test_saveCustomLookupSite_adds_new_entry(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var result = saveCustomLookupSite(null, 'My SIEM', 'https://siem.example.com/search?q={value}');
+            window.__jsdom_result = { result: result, sites: getCustomLookupSites() };
+        ''')
+        self.assertTrue(result['result']['valid'])
+        self.assertEqual(result['sites'], [{'label': 'My SIEM', 'urlTemplate': 'https://siem.example.com/search?q={value}'}])
+
+    def test_saveCustomLookupSite_rejects_empty_name(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { result: saveCustomLookupSite(null, '   ', 'https://example.com/{value}') };
+        ''')
+        self.assertFalse(result['result']['valid'])
+        self.assertIn('Name', result['result']['error'])
+
+    def test_saveCustomLookupSite_rejects_empty_url(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { result: saveCustomLookupSite(null, 'Test', '   ') };
+        ''')
+        self.assertFalse(result['result']['valid'])
+        self.assertIn('URL', result['result']['error'])
+
+    def test_saveCustomLookupSite_rejects_javascript_url(self):
+        """REGRESSION/security: a custom site's URL is user-typed input,
+        persisted to localStorage and later handed to window.open() without
+        further review - a javascript: URL would execute arbitrary script
+        in this page's own context once opened."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = {
+                result: saveCustomLookupSite(null, 'Evil', 'javascript:alert(document.cookie)'),
+                sites: getCustomLookupSites()
+            };
+        ''')
+        self.assertFalse(result['result']['valid'])
+        self.assertEqual(result['sites'], [])
+
+    def test_saveCustomLookupSite_rejects_data_url(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { result: saveCustomLookupSite(null, 'Evil', 'data:text/html,<script>alert(1)</script>') };
+        ''')
+        self.assertFalse(result['result']['valid'])
+
+    def test_saveCustomLookupSite_rejects_name_too_long(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { result: saveCustomLookupSite(null, 'x'.repeat(41), 'https://example.com/{value}') };
+        ''')
+        self.assertFalse(result['result']['valid'])
+
+    def test_saveCustomLookupSite_rejects_url_too_long(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { result: saveCustomLookupSite(null, 'Test', 'https://example.com/' + 'x'.repeat(500)) };
+        ''')
+        self.assertFalse(result['result']['valid'])
+
+    def test_saveCustomLookupSite_enforces_max_count(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            for (var i = 0; i < 20; i++) {
+                saveCustomLookupSite(null, 'Site ' + i, 'https://example.com/' + i + '/{value}');
+            }
+            var overflow = saveCustomLookupSite(null, 'One Too Many', 'https://example.com/{value}');
+            window.__jsdom_result = { overflow: overflow, count: getCustomLookupSites().length };
+        ''')
+        self.assertFalse(result['overflow']['valid'])
+        self.assertEqual(result['count'], 20)
+
+    def test_saveCustomLookupSite_edit_replaces_in_place(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            saveCustomLookupSite(null, 'First', 'https://a.example.com/{value}');
+            saveCustomLookupSite(null, 'Second', 'https://b.example.com/{value}');
+            saveCustomLookupSite(0, 'First Renamed', 'https://a2.example.com/{value}');
+            window.__jsdom_result = { sites: getCustomLookupSites() };
+        ''')
+        self.assertEqual(result['sites'], [
+            {'label': 'First Renamed', 'urlTemplate': 'https://a2.example.com/{value}'},
+            {'label': 'Second', 'urlTemplate': 'https://b.example.com/{value}'},
+        ])
+
+    def test_deleteCustomLookupSite_removes_correct_entry(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            saveCustomLookupSite(null, 'First', 'https://a.example.com/{value}');
+            saveCustomLookupSite(null, 'Second', 'https://b.example.com/{value}');
+            deleteCustomLookupSite(0);
+            window.__jsdom_result = { sites: getCustomLookupSites() };
+        ''')
+        self.assertEqual(result['sites'], [{'label': 'Second', 'urlTemplate': 'https://b.example.com/{value}'}])
+
+    def test_getCustomLookupSites_survives_corrupt_storage(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_customLookupSites', 'not valid json{');
+            window.__jsdom_result = { sites: getCustomLookupSites() };
+        ''')
+        self.assertEqual(result['sites'], [])
+
+    def test_getCustomLookupSites_filters_malformed_entries(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_customLookupSites', JSON.stringify([
+                { label: 'Good', urlTemplate: 'https://example.com/{value}' },
+                { label: 'Missing URL' },
+                'not even an object'
+            ]));
+            window.__jsdom_result = { sites: getCustomLookupSites() };
+        ''')
+        self.assertEqual(result['sites'], [{'label': 'Good', 'urlTemplate': 'https://example.com/{value}'}])
+
+    def test_applyCustomLookupUrlTemplate_substitutes_value(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = {
+                url: applyCustomLookupUrlTemplate('https://example.com/search?q={value}&x=1', 'a b/c')
+            };
+        ''')
+        self.assertEqual(result['url'], 'https://example.com/search?q=a%20b%2Fc&x=1')
+
+    def test_applyCustomLookupUrlTemplate_no_placeholder_returns_unchanged(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { url: applyCustomLookupUrlTemplate('https://example.com/fixed', 'irrelevant') };
+        ''')
+        self.assertEqual(result['url'], 'https://example.com/fixed')
+
+    # --- pivot menu integration ---
+
+    def _row_html(self):
+        return '''
+            var e = { id: 1, event_type: 'dns', timestamp: '2024-01-01T00:00:00', proto: 'UDP',
+                      src_ip: '1.1.1.1', src_port: 111, dest_ip: '2.2.2.2', dest_port: 53,
+                      dns: { rrname: 'example.com', rrtype: 'A' } };
+            var table = document.createElement('table');
+            table.innerHTML = buildRowForEvent(e);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-pivot]');
+            var srcIpCell = tr.children[2];
+        '''
+
+    def test_custom_site_appears_in_pivot_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            saveCustomLookupSite(null, 'My SIEM', 'https://siem.example.com/search?q={value}');
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                found: Array.from(document.querySelectorAll('.pivot-menu-item')).some(function(b) {
+                    return b.textContent.trim() === 'My SIEM';
+                })
+            };
+        ''')
+        self.assertTrue(result['found'])
+
+    def test_clicking_custom_site_opens_substituted_url(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            saveCustomLookupSite(null, 'My SIEM', 'https://siem.example.com/search?q={value}');
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            var opened = null;
+            window.open = function(url) { opened = url; };
+            var btn = Array.from(document.querySelectorAll('.pivot-menu-item')).find(function(b) {
+                return b.textContent.trim() === 'My SIEM';
+            });
+            btn.click();
+            window.__jsdom_result = { opened: opened };
+        ''')
+        self.assertEqual(result['opened'], 'https://siem.example.com/search?q=1.1.1.1')
+
+    def test_add_custom_lookup_entry_exists(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = { found: !!document.querySelector('[data-pivot-action="add-custom-lookup"]') };
+        ''')
+        self.assertTrue(result['found'])
+
+    def test_add_custom_lookup_entry_opens_settings_focused(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._row_html() + '''
+            srcIpCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            document.querySelector('[data-pivot-action="add-custom-lookup"]').click();
+            window.__jsdom_result = {
+                settingsOpen: document.getElementById('settingsModal').classList.contains('active'),
+                focused: document.activeElement === document.getElementById('customLookupNameInput'),
+                menuClosed: !document.querySelector('.pivot-menu')
+            };
+        ''')
+        self.assertTrue(result['settingsOpen'])
+        self.assertTrue(result['focused'])
+        self.assertTrue(result['menuClosed'])
+
+    def test_custom_sites_appear_even_in_trimmed_menu(self):
+        """Hunt/Copy/lookup sites (built-in and custom) need no filterable
+        column, so they're offered in the trimmed detail-panel menu too -
+        only Include/Exclude/Only are omitted there."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            saveCustomLookupSite(null, 'My SIEM', 'https://siem.example.com/search?q={value}');
+            var e = { id: 1, event_type: 'dns', timestamp: '2024-01-01T00:00:00', proto: 'UDP',
+                      src_ip: '1.1.1.1', src_port: 111, dest_ip: '2.2.2.2', dest_port: 53,
+                      dns: { rrname: 'example.com', rrtype: 'A' } };
+            var table = document.createElement('table');
+            table.innerHTML = buildRowForEvent(e);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-pivot]');
+            var detailRow = tr.nextElementSibling;
+            var spans = Array.from(detailRow.querySelectorAll('[data-detail-pivot]'));
+            var span = spans.find(function(s) {
+                return JSON.parse(decodeURIComponent(s.dataset.detailPivot))[0] === 'Query Name';
+            });
+            span.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                hasInclude: !!document.querySelector('[data-pivot-action="include"]'),
+                hasCustomSite: Array.from(document.querySelectorAll('.pivot-menu-item')).some(function(b) {
+                    return b.textContent.trim() === 'My SIEM';
+                })
+            };
+        ''')
+        self.assertFalse(result['hasInclude'])
+        self.assertTrue(result['hasCustomSite'])
+
+    # --- Settings modal UI ---
+
+    def test_settings_shows_empty_state_with_no_custom_sites(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(r => setTimeout(r, 50));
+            showSettingsModal();
+            window.__jsdom_result = { html: document.getElementById('customLookupSitesList').innerHTML };
+        ''')
+        self.assertIn('No custom lookup sites yet.', result['html'])
+
+    def test_settings_lists_existing_custom_sites(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(r => setTimeout(r, 50));
+            saveCustomLookupSite(null, 'My SIEM', 'https://siem.example.com/search?q={value}');
+            showSettingsModal();
+            window.__jsdom_result = { html: document.getElementById('customLookupSitesList').innerHTML };
+        ''')
+        self.assertIn('My SIEM', result['html'])
+        self.assertIn('https://siem.example.com/search?q={value}', result['html'])
+
+    def test_settings_add_button_adds_via_form_inputs(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(r => setTimeout(r, 50));
+            showSettingsModal();
+            document.getElementById('customLookupNameInput').value = 'My SIEM';
+            document.getElementById('customLookupUrlInput').value = 'https://siem.example.com/search?q={value}';
+            document.getElementById('customLookupSaveBtn').click();
+            window.__jsdom_result = {
+                sites: getCustomLookupSites(),
+                formCleared: document.getElementById('customLookupNameInput').value === ''
+            };
+        ''')
+        self.assertEqual(result['sites'], [{'label': 'My SIEM', 'urlTemplate': 'https://siem.example.com/search?q={value}'}])
+        self.assertTrue(result['formCleared'], 'the form must reset after a successful add')
+
+    def test_settings_edit_button_prefills_form_and_saves_in_place(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(r => setTimeout(r, 50));
+            saveCustomLookupSite(null, 'My SIEM', 'https://siem.example.com/search?q={value}');
+            showSettingsModal();
+            document.querySelector('#customLookupSitesList button[onclick^="startEditCustomLookupSite"]').click();
+            var prefilledName = document.getElementById('customLookupNameInput').value;
+            var saveBtnText = document.getElementById('customLookupSaveBtn').textContent;
+            document.getElementById('customLookupUrlInput').value = 'https://siem2.example.com/search?q={value}';
+            document.getElementById('customLookupSaveBtn').click();
+            window.__jsdom_result = {
+                prefilledName: prefilledName,
+                saveBtnText: saveBtnText,
+                sites: getCustomLookupSites()
+            };
+        ''')
+        self.assertEqual(result['prefilledName'], 'My SIEM')
+        self.assertEqual(result['saveBtnText'], 'Save')
+        self.assertEqual(result['sites'], [{'label': 'My SIEM', 'urlTemplate': 'https://siem2.example.com/search?q={value}'}])
+
+    def test_settings_cancel_button_resets_form_without_saving(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(r => setTimeout(r, 50));
+            saveCustomLookupSite(null, 'My SIEM', 'https://siem.example.com/search?q={value}');
+            showSettingsModal();
+            document.querySelector('#customLookupSitesList button[onclick^="startEditCustomLookupSite"]').click();
+            document.getElementById('customLookupUrlInput').value = 'https://should-not-save.example.com/{value}';
+            document.getElementById('customLookupCancelBtn').click();
+            window.__jsdom_result = {
+                nameCleared: document.getElementById('customLookupNameInput').value === '',
+                cancelHidden: document.getElementById('customLookupCancelBtn').style.display === 'none',
+                sites: getCustomLookupSites()
+            };
+        ''')
+        self.assertTrue(result['nameCleared'])
+        self.assertTrue(result['cancelHidden'])
+        self.assertEqual(result['sites'], [{'label': 'My SIEM', 'urlTemplate': 'https://siem.example.com/search?q={value}'}])
+
+    def test_settings_delete_button_removes_and_rerenders(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(r => setTimeout(r, 50));
+            saveCustomLookupSite(null, 'My SIEM', 'https://siem.example.com/search?q={value}');
+            showSettingsModal();
+            document.querySelector('#customLookupSitesList button[onclick^="handleDeleteCustomLookupSite"]').click();
+            window.__jsdom_result = {
+                sites: getCustomLookupSites(),
+                html: document.getElementById('customLookupSitesList').innerHTML
+            };
+        ''')
+        self.assertEqual(result['sites'], [])
+        self.assertIn('No custom lookup sites yet.', result['html'])
+
+    def test_settings_shows_inline_error_on_invalid_save(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(r => setTimeout(r, 50));
+            showSettingsModal();
+            document.getElementById('customLookupNameInput').value = 'Evil';
+            document.getElementById('customLookupUrlInput').value = 'javascript:alert(1)';
+            document.getElementById('customLookupSaveBtn').click();
+            window.__jsdom_result = {
+                errorVisible: document.getElementById('customLookupError').style.display === 'block',
+                errorText: document.getElementById('customLookupError').textContent,
+                sites: getCustomLookupSites()
+            };
+        ''')
+        self.assertTrue(result['errorVisible'])
+        self.assertIn('http', result['errorText'])
+        self.assertEqual(result['sites'], [])
 
 
 class TestXSSPrevention(unittest.TestCase):
@@ -4309,9 +6550,12 @@ class TestXSSPrevention(unittest.TestCase):
         self.assertIn("escapeHtml(String(dstPort))", func_body, 'All Events dest port must be escaped')
 
     def test_alert_details_shows_rule(self):
-        """Alert detail panel must include a Rule row with monospace styling."""
-        func_body = self._get_function_body('renderAlertDetails')
-        self.assertIn("alert?.rule", func_body, 'renderAlertDetails must reference alert.rule')
+        """Alert detail panel must include a Rule row with monospace styling.
+        The field-rendering body (including Rule) lives in the shared
+        renderAlertFields helper, reused by both renderAlertDetails and
+        renderProtocolDecodeDetails."""
+        func_body = self._get_function_body('renderAlertFields')
+        self.assertIn("alert?.rule", func_body, 'renderAlertFields must reference alert.rule')
         self.assertIn('white-space: pre-wrap', JS_CONTENT, 'Rule text must wrap with pre-wrap')
         self.assertIn('overflow-wrap: break-word', JS_CONTENT, 'Rule text must wrap with overflow-wrap')
         self.assertIn('class="mono"', JS_CONTENT, 'Rule text must use monospace font')
@@ -4795,7 +7039,7 @@ class TestAnalysisNotes(unittest.TestCase):
     header icon, edited in a modal, saved via POST /api/analysis-notes."""
 
     def test_notes_modal_skeleton_exists(self):
-        self.assertIn('id="notesModal" onclick="handleNotesBackdropClick(event)"', HTML_CONTENT,
+        self.assertIn('id="notesModal" onclick="handleModalBackdropClick(event, closeNotesModal)"', HTML_CONTENT,
                       'notesModal must exist with a backdrop-click handler wired up')
         self.assertIn('id="analysisNotesInput"', HTML_CONTENT,
                       'notesModal must have a textarea for entering notes')
@@ -4912,7 +7156,8 @@ class TestAnalysisNotes(unittest.TestCase):
         from tests.jsdom_helper import js_statements
         result = js_statements(self._setup_js(initial_notes='original notes') + '''
             showNotesModal();
-            handleNotesBackdropClick({ target: document.getElementById('notesModal') });
+            var notesModal = document.getElementById('notesModal');
+            handleModalBackdropClick({ target: notesModal, currentTarget: notesModal }, closeNotesModal);
             window.__jsdom_result = {
                 modalOpen: document.getElementById('notesModal').classList.contains('active')
             };
@@ -4998,6 +7243,75 @@ class TestAnalysisNotes(unittest.TestCase):
             window.__jsdom_result = { currentNotes: currentNotes };
         ''')
         self.assertEqual(result['currentNotes'], '', 'a response with no notes field must default to empty string, not undefined')
+
+
+class TestHeaderReanalyzeIcon(unittest.TestCase):
+    """A re-analyze icon next to the notes icon in the analysis header lets
+    an analyst re-run the currently open sample without going back to the
+    welcome screen's previous-analyses list first - reuses
+    openReanalyzeModal() as-is (it only needs md5/name)."""
+
+    def _load(self, md5='a' * 32, file_name='sample.pcap'):
+        return '''
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url.indexOf('/api/load-analysis') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        success: true, md5: ''' + json.dumps(md5) + ''', file_name: ''' + json.dumps(file_name) + '''
+                    }) });
+                }
+                if (url.indexOf('/api/status') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({
+                        status: 'ready',
+                        meta: { detected_type: 'pcap', extracted: ''' + json.dumps(file_name) + ''', original: ''' + json.dumps(file_name) + ''', version: 1 }
+                    }) });
+                }
+                if (url.indexOf('/api/stats') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ counts: {}, date_range: {} }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            try { await loadAnalysis(''' + json.dumps(md5) + '''); } catch (e) {}
+        '''
+
+    def test_reanalyzeIconHtml_wires_current_md5_and_filename(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            currentMd5 = 'a'.repeat(32);
+            currentFileName = 'sample.pcap';
+            window.__jsdom_result = { html: reanalyzeIconHtml() };
+        ''')
+        self.assertIn("onclick=\"openReanalyzeModal(currentMd5, currentFileName)\"", result['html'])
+        self.assertIn('title="Re-analyze"', result['html'])
+
+    def test_reanalyze_icon_renders_in_header_after_loading_an_analysis(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._load() + '''
+            var meta = document.getElementById('appHeaderMeta');
+            window.__jsdom_result = {
+                metaHtml: meta.innerHTML,
+                notesIndex: meta.innerHTML.indexOf('id="appHeaderNotesIcon"'),
+                reanalyzeIndex: meta.innerHTML.indexOf('openReanalyzeModal(currentMd5, currentFileName)')
+            };
+        ''')
+        self.assertNotEqual(result['reanalyzeIndex'], -1, 'the reanalyze icon must render in the header after loading an analysis')
+        self.assertGreater(result['reanalyzeIndex'], result['notesIndex'], 'the reanalyze icon must render next to (after) the notes icon')
+
+    def test_clicking_reanalyze_icon_opens_confirm_modal_for_current_analysis(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._load(md5='b' * 32, file_name='evidence.pcap') + '''
+            var icon = Array.from(document.querySelectorAll('#appHeaderMeta span')).find(function(s) {
+                return s.getAttribute('onclick') === 'openReanalyzeModal(currentMd5, currentFileName)';
+            });
+            icon.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            await new Promise(function(r) { setTimeout(r, 10); });
+            window.__jsdom_result = {
+                modalOpen: document.getElementById('reanalyzeConfirmModal').classList.contains('active'),
+                fileName: document.getElementById('reanalyzeFileName').textContent
+            };
+        ''')
+        self.assertTrue(result['modalOpen'], 'clicking the header reanalyze icon must open the confirm modal')
+        self.assertEqual(result['fileName'], 'evidence.pcap')
 
 
 class TestCopyMd5ToClipboard(unittest.TestCase):
@@ -5150,8 +7464,11 @@ class TestPreviousAnalysesShowNotesIndicator(unittest.TestCase):
         it must match .previous-analysis-reanalyze's background/color
         treatment (including per-theme overrides), not set color inline
         (which would override the CSS class and break those per-theme
-        overrides)."""
-        self.assertIn('.previous-analysis-notes { background: var(--bg-hover); color: var(--accent); }', CSS_CONTENT)
+        overrides). The two classes now literally share one combined
+        selector rather than two separate rules with identical values, so
+        this is enforced structurally, not just by coincidentally-matching
+        values."""
+        self.assertIn('.previous-analysis-reanalyze, .previous-analysis-notes { background: var(--bg-hover); color: var(--accent); }', CSS_CONTENT)
         self.assertNotIn('color: var(--accent);" title="View/edit notes"', JS_CONTENT,
                          'the notes button must not set color inline - that would override the CSS class'
                          ' theme-specific rules below')
@@ -5211,6 +7528,844 @@ class TestPreviousAnalysesShowNotesIndicator(unittest.TestCase):
         self.assertEqual(result['currentNotes'], 'Suspected GuLoader')
         self.assertTrue(result['modalOpen'], 'clicking the notes button must open the Notes modal')
         self.assertEqual(result['textareaValue'], 'Suspected GuLoader')
+
+
+class TestRowNoteRendering(unittest.TestCase):
+    """Each of the five row-renderer functions must emit a stable data-id
+    on its <tr> and a trailing .row-note-icon <td>, with the paired
+    detail-row's colspan bumped by 1 to match the extra column - see
+    static/socrates.js's rowNoteIconHtml() and the plan's "single
+    post-processing point rather than touching every switch case"
+    approach for buildRowForEvent specifically."""
+
+    def test_buildRowForEvent_dns_has_data_id_and_note_icon(self):
+        from tests.jsdom_helper import js_statements
+        event = {
+            'id': 42, 'event_type': 'dns', 'timestamp': '2026-01-01T00:00:00',
+            'src_ip': '1.1.1.1', 'src_port': 1234, 'dest_ip': '2.2.2.2', 'dest_port': 53, 'proto': 'UDP',
+            'dns': {'rrname': 'example.com', 'rrtype': 'A'}, 'row_note': 'noted',
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertIn('data-id="42"', result['html'])
+        self.assertIn('row-note-icon', result['html'])
+        # 6 prefix cells + Query/Type + note icon = 9.
+        self.assertIn('colspan="9"', result['html'])
+
+    def test_buildRowForEvent_dns_no_note_omits_icon_but_offers_add_note(self):
+        """No note yet -> the collapsed-row cell is empty (no icon, so
+        muted-vs-accent color is never a distinguishing factor); the only
+        way to add one is the expanded detail panel's own link."""
+        from tests.jsdom_helper import js_statements
+        event = {
+            'id': 42, 'event_type': 'dns', 'timestamp': '2026-01-01T00:00:00',
+            'src_ip': '1.1.1.1', 'src_port': 1234, 'dest_ip': '2.2.2.2', 'dest_port': 53, 'proto': 'UDP',
+            'dns': {'rrname': 'example.com', 'rrtype': 'A'},
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertNotIn('row-note-icon', result['html'])
+        self.assertIn('<td class="row-note-cell"></td>', result['html'])
+        self.assertIn('+ Add Note', result['html'])
+
+    def test_buildAllEventRow_has_data_id_and_note_icon(self):
+        from tests.jsdom_helper import js_statements
+        event = {
+            'id': 7, 'event_type': 'flow', 'timestamp': '2026-01-01T00:00:00',
+            'src_ip': '1.1.1.1', 'src_port': 1234, 'dest_ip': '2.2.2.2', 'dest_port': 443, 'proto': 'TCP',
+            'row_note': 'noted',
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: buildAllEventRow(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertIn('data-id="7"', result['html'])
+        self.assertIn('row-note-icon', result['html'])
+        # 8 prefix+detail cells + note icon = 9.
+        self.assertIn('colspan="9"', result['html'])
+
+    def test_buildSigmaAlertRow_has_data_id_and_note_icon(self):
+        from tests.jsdom_helper import js_statements
+        alert = {
+            'id': 13, 'timestamp': '2026-01-01T00:00:00', 'severity': 'high',
+            'rule_title': 'Test Rule', 'rule_id': 'r1', 'mitre_techniques': '[]',
+            'logsource': 'windows', 'original_log': '{}', 'row_note': 'noted',
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: buildSigmaAlertRow(''' + json.dumps(alert) + ''') };
+        ''')
+        self.assertIn('data-id="13"', result['html'])
+        self.assertIn('row-note-icon', result['html'])
+        self.assertIn('colspan="6"', result['html'])
+
+    def test_buildSigmaAlertRow_no_note_omits_icon_but_offers_add_note(self):
+        from tests.jsdom_helper import js_statements
+        alert = {
+            'id': 13, 'timestamp': '2026-01-01T00:00:00', 'severity': 'high',
+            'rule_title': 'Test Rule', 'rule_id': 'r1', 'mitre_techniques': '[]',
+            'logsource': 'windows', 'original_log': '{}',
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: buildSigmaAlertRow(''' + json.dumps(alert) + ''') };
+        ''')
+        self.assertNotIn('row-note-icon', result['html'])
+        self.assertIn('+ Add Note', result['html'])
+
+    def test_buildLogEventRow_has_data_id_and_note_icon(self):
+        from tests.jsdom_helper import js_statements
+        evt = {'id': 99, 'timestamp': '2026-01-01T00:00:00', 'json_data': {}, 'row_note': 'noted'}
+        result = js_statements('''
+            window.__jsdom_result = { html: buildLogEventRow(''' + json.dumps(evt) + ''', []) };
+        ''')
+        self.assertIn('data-id="99"', result['html'])
+        self.assertIn('row-note-icon', result['html'])
+        # Time + Detail + note icon = 3 (no discovered columns passed).
+        self.assertIn('colspan="3"', result['html'])
+
+    def test_buildLogEventRow_no_note_omits_icon_but_offers_add_note(self):
+        from tests.jsdom_helper import js_statements
+        evt = {'id': 99, 'timestamp': '2026-01-01T00:00:00', 'json_data': {}}
+        result = js_statements('''
+            window.__jsdom_result = { html: buildLogEventRow(''' + json.dumps(evt) + ''', []) };
+        ''')
+        self.assertNotIn('row-note-icon', result['html'])
+        self.assertIn('+ Add Note', result['html'])
+
+    def test_buildBinaryYaraRow_has_data_id_and_note_icon(self):
+        from tests.jsdom_helper import js_statements
+        event = {
+            'id': 5, 'event_type': 'filealerts', 'timestamp': '2026-01-01T00:00:00',
+            'filealerts': {'rule_name': 'TestRule', 'tags': [], 'author': 'someone'},
+            'row_note': 'noted',
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: buildBinaryYaraRow(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertIn('data-id="5"', result['html'])
+        self.assertIn('row-note-icon', result['html'])
+        self.assertIn('colspan="4"', result['html'])
+
+
+class TestRowNoteIconState(unittest.TestCase):
+    """The note icon only ever renders for a row that already has a note -
+    a note-less row gets an empty cell, not a muted/dimmed icon, since
+    that distinction is hard to see on some themes. Adding a first note
+    happens from the expanded detail panel instead (see
+    TestRowNoteDetailPanel), not from this collapsed-row cell."""
+
+    def test_no_note_renders_empty_cell_no_icon(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: rowNoteIconHtml('events', 1, null) };
+        ''')
+        self.assertEqual(result['html'], '<td class="row-note-cell"></td>')
+
+    def test_empty_string_note_treated_as_no_note(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: rowNoteIconHtml('events', 1, '   ') };
+        ''')
+        self.assertEqual(result['html'], '<td class="row-note-cell"></td>')
+
+    def test_has_note_shows_accent_icon_and_preview_title(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: rowNoteIconHtml('events', 1, 'false positive, known scanner') };
+        ''')
+        self.assertIn('title="false positive, known scanner"', result['html'])
+        self.assertIn('var(--accent)', result['html'])
+
+    def test_note_preview_truncated_to_200_chars(self):
+        """Only the title= hover preview is capped at 200 chars - the
+        onclick argument must still carry the full note so the editor
+        opens pre-populated with the complete text, not a truncated copy."""
+        from tests.jsdom_helper import js_statements
+        long_note = 'x' * 300
+        result = js_statements('''
+            var note = ''' + json.dumps(long_note) + ''';
+            window.__jsdom_result = { html: rowNoteIconHtml('events', 1, note) };
+        ''')
+        self.assertIn('title="' + 'x' * 200 + '"', result['html'])
+        self.assertIn('x' * 300, result['html'], 'the onclick argument must carry the full, untruncated note')
+
+
+class TestRowNoteDetailPanel(unittest.TestCase):
+    """rowNoteDetailHtml() - the expanded detail panel's own Note row,
+    which is the only place a first note can be added since the
+    collapsed-row icon is omitted entirely until one exists (see
+    TestRowNoteIconState)."""
+
+    def test_no_note_shows_add_note_link(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: rowNoteDetailHtml('events', 1, null) };
+        ''')
+        self.assertIn('+ Add Note', result['html'])
+        self.assertIn(">Note<", result['html'], 'must use the same detail-label styling as every other row')
+
+    def test_has_its_own_notes_section_header(self):
+        """A distinct 'Notes' section divider (same htmlSection() pattern
+        as 'Connection'/'Alert Details'/'DNS Details' etc.), not just one
+        more row blended into whichever type-specific section precedes
+        it, and it must come before the Note label/value row itself."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: rowNoteDetailHtml('events', 1, null) };
+        ''')
+        self.assertIn('>Notes<', result['html'])
+        self.assertIn('grid-column: 1 / -1', result['html'], 'must span the full grid width like every other section divider')
+        self.assertLess(result['html'].index('>Notes<'), result['html'].index('class="detail-label">Note<'),
+                        'the section header must come before the Note row it introduces')
+
+    def test_has_note_shows_note_text_and_edit_link(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: rowNoteDetailHtml('events', 1, 'false positive, known scanner') };
+        ''')
+        self.assertIn('false positive, known scanner', result['html'])
+        self.assertIn('>Edit<', result['html'])
+        self.assertNotIn('+ Add Note', result['html'])
+
+    def test_onclick_opens_editor_with_correct_args(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { html: rowNoteDetailHtml('sigma_alerts', 42, null) };
+        ''')
+        self.assertIn("openRowNoteEditor('sigma_alerts', '42', '')", result['html'])
+
+    def test_formatEvent_includes_note_row(self):
+        """formatEvent() backs buildRowForEvent/buildAllEventRow/
+        buildBinaryYaraRow - one shared inclusion point covers all three."""
+        from tests.jsdom_helper import js_statements
+        event = {'id': 8, 'event_type': 'dns', 'timestamp': '2026-01-01T00:00:00', 'dns': {}}
+        result = js_statements('''
+            window.__jsdom_result = { html: formatEvent(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertIn('+ Add Note', result['html'])
+        self.assertIn("openRowNoteEditor('events', '8', '')", result['html'])
+
+    def test_formatSigmaAlertDetail_includes_note_row(self):
+        from tests.jsdom_helper import js_statements
+        alert = {
+            'id': 11, 'timestamp': '2026-01-01T00:00:00', 'severity': 'high',
+            'rule_title': 'Test', 'rule_id': 'r1', 'mitre_techniques': '[]',
+            'logsource': 'windows', 'original_log': '{}',
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: formatSigmaAlertDetail(''' + json.dumps(alert) + ''') };
+        ''')
+        self.assertIn('+ Add Note', result['html'])
+        self.assertIn("openRowNoteEditor('sigma_alerts', '11', '')", result['html'])
+
+    def test_formatSigmaAlertDetail_nested_matched_event_has_no_note_row(self):
+        """The 'Matched Event' sub-section reuses formatLogEventDetail to
+        show the raw log that triggered the alert - that embedded log must
+        NOT get its own note row (it would be ambiguous whose note it is);
+        only the top-level alert's own Note row (asserted above) belongs
+        here."""
+        from tests.jsdom_helper import js_statements
+        alert = {
+            'id': 11, 'timestamp': '2026-01-01T00:00:00', 'severity': 'high',
+            'rule_title': 'Test', 'rule_id': 'r1', 'mitre_techniques': '[]',
+            'logsource': 'windows', 'original_log': json.dumps({'Image': 'cmd.exe'}),
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: formatSigmaAlertDetail(''' + json.dumps(alert) + ''') };
+        ''')
+        # Exactly one Note row (the alert's own) - not a second one from
+        # the nested Matched Event section.
+        self.assertEqual(result['html'].count('class="detail-label">Note<'), 1)
+
+    def test_buildLogEventRow_detail_includes_note_row(self):
+        from tests.jsdom_helper import js_statements
+        evt = {'id': 21, 'timestamp': '2026-01-01T00:00:00', 'json_data': {}}
+        result = js_statements('''
+            window.__jsdom_result = { html: buildLogEventRow(''' + json.dumps(evt) + ''', []) };
+        ''')
+        self.assertIn('+ Add Note', result['html'])
+        self.assertIn("openRowNoteEditor('events', '21', '')", result['html'])
+
+
+class TestRowNoteEditor(unittest.TestCase):
+    """The note icon opens the generalized #notesModal scoped to that row
+    (not the whole-analysis note), and clicking it must not also trigger
+    the row's own toggle-to-expand handler."""
+
+    def _setup_js(self, fetch_ok=True, fetch_body=None):
+        response_expr = (
+            fetch_body if fetch_body is not None
+            else "{ success: true, note: JSON.parse(opts.body).note }"
+        )
+        return f'''
+            await new Promise(r => setTimeout(r, 50));
+            currentMd5 = 'a'.repeat(32);
+            var fetchCalls = [];
+            window.fetch = function(url, opts) {{
+                fetchCalls.push({{ url: url, method: opts && opts.method, body: opts && opts.body }});
+                return Promise.resolve({{
+                    ok: {str(fetch_ok).lower()},
+                    json: () => Promise.resolve({response_expr})
+                }});
+            }};
+        '''
+
+    def test_opens_scoped_to_row_not_analysis(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            openRowNoteEditor('sigma_alerts', '42', 'existing note');
+            window.__jsdom_result = {
+                modalOpen: document.getElementById('notesModal').classList.contains('active'),
+                title: document.getElementById('notesModalTitle').textContent,
+                textareaValue: document.getElementById('analysisNotesInput').value,
+                maxLength: document.getElementById('analysisNotesInput').maxLength,
+                scope: currentRowNoteScope
+            };
+        ''')
+        self.assertTrue(result['modalOpen'])
+        self.assertEqual(result['title'], 'Row Note')
+        self.assertEqual(result['textareaValue'], 'existing note')
+        self.assertEqual(result['maxLength'], 500)
+        self.assertEqual(result['scope'], {'table': 'sigma_alerts', 'rowId': 42})
+
+    def test_analysis_level_modal_unaffected(self):
+        """showNotesModal() called with no arguments (the existing header-
+        icon/previous-analyses-list callers) must behave exactly as
+        before - not accidentally inherit row scope."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            currentNotes = 'the whole-analysis note';
+            showNotesModal();
+            window.__jsdom_result = {
+                title: document.getElementById('notesModalTitle').textContent,
+                textareaValue: document.getElementById('analysisNotesInput').value,
+                maxLength: document.getElementById('analysisNotesInput').maxLength,
+                scope: currentRowNoteScope
+            };
+        ''')
+        self.assertEqual(result['title'], 'Notes')
+        self.assertEqual(result['textareaValue'], 'the whole-analysis note')
+        self.assertEqual(result['maxLength'], 10000)
+        self.assertIsNone(result['scope'])
+
+    def test_clicking_icon_does_not_toggle_row_expand(self):
+        from tests.jsdom_helper import js_statements
+        alert = {
+            'id': 5, 'timestamp': '2026-01-01T00:00:00', 'severity': 'high',
+            'rule_title': 'Test', 'rule_id': 'r1', 'mitre_techniques': '[]',
+            'logsource': 'windows', 'original_log': '{}', 'row_note': 'existing note',
+        }
+        result = js_statements(self._setup_js() + '''
+            document.body.insertAdjacentHTML('beforeend', '<table><tbody>' + buildSigmaAlertRow(''' + json.dumps(alert) + ''') + '</tbody></table>');
+            var row = document.querySelector('tr[data-id="5"]');
+            var icon = row.querySelector('.row-note-icon');
+            icon.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                rowExpanded: row.classList.contains('expanded-row'),
+                modalOpen: document.getElementById('notesModal').classList.contains('active')
+            };
+        ''')
+        self.assertFalse(result['rowExpanded'], 'clicking the note icon must not also trigger the row expand handler')
+        self.assertTrue(result['modalOpen'], 'clicking the note icon must still open the editor')
+
+    def test_save_row_note_posts_to_row_note_endpoint(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._setup_js() + '''
+            openRowNoteEditor('events', '7', '');
+            document.getElementById('analysisNotesInput').value = 'suspicious, escalate';
+            await saveAnalysisNotes();
+            window.__jsdom_result = {
+                rowNoteCalls: fetchCalls.filter(c => c.url === '/api/row-note'),
+                analysisNotesCalls: fetchCalls.filter(c => c.url === '/api/analysis-notes'),
+                modalOpen: document.getElementById('notesModal').classList.contains('active')
+            };
+        ''')
+        self.assertEqual(len(result['rowNoteCalls']), 1)
+        self.assertEqual(result['analysisNotesCalls'], [], 'a row-note save must not also hit /api/analysis-notes')
+        self.assertEqual(json.loads(result['rowNoteCalls'][0]['body']),
+                         {'md5': 'a' * 32, 'table': 'events', 'rowId': 7, 'note': 'suspicious, escalate'})
+        self.assertFalse(result['modalOpen'])
+
+    def test_save_row_note_updates_only_that_rows_icon(self):
+        """The other row in the same table must be untouched - proves the
+        update is targeted (querySelector by data-id + outerHTML on just
+        that cell), not a blind full-table re-render."""
+        from tests.jsdom_helper import js_statements
+        alert_a = {'id': 1, 'timestamp': '2026-01-01T00:00:00', 'severity': 'high', 'rule_title': 'A', 'rule_id': 'a', 'mitre_techniques': '[]', 'logsource': 'windows', 'original_log': '{}', 'row_note': 'old note for row 1'}
+        alert_b = {'id': 2, 'timestamp': '2026-01-01T00:00:01', 'severity': 'low', 'rule_title': 'B', 'rule_id': 'b', 'mitre_techniques': '[]', 'logsource': 'windows', 'original_log': '{}', 'row_note': 'note for row 2'}
+        result = js_statements(self._setup_js() + '''
+            document.body.insertAdjacentHTML('beforeend', '<table><tbody>' +
+                buildSigmaAlertRow(''' + json.dumps(alert_a) + ''') +
+                buildSigmaAlertRow(''' + json.dumps(alert_b) + ''') +
+                '</tbody></table>');
+            var rowBIconBefore = document.querySelector('tr[data-id="2"] .row-note-icon').outerHTML;
+            openRowNoteEditor('sigma_alerts', '1', '');
+            document.getElementById('analysisNotesInput').value = 'note for row 1';
+            await saveAnalysisNotes();
+            window.__jsdom_result = {
+                rowATitle: document.querySelector('tr[data-id="1"] .row-note-icon').title,
+                rowBIconUnchanged: document.querySelector('tr[data-id="2"] .row-note-icon').outerHTML === rowBIconBefore
+            };
+        ''')
+        self.assertEqual(result['rowATitle'], 'note for row 1')
+        self.assertTrue(result['rowBIconUnchanged'], "row 2's icon must be untouched by row 1's save")
+
+    def test_save_row_note_updates_detail_panel_in_place(self):
+        """REGRESSION: the detail panel is rendered once and only toggled
+        visible/hidden (see toggleRow), not re-rendered on expand - a save
+        must refresh its .row-note-detail-value span too, not just the
+        collapsed row's icon, or the panel keeps showing the pre-save
+        content (stale "+ Add Note" link, or the old note text) until the
+        whole table happens to re-render for some unrelated reason."""
+        from tests.jsdom_helper import js_statements
+        alert = {
+            'id': 1, 'timestamp': '2026-01-01T00:00:00', 'severity': 'high',
+            'rule_title': 'A', 'rule_id': 'a', 'mitre_techniques': '[]',
+            'logsource': 'windows', 'original_log': '{}',
+        }
+        result = js_statements(self._setup_js() + '''
+            document.body.insertAdjacentHTML('beforeend', '<table><tbody>' + buildSigmaAlertRow(''' + json.dumps(alert) + ''') + '</tbody></table>');
+            var detailValueBefore = document.querySelector('.row-note-detail-value').textContent;
+            openRowNoteEditor('sigma_alerts', '1', '');
+            document.getElementById('analysisNotesInput').value = 'freshly added note';
+            await saveAnalysisNotes();
+            window.__jsdom_result = {
+                detailValueBefore: detailValueBefore,
+                detailValueAfter: document.querySelector('.row-note-detail-value').textContent
+            };
+        ''')
+        self.assertIn('Add Note', result['detailValueBefore'])
+        self.assertIn('freshly added note', result['detailValueAfter'])
+        self.assertNotIn('Add Note', result['detailValueAfter'], 'must switch to the Edit link, not still offer Add Note')
+
+    def test_edit_existing_row_note_updates_detail_panel_in_place(self):
+        from tests.jsdom_helper import js_statements
+        alert = {
+            'id': 1, 'timestamp': '2026-01-01T00:00:00', 'severity': 'high',
+            'rule_title': 'A', 'rule_id': 'a', 'mitre_techniques': '[]',
+            'logsource': 'windows', 'original_log': '{}', 'row_note': 'original note',
+        }
+        result = js_statements(self._setup_js() + '''
+            document.body.insertAdjacentHTML('beforeend', '<table><tbody>' + buildSigmaAlertRow(''' + json.dumps(alert) + ''') + '</tbody></table>');
+            openRowNoteEditor('sigma_alerts', '1', 'original note');
+            document.getElementById('analysisNotesInput').value = 'updated note text';
+            await saveAnalysisNotes();
+            window.__jsdom_result = {
+                detailValue: document.querySelector('.row-note-detail-value').textContent
+            };
+        ''')
+        self.assertIn('updated note text', result['detailValue'])
+        self.assertNotIn('original note', result['detailValue'])
+
+
+class TestRowNotePersistence(unittest.TestCase):
+    """A row note must persist across normal UI activity (re-fetching a
+    page's data) but is intentionally lost on reanalyze, which rebuilds
+    events.db from scratch - see test_row_notes_do_not_survive_events_db_rebuild
+    in tests/test_socrates_db.py for the backend proof of that half; this
+    class covers what's actually a JS/DOM-layer concern."""
+
+    def test_row_note_field_from_api_response_renders_in_icon(self):
+        """A row fetched with an existing row_note (as /api/events and
+        /api/sigma-alerts now include) must render pre-populated, not
+        require a click to discover it has a note - i.e. a note "survives"
+        a fresh page fetch because it's carried in the response data
+        itself, not cached client-side."""
+        from tests.jsdom_helper import js_statements
+        alert = {
+            'id': 9, 'timestamp': '2026-01-01T00:00:00', 'severity': 'high',
+            'rule_title': 'Test', 'rule_id': 'r1', 'mitre_techniques': '[]',
+            'logsource': 'windows', 'original_log': '{}', 'row_note': 'already noted',
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: buildSigmaAlertRow(''' + json.dumps(alert) + ''') };
+        ''')
+        self.assertIn('title="already noted"', result['html'])
+        self.assertIn('var(--accent)', result['html'])
+
+
+class TestPlaybookSectionPlaceholder(unittest.TestCase):
+    """renderAlertDetails/formatSigmaAlertDetail emit a hidden
+    .playbook-section-placeholder anchor (see loadPlaybookSectionIfPresent)
+    for Suricata alert and Sigma alert rows only - dns/http/tls/flow/etc.
+    rows never get one, since they have no signature_id/rule_id to look a
+    playbook up by."""
+
+    def test_buildRowForEvent_alert_row_has_placeholder(self):
+        from tests.jsdom_helper import js_statements
+        event = {
+            'id': 1, 'event_type': 'alert', 'timestamp': '2026-01-01T00:00:00',
+            'src_ip': '1.1.1.1', 'src_port': 1234, 'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+            'alert': {'signature': 'Test Sig', 'category': 'Trojan', 'severity': 2, 'signature_id': 2000005},
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertIn('playbook-section-placeholder', result['html'])
+        self.assertIn('data-detection-type="nids"', result['html'])
+        self.assertIn('data-rule-id="2000005"', result['html'])
+        self.assertIn('style="display:none;"', result['html'])
+
+    def test_buildRowForEvent_non_alert_rows_have_no_placeholder(self):
+        from tests.jsdom_helper import js_statements
+        for event_type, extra in (
+            ('dns', {'dns': {'rrname': 'example.com', 'rrtype': 'A'}}),
+            ('http', {'http': {'http_method': 'GET', 'hostname': 'example.com', 'url': '/', 'status': 200}}),
+            ('tls', {'tls': {'sni': 'example.com', 'version': 'TLS 1.3'}}),
+            ('flow', {'flow': {'pkts_toserver': 1, 'pkts_toclient': 1, 'bytes_toserver': 1, 'bytes_toclient': 1, 'state': 'established'}}),
+        ):
+            event = {
+                'id': 1, 'event_type': event_type, 'timestamp': '2026-01-01T00:00:00',
+                'src_ip': '1.1.1.1', 'src_port': 1234, 'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+                **extra,
+            }
+            result = js_statements('''
+                window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(event) + ''') };
+            ''')
+            self.assertNotIn('playbook-section-placeholder', result['html'], f'{event_type} rows must not get a playbook placeholder')
+
+    def test_buildSigmaAlertRow_has_placeholder(self):
+        from tests.jsdom_helper import js_statements
+        alert = {
+            'id': 1, 'timestamp': '2026-01-01T00:00:00', 'severity': 'high',
+            'rule_title': 'Test Rule', 'rule_id': '221b251a-357a-49a9-920a-271802777cc0',
+            'mitre_techniques': '[]', 'logsource': 'windows', 'original_log': '{}',
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: buildSigmaAlertRow(''' + json.dumps(alert) + ''') };
+        ''')
+        self.assertIn('playbook-section-placeholder', result['html'])
+        self.assertIn('data-detection-type="sigma"', result['html'])
+        self.assertIn('data-rule-id="221b251a-357a-49a9-920a-271802777cc0"', result['html'])
+        self.assertIn('style="display:none;"', result['html'])
+
+    def test_placeholder_appears_before_notes_section(self):
+        from tests.jsdom_helper import js_statements
+        event = {
+            'id': 1, 'event_type': 'alert', 'timestamp': '2026-01-01T00:00:00',
+            'src_ip': '1.1.1.1', 'src_port': 1234, 'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+            'alert': {'signature': 'Test Sig', 'category': 'Trojan', 'severity': 2, 'signature_id': 2000005},
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: formatEvent(''' + json.dumps(event) + ''') };
+        ''')
+        placeholder_idx = result['html'].find('playbook-section-placeholder')
+        notes_idx = result['html'].find('>Notes<')
+        self.assertGreaterEqual(placeholder_idx, 0)
+        self.assertGreaterEqual(notes_idx, 0)
+        self.assertLess(placeholder_idx, notes_idx, 'the playbook anchor must sit before the Notes section')
+
+
+class TestProtocolDecodeUI(unittest.TestCase):
+    """Suricata's own built-in protocol-command-decode alerts are
+    reclassified to event_type 'protocol_decode' at ingestion (see
+    create_sqlite_db in db.py) so they get a dedicated tab (labeled
+    "Decoder Alerts" - the internal event_type/setting name stays
+    protocol_decode/show_protocol_decode_alerts, matching Suricata's own
+    "protocol-command-decode" classtype) instead of diluting Network
+    Alerts. The frontend mirrors 'alert' everywhere except: a distinct
+    label/color, and no Playbook section (there's no investigation
+    guidance for something that isn't a real detection)."""
+
+    def _protocol_decode_event(self):
+        return {
+            'id': 1, 'event_type': 'protocol_decode', 'timestamp': '2026-01-01T00:00:00',
+            'src_ip': '1.1.1.1', 'src_port': 1234, 'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+            'alert': {'signature': 'SURICATA STREAM bad TCP', 'category': 'Generic Protocol Command Decode',
+                      'severity': 3, 'signature_id': 2200003},
+        }
+
+    def test_has_protocol_decode_in_type_labels(self):
+        self.assertIn("protocol_decode: 'Decoder Alerts'", JS_CONTENT,
+                      'typeLabels must include protocol_decode')
+
+    def test_has_protocol_decode_in_type_colors(self):
+        # Same orange as 'anomaly' - Decoder Alerts and Anomalies represent
+        # closely related (though not identical) protocol-anomaly signal,
+        # see docs/architecture/event-types.md's note on protocol_decode.
+        self.assertIn("protocol_decode: '#ff9800'", JS_CONTENT,
+                      'COLORS.EVENT must include a protocol_decode color matching anomaly')
+
+    def test_protocol_decode_columns_match_alert(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = {
+                alert: getColumnsForType('alert'),
+                protocol_decode: getColumnsForType('protocol_decode'),
+            };
+        ''')
+        self.assertEqual(result['alert'], result['protocol_decode'])
+
+    def test_protocol_decode_row_html_matches_alert_shape(self):
+        """buildRowForEvent must render a protocol_decode row identically
+        in shape to an equivalent alert row (same colspan/cell count)."""
+        from tests.jsdom_helper import js_statements
+        pd_event = self._protocol_decode_event()
+        alert_event = dict(pd_event, event_type='alert')
+        result = js_statements(f'''
+            window.__jsdom_result = {{
+                protocolDecodeHtml: buildRowForEvent({json.dumps(pd_event)}),
+                alertHtml: buildRowForEvent({json.dumps(alert_event)}),
+            }};
+        ''')
+        pd_td_count = result['protocolDecodeHtml'].count('<td')
+        alert_td_count = result['alertHtml'].count('<td')
+        self.assertEqual(pd_td_count, alert_td_count)
+        self.assertIn('SURICATA STREAM bad TCP', result['protocolDecodeHtml'])
+        self.assertIn('Generic Protocol Command Decode', result['protocolDecodeHtml'])
+
+    def test_renderProtocolDecodeDetails_no_playbook_placeholder(self):
+        """REGRESSION: unlike renderAlertDetails, renderProtocolDecodeDetails
+        must never emit a playbook-section-placeholder - protocol-decode
+        noise isn't a real detection, so investigation-guidance Playbooks
+        don't apply."""
+        from tests.jsdom_helper import js_statements
+        event = self._protocol_decode_event()
+        result = js_statements('''
+            window.__jsdom_result = { html: formatEvent(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertIn('SURICATA STREAM bad TCP', result['html'])
+        self.assertIn('Generic Protocol Command Decode', result['html'])
+        self.assertNotIn('playbook-section-placeholder', result['html'])
+
+    def test_event_renderers_includes_protocol_decode(self):
+        self.assertIn('protocol_decode: renderProtocolDecodeDetails', JS_CONTENT,
+                      'EVENT_RENDERERS must include a protocol_decode entry')
+
+
+class TestPlaybookSectionLazyLoad(unittest.TestCase):
+    """loadPlaybookSectionIfPresent() - fetches /api/playbook only on an
+    alert/sigmaalert row's first expand (mirroring toggleDetailRow's
+    existing ASCII-transcript lazy-load pattern), inserting a "Playbook"
+    section before the placeholder only when a playbook actually comes
+    back - a manual install with nothing baked in (null response) must
+    leave no trace of the feature at all, not an empty section."""
+
+    def _alert_row_html(self):
+        return '''
+            var e = { id: 1, event_type: 'alert', timestamp: '2024-01-01T00:00:00', proto: 'TCP',
+                      src_ip: '1.1.1.1', src_port: 111, dest_ip: '2.2.2.2', dest_port: 80,
+                      alert: { signature: 'Test Sig', category: 'Trojan', severity: 2, signature_id: 2000005 } };
+            var table = document.createElement('table');
+            table.innerHTML = buildRowForEvent(e);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-pivot]');
+        '''
+
+    def _sigma_row_html(self):
+        return '''
+            var alert = { id: 1, timestamp: '2024-01-01T00:00:00', severity: 'high',
+                      rule_title: 'Test Rule', rule_id: '221b251a-357a-49a9-920a-271802777cc0',
+                      mitre_techniques: '[]', logsource: 'windows', original_log: '{}' };
+            var table = document.createElement('table');
+            table.innerHTML = buildSigmaAlertRow(alert);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-pivot]');
+            var detailId = tr.getAttribute('onclick').match(/toggleSigmaRow\\(this, '([^']+)'/)[1];
+        '''
+
+    def test_expanding_alert_row_fetches_playbook_and_shows_it(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._alert_row_html() + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: function() {
+                    return Promise.resolve({ playbook: { name: 'Test Playbook', description: 'A description',
+                        questions: [{question: 'What happened?', context: 'Some context'}] } });
+                } });
+            };
+            await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            var detailRow = tr.nextElementSibling;
+            window.__jsdom_result = {
+                playbookCalls: fetchCalls.filter(function(u) { return u.indexOf('/api/playbook') === 0; }),
+                detailHtml: detailRow.innerHTML
+            };
+        ''')
+        self.assertEqual(result['playbookCalls'], ['/api/playbook?type=nids&id=2000005'])
+        self.assertIn('Test Playbook', result['detailHtml'])
+        self.assertIn('A description', result['detailHtml'])
+        self.assertIn('What happened?', result['detailHtml'])
+        self.assertIn('Some context', result['detailHtml'])
+        self.assertIn('The following questions might help guide your investigation:', result['detailHtml'])
+        html = result['detailHtml']
+        self.assertLess(
+            html.find('A description'), html.find('following questions might help'),
+            'the intro line must appear after Description'
+        )
+        self.assertLess(
+            html.find('following questions might help'), html.find('What happened?'),
+            'the intro line must appear before the questions'
+        )
+
+    def test_playbook_questions_expanded_by_default(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var div = document.createElement('div');
+            div.innerHTML = renderPlaybookSectionHtml({name: 'N', description: 'D', questions: [{question: 'Q?', context: 'C'}]});
+            document.body.appendChild(div);
+            window.__jsdom_result = {
+                display: div.querySelector('.playbook-questions').style.display,
+                toggleText: div.querySelector('.playbook-questions-toggle').textContent,
+                questionVisible: div.textContent.indexOf('Q?') >= 0
+            };
+        ''')
+        self.assertEqual(result['display'], 'contents')
+        self.assertTrue(result['toggleText'].startswith('▾'))
+        self.assertTrue(result['questionVisible'])
+
+    def test_clicking_toggle_collapses_and_reexpands_questions(self):
+        """Name/Description are not touched by the toggle - only the
+        questions list collapses, so there's still a preview to judge
+        relevance from either way (see togglePlaybookQuestions)."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var div = document.createElement('div');
+            div.innerHTML = renderPlaybookSectionHtml({name: 'N', description: 'D', questions: [{question: 'Q?', context: 'C'}]});
+            document.body.appendChild(div);
+            var toggleEl = div.querySelector('.playbook-questions-toggle');
+            var content = div.querySelector('.playbook-questions');
+
+            toggleEl.click();
+            var collapsedDisplay = content.style.display;
+            var collapsedText = toggleEl.textContent;
+            var nameStillVisible = div.textContent.indexOf('N') >= 0;
+
+            toggleEl.click();
+            var reexpandedDisplay = content.style.display;
+            var reexpandedText = toggleEl.textContent;
+
+            window.__jsdom_result = {
+                collapsedDisplay: collapsedDisplay,
+                collapsedText: collapsedText,
+                nameStillVisible: nameStillVisible,
+                reexpandedDisplay: reexpandedDisplay,
+                reexpandedText: reexpandedText
+            };
+        ''')
+        self.assertEqual(result['collapsedDisplay'], 'none')
+        self.assertTrue(result['collapsedText'].startswith('▸'))
+        self.assertTrue(result['nameStillVisible'])
+        self.assertEqual(result['reexpandedDisplay'], 'contents')
+        self.assertTrue(result['reexpandedText'].startswith('▾'))
+
+    def test_null_playbook_shows_no_section_at_all(self):
+        """REGRESSION: a manual install with nothing baked in must not show
+        even an empty "Playbook" heading - the whole point of fetch-then-
+        conditionally-render over the old unconditional icon."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._alert_row_html() + '''
+            window.fetch = function(url) {
+                return Promise.resolve({ json: function() { return Promise.resolve({ playbook: null }); } });
+            };
+            await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            var detailRow = tr.nextElementSibling;
+            window.__jsdom_result = { hasPlaybookHeading: detailRow.innerHTML.indexOf('>Playbook<') >= 0 };
+        ''')
+        self.assertFalse(result['hasPlaybookHeading'])
+
+    def test_fetch_error_does_not_throw_and_shows_no_section(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._alert_row_html() + '''
+            window.fetch = function(url) { return Promise.reject(new Error('boom')); };
+            var threw = false;
+            try {
+                await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            } catch (e) { threw = true; }
+            var detailRow = tr.nextElementSibling;
+            window.__jsdom_result = { threw: threw, hasPlaybookHeading: detailRow.innerHTML.indexOf('>Playbook<') >= 0 };
+        ''')
+        self.assertFalse(result['threw'])
+        self.assertFalse(result['hasPlaybookHeading'])
+
+    def test_collapse_and_reexpand_does_not_refetch(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._alert_row_html() + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: function() { return Promise.resolve({ playbook: null }); } });
+            };
+            await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            toggleRow(tr, null);
+            await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            window.__jsdom_result = {
+                playbookCallCount: fetchCalls.filter(function(u) { return u.indexOf('/api/playbook') === 0; }).length
+            };
+        ''')
+        self.assertEqual(result['playbookCallCount'], 1)
+
+    def test_expanding_sigma_alert_row_fetches_playbook_and_shows_it(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._sigma_row_html() + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: function() {
+                    return Promise.resolve({ playbook: { name: 'Sigma Playbook', description: 'D',
+                        questions: [{question: 'Q?', context: 'C'}] } });
+                } });
+            };
+            await new Promise(function(resolve) { toggleSigmaRow(tr, detailId, null); setTimeout(resolve, 20); });
+            var detailRow = document.getElementById(detailId);
+            window.__jsdom_result = {
+                playbookCalls: fetchCalls.filter(function(u) { return u.indexOf('/api/playbook') === 0; }),
+                detailHtml: detailRow.innerHTML
+            };
+        ''')
+        self.assertEqual(result['playbookCalls'], ['/api/playbook?type=sigma&id=221b251a-357a-49a9-920a-271802777cc0'])
+        self.assertIn('Sigma Playbook', result['detailHtml'])
+
+    def test_sigma_null_playbook_shows_no_section(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._sigma_row_html() + '''
+            window.fetch = function(url) {
+                return Promise.resolve({ json: function() { return Promise.resolve({ playbook: null }); } });
+            };
+            await new Promise(function(resolve) { toggleSigmaRow(tr, detailId, null); setTimeout(resolve, 20); });
+            var detailRow = document.getElementById(detailId);
+            window.__jsdom_result = { hasPlaybookHeading: detailRow.innerHTML.indexOf('>Playbook<') >= 0 };
+        ''')
+        self.assertFalse(result['hasPlaybookHeading'])
+
+    def test_sigma_collapse_and_reexpand_does_not_refetch(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._sigma_row_html() + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: function() { return Promise.resolve({ playbook: null }); } });
+            };
+            await new Promise(function(resolve) { toggleSigmaRow(tr, detailId, null); setTimeout(resolve, 20); });
+            toggleSigmaRow(tr, detailId, null);
+            await new Promise(function(resolve) { toggleSigmaRow(tr, detailId, null); setTimeout(resolve, 20); });
+            window.__jsdom_result = {
+                playbookCallCount: fetchCalls.filter(function(u) { return u.indexOf('/api/playbook') === 0; }).length
+            };
+        ''')
+        self.assertEqual(result['playbookCallCount'], 1)
+
+    def test_malicious_playbook_content_is_escaped(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._alert_row_html() + '''
+            window.fetch = function(url) {
+                return Promise.resolve({ json: function() {
+                    return Promise.resolve({ playbook: {
+                        name: '<img src=x onerror=alert(1)>',
+                        description: '<script>alert(2)</script>',
+                        questions: [{question: '<img src=x onerror=alert(3)>', context: '<img src=x onerror=alert(4)>'}]
+                    } });
+                } });
+            };
+            await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            var detailRow = tr.nextElementSibling;
+            window.__jsdom_result = {
+                imgCount: detailRow.querySelectorAll('img').length,
+                scriptCount: detailRow.querySelectorAll('script').length
+            };
+        ''')
+        self.assertEqual(result['imgCount'], 0)
+        self.assertEqual(result['scriptCount'], 0)
 
 
 class TestFormatDateRange(unittest.TestCase):
@@ -5354,10 +8509,6 @@ class TestSearchUI(unittest.TestCase):
     def test_baseEventStats_exists(self):
         self.assertIn('baseEventStats', JS_CONTENT,
                       'baseEventStats variable must exist for unfiltered totals')
-
-    def test_buildStats_uses_baseEventStats(self):
-        self.assertIn('baseEventStats[type]', JS_CONTENT,
-                      'buildStats must use baseEventStats for totals')
 
     def test_search_creates_chip_per_term(self):
         """buildFilterBarHtml must render one chip per search term."""
@@ -5662,6 +8813,78 @@ class TestReanalyzeUI(unittest.TestCase):
         self.assertIn("else if (detectedType === 'pcap') phase = 'network'", catch_section,
                       'Fallback must set network phase')
 
+    def test_row_notes_warning_shown_when_has_row_notes_true(self):
+        """Only shown when the analysis actually has row-level notes to
+        lose - matches this app's existing "hide irrelevant info rather
+        than show a no-op" convention (e.g. zero-count stat cards). The
+        Re-analyze button itself also turns red (.danger) in this case, so
+        the risk is visible even without reading the warning text."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                return Promise.resolve({ json: function() { return Promise.resolve({ meta: { detected_type: 'pcap' }, hasRowNotes: true }); } });
+            };
+            await openReanalyzeModal('abc123', 'test.pcap');
+            window.__jsdom_result = {
+                display: document.getElementById('reanalyzeRowNotesWarning').style.display,
+                text: document.getElementById('reanalyzeRowNotesWarning').textContent,
+                btnDanger: document.querySelector('.reanalyze-confirm-btn').classList.contains('danger'),
+            };
+        ''')
+        self.assertEqual(result['display'], 'block')
+        self.assertIn('WARNING!', result['text'])
+        self.assertIn('destroyed', result['text'])
+        self.assertTrue(result['btnDanger'], 'Re-analyze button must turn red when row notes would be lost')
+
+    def test_row_notes_warning_hidden_when_has_row_notes_false(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                return Promise.resolve({ json: function() { return Promise.resolve({ meta: { detected_type: 'pcap' }, hasRowNotes: false }); } });
+            };
+            await openReanalyzeModal('abc123', 'test.pcap');
+            window.__jsdom_result = {
+                display: document.getElementById('reanalyzeRowNotesWarning').style.display,
+                btnDanger: document.querySelector('.reanalyze-confirm-btn').classList.contains('danger'),
+            };
+        ''')
+        self.assertEqual(result['display'], 'none')
+        self.assertFalse(result['btnDanger'], 'Re-analyze button must stay its default color with no row notes')
+
+    def test_row_notes_warning_hidden_on_status_fetch_failure(self):
+        """Same fail-safe default as the phase-detection fallback - if we
+        can't confirm row notes exist, don't warn about them."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) { return Promise.reject(new Error('boom')); };
+            var threw = false;
+            try {
+                await openReanalyzeModal('abc123', 'test.pcap');
+            } catch (e) { threw = true; }
+            window.__jsdom_result = { threw: threw, display: document.getElementById('reanalyzeRowNotesWarning').style.display };
+        ''')
+        self.assertFalse(result['threw'])
+        self.assertEqual(result['display'], 'none')
+
+    def test_row_notes_danger_class_clears_between_opens(self):
+        """REGRESSION: openReanalyzeModal must recompute .danger every open,
+        not just add it - otherwise a row-noted analysis's red button would
+        stick around for the next (non-row-noted) analysis reanalyzed in
+        the same session."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function(url) {
+                return Promise.resolve({ json: function() { return Promise.resolve({ meta: { detected_type: 'pcap' }, hasRowNotes: true }); } });
+            };
+            await openReanalyzeModal('abc123', 'test.pcap');
+            window.fetch = function(url) {
+                return Promise.resolve({ json: function() { return Promise.resolve({ meta: { detected_type: 'pcap' }, hasRowNotes: false }); } });
+            };
+            await openReanalyzeModal('def456', 'test2.pcap');
+            window.__jsdom_result = { btnDanger: document.querySelector('.reanalyze-confirm-btn').classList.contains('danger') };
+        ''')
+        self.assertFalse(result['btnDanger'])
+
 
 class TestDeleteAllAnalysesUI(unittest.TestCase):
     def test_delete_all_button_on_welcome(self):
@@ -5892,6 +9115,32 @@ class TestFileAlertsUI(unittest.TestCase):
                          'detectFileType must detect log extensions')
         self.assertEqual(js_expression("detectFileType('payload.exe')"), 'binary',
                          'detectFileType must default to binary when neither PCAP nor log')
+
+
+class TestFileInfoExifRendering(unittest.TestCase):
+    """REGRESSION: renderFileInfoDetails's Exif Metadata section used to
+    pre-escape the key/value with escapeHtml() before passing them to
+    htmlRowText(), which already escapes both internally - any EXIF field
+    containing '&', '<', '>', or a quote rendered double-escaped (e.g.
+    '&amp;amp;' instead of '&amp;')."""
+
+    def test_exif_values_are_not_double_escaped(self):
+        from tests.jsdom_helper import js_statements
+        event = {'fileinfo': {'metadata': {'exif': {'Make & Model': 'Canon "EOS"'}}}}
+        result = js_statements('''
+            window.__jsdom_result = { html: renderFileInfoDetails(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertNotIn('&amp;amp;', result['html'])
+        self.assertIn('&amp;', result['html'])
+
+    def test_exif_section_renders_key_and_value(self):
+        from tests.jsdom_helper import js_statements
+        event = {'fileinfo': {'metadata': {'exif': {'Camera Model': 'PowerShot G7'}}}}
+        result = js_statements('''
+            window.__jsdom_result = { html: renderFileInfoDetails(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertIn('Camera Model', result['html'])
+        self.assertIn('PowerShot G7', result['html'])
 
 
 class TestMaybeLinkifyValueSecurity(unittest.TestCase):
@@ -7384,7 +10633,7 @@ class TestSankeyServerAggregation(unittest.TestCase):
         missing - the diagram would never transition between the server and
         client-side modes when a filter was toggled)."""
         applyFunc = JS_CONTENT.split('async function applyFilters(')[1].split('async function clearFilter(')[0]
-        clearFunc = JS_CONTENT.split('async function clearFilter(')[1].split('function applyFilter(')[0]
+        clearFunc = JS_CONTENT.split('async function clearFilter(')[1].split('function includeFilterValue(')[0]
         self.assertIn('updateSankeyDiagram()', applyFunc,
                       'applyFilters must call updateSankeyDiagram to refresh the diagram')
         self.assertIn('updateSankeyDiagram()', clearFunc,
@@ -7402,9 +10651,26 @@ class TestSankeyServerAggregation(unittest.TestCase):
                       'loadAnalysis must await loadTabData for the default tab')
 
     def test_default_tab_renders_table_not_stuck_loading(self):
-        """Behavioral reproduction of the race: firing loadTabData without await,
-        immediately followed by updateSankeyDiagram(), must leave the section
-        stuck on 'Loading...' - awaiting loadTabData first (the fix) must not."""
+        """Awaiting loadTabData before updateSankeyDiagram (the fix
+        test_loadAnalysis_awaits_default_tab_before_sankey checks for in
+        loadAnalysis's own source) must let the table render, not get
+        stuck on 'Loading...'.
+
+        This used to also carry a second "sanity check" half proving the
+        raced (unawaited) ordering reproduced the original bug - firing
+        loadTabData without awaiting it, then immediately calling
+        updateSankeyDiagram(), used to bump the SAME shared fetchGeneration
+        counter loadTabData's own in-flight fetchEventsPage call was
+        relying on, so buildSection's isStaleFetch guard silently dropped
+        the row-table render. Now that Sankey tracks staleness against its
+        own isolated sankeyFetchGeneration counter instead (see that
+        counter's own comment), updateSankeyDiagram() can no longer
+        collaterally invalidate an unrelated in-flight table fetch at all -
+        the raced ordering is no longer reproducible here, which is a real
+        side benefit of that isolation, not a loss of coverage. Awaiting
+        loadTabData before touching the diagram is still correct/good
+        practice regardless (guards against other out-of-order effects),
+        which is what the source-level test above still checks for."""
         from tests.jsdom_helper import js_statements
         setup = self._make_section('dns') + '''
             document.getElementById('section-dns').innerHTML = '<div class="loading">Loading...</div>';
@@ -7438,6 +10704,38 @@ class TestSankeyServerAggregation(unittest.TestCase):
         self.assertFalse(fixed['stillLoading'],
                          'awaiting loadTabData before updateSankeyDiagram must let the table render')
 
+    def test_updateSankeyDiagram_no_longer_collaterally_strands_an_unrelated_table_fetch(self):
+        """Locks in the side benefit described in the previous test's
+        docstring: firing loadTabData without awaiting it, then
+        immediately calling updateSankeyDiagram(), used to reproduce the
+        original bug (updateSankeyDiagram's bump of the then-shared
+        fetchGeneration counter invalidated loadTabData's own in-flight
+        fetchEventsPage call). With Sankey's staleness now tracked
+        separately, that specific collateral damage can no longer happen -
+        the table renders even in this raced ordering."""
+        from tests.jsdom_helper import js_statements
+        setup = self._make_section('dns') + '''
+            document.getElementById('section-dns').innerHTML = '<div class="loading">Loading...</div>';
+            var sankeyPanel = document.createElement('div');
+            sankeyPanel.id = 'sankeyPanel';
+            document.body.appendChild(sankeyPanel);
+            window.fetch = function(url) {
+                if (url.indexOf('/api/sankey-data') >= 0) {
+                    return Promise.resolve({ json: () => Promise.resolve({ nodes: [], links: [] }) });
+                }
+                if (url.indexOf('/api/events') >= 0 || url.indexOf('/api/count') >= 0) {
+                    return new Promise(resolve => setTimeout(() => resolve({
+                        json: () => Promise.resolve(url.indexOf('/api/count') >= 0 ? { count: 1 } : [{ event_type: 'dns', src_ip: '1.1.1.1' }])
+                    }), 20));
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc';
+            currentFilters = {};
+            currentSearch = [];
+            diagramMode = true;
+            advancedMode = false;
+        '''
         raced = js_statements(setup + '''
             loadTabData('dns');
             await updateSankeyDiagram();
@@ -7446,8 +10744,245 @@ class TestSankeyServerAggregation(unittest.TestCase):
                 stillLoading: document.getElementById('section-dns').innerHTML.indexOf('Loading...') >= 0
             };
         ''')
-        self.assertTrue(raced['stillLoading'],
-                        'sanity check: firing loadTabData without awaiting it must reproduce the stale-fetch race')
+        self.assertFalse(raced['stillLoading'],
+                         'updateSankeyDiagram must no longer be able to strand an unrelated in-flight table fetch')
+
+    def test_sortCurrentTable_calls_updateSankeyDiagram(self):
+        """REGRESSION: sortCurrentTable must call updateSankeyDiagram, same
+        as applyFilters/clearFilter above - sort order has no bearing on the
+        diagram's own content, but sortCurrentTable's own
+        bumpFetchGeneration() call collaterally invalidates (isStaleFetch)
+        any Sankey fetch that happened to still be in flight from a just-
+        prior tab load, and without this call nothing ever repaints it."""
+        func = JS_CONTENT.split('async function sortCurrentTable(')[1].split('\n        }')[0]
+        self.assertIn('updateSankeyDiagram()', func,
+                      'sortCurrentTable must call updateSankeyDiagram to refresh the diagram')
+
+    def test_sortCurrentTable_skips_updateSankeyDiagram_for_log_and_sigmaalert(self):
+        """REGRESSION: log and sigmaalert are the only two tabs reachable in
+        log-analysis mode, where #sankeyPanel stays display:none for the
+        whole session (clearAnalysisContainers) and loadTabData never
+        calls updateSankeyDiagram for either - their data has no
+        src_ip/dest_ip/dest_port shape for a Sankey diagram to plot.
+        sortCurrentTable's own updateSankeyDiagram() call (added to fix the
+        stranded-fetch bug above) must respect that same boundary, not
+        call it unconditionally for every event type - doing so wasted
+        work behind a hidden panel at best, and crashed in the case that
+        caught it (client-side buildSankeyData -> renderSankeySVG on
+        sigmaalert-shaped data reached real SVG-rendering code no other
+        sigmaalert code path exercises), see
+        TestSigmaAlertSortCrashRegression.test_sort_click_on_unfiltered_sigmaalert_tab_does_not_crash."""
+        func = JS_CONTENT.split('async function sortCurrentTable(')[1].split('\n        }')[0]
+        self.assertIn("eventType !== 'log' && eventType !== 'sigmaalert'", func,
+                      "sortCurrentTable must guard its updateSankeyDiagram() call against log/sigmaalert")
+
+    def test_unrelated_fetchGeneration_bump_no_longer_strands_sankey(self):
+        """REGRESSION (recurring): Sankey used to track its staleness
+        against the SAME shared fetchGeneration counter table/pagination/
+        sort/search fetches use - meaning any unrelated action bumping
+        that counter while a Sankey fetch was in flight could strand the
+        panel on 'Loading Sankey diagram...' forever unless that specific
+        call site remembered to also call updateSankeyDiagram() as a
+        follow-up. This was patched piecemeal at least twice already
+        (loadAnalysis, sortCurrentTable) and kept recurring at new call
+        sites (most recently the row-cell pivot menu's Hunt/Include/
+        Exclude/Only actions). Sankey now tracks staleness against its own
+        isolated sankeyFetchGeneration counter instead (see that counter's
+        own comment) - bumping the unrelated, shared counter must no
+        longer be able to strand it at all, closing off the whole bug
+        class rather than requiring every future caller to remember a
+        follow-up call.
+
+        Uses a manually-resolved Promise (not a setTimeout delay) for
+        deterministic control over exactly when the fetch is "in flight" -
+        this test's own JSDOM/Node subprocess has enough per-tick overhead
+        that small setTimeout delays don't reliably stay pending across a
+        handful of awaited ticks, which previously made this race
+        untestable with real timers."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('dns') + '''
+            // Let init()'s own residual fetches (still resolving against
+            // the default page-load mock) fully settle before this test
+            // starts - otherwise one of them can reset #sankeyPanel out
+            // from under this test's own tightly-sequenced assertions.
+            await new Promise(r => setTimeout(r, 50));
+            var resolveSankey;
+            window.fetch = function(url) {
+                if (url.indexOf('/api/sankey-data') >= 0) {
+                    return new Promise(resolve => { resolveSankey = resolve; });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc';
+            currentFilters = {};
+            currentSearch = [];
+            diagramMode = true;
+
+            var p = updateSankeyDiagram();
+            await Promise.resolve();
+            await Promise.resolve();
+            bumpFetchGeneration();
+            resolveSankey({ json: () => Promise.resolve({ nodes: [], links: [] }) });
+            await p;
+
+            window.__jsdom_result = {
+                stillLoading: document.getElementById('sankeyPanel').innerHTML.indexOf('Loading Sankey diagram') >= 0
+            };
+        ''')
+        self.assertFalse(result['stillLoading'],
+                        'an unrelated bumpFetchGeneration() must not strand an in-flight Sankey fetch anymore')
+
+    def test_bumpSankeyFetchGeneration_still_detects_a_genuinely_stale_fetch(self):
+        """The isolated counter must still do its own job - it isn't a
+        no-op, staleness detection just no longer piggybacks on the
+        unrelated shared counter. Bumping sankeyFetchGeneration itself
+        (what a real newer Sankey render - e.g. a second
+        updateSankeyDiagram() call - does internally) must still correctly
+        invalidate an in-flight older fetch."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('dns') + '''
+            await new Promise(r => setTimeout(r, 50));
+            var resolveSankey;
+            window.fetch = function(url) {
+                if (url.indexOf('/api/sankey-data') >= 0) {
+                    return new Promise(resolve => { resolveSankey = resolve; });
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc';
+            currentFilters = {};
+            currentSearch = [];
+            diagramMode = true;
+
+            var p = updateSankeyDiagram();
+            await Promise.resolve();
+            await Promise.resolve();
+            bumpSankeyFetchGeneration();
+            resolveSankey({ json: () => Promise.resolve({ nodes: [], links: [] }) });
+            await p;
+
+            window.__jsdom_result = {
+                stillLoading: document.getElementById('sankeyPanel').innerHTML.indexOf('Loading Sankey diagram') >= 0
+            };
+        ''')
+        self.assertTrue(result['stillLoading'],
+                        'a genuine Sankey-generation bump must still correctly invalidate the older in-flight fetch')
+
+    def test_sortCurrentTable_mid_flight_sankey_fetch_still_renders(self):
+        """Behavioral reproduction: sorting a column while a slow Sankey
+        fetch is still in flight (e.g. a large sample where /api/sankey-data
+        takes a moment) must not leave the panel stuck on 'Loading Sankey
+        diagram...' - sortCurrentTable's own updateSankeyDiagram() call
+        (the fix) must resolve it once the sort completes. Same
+        manually-resolved-Promise technique as the sanity check above, for
+        the same reliability reason."""
+        from tests.jsdom_helper import js_statements
+        dns_events = [
+            {'event_type': 'dns', 'proto': 'UDP', 'src_ip': '1.1.1.1', 'dest_ip': '2.2.2.2', 'dest_port': 53},
+            {'event_type': 'dns', 'proto': 'TCP', 'src_ip': '1.1.1.1', 'dest_ip': '3.3.3.3', 'dest_port': 53}
+        ]
+        result = js_statements(self._make_section('dns') + f'''
+            await new Promise(r => setTimeout(r, 50));
+            var resolveSankey;
+            var sankeyFetchCount = 0;
+            window.fetch = function(url) {{
+                if (url.indexOf('/api/sankey-data') >= 0) {{
+                    sankeyFetchCount++;
+                    return new Promise(resolve => {{ resolveSankey = resolve; }});
+                }}
+                if (url.indexOf('/api/events') >= 0) {{
+                    return Promise.resolve({{ json: () => Promise.resolve({json.dumps(dns_events)}) }});
+                }}
+                if (url.indexOf('/api/count') >= 0) {{
+                    return Promise.resolve({{ json: () => Promise.resolve({{ count: 2 }}) }});
+                }}
+                return Promise.resolve({{ json: () => Promise.resolve([]) }});
+            }};
+            currentMd5 = 'abc';
+            currentFilters = {{}};
+            currentSearch = [];
+            diagramMode = true;
+            advancedMode = false;
+            // Populate activeTableRender via the real code path (a let
+            // binding inside socrates.js's own closure, not settable
+            // directly from a separate eval - see the fixed/raced test
+            // above for the same constraint).
+            await buildSection('dns', {json.dumps(dns_events)});
+
+            // Polls (bounded, so a broken chain fails the test instead of
+            // hanging the whole process) until a NEW fetch('/api/sankey-data')
+            // call has replaced resolveSankey with a fresh resolver -
+            // sortCurrentTable's own chain (bump -> possibly ensureCappedBatch
+            // -> rerender -> updateSankeyDiagram) has an async hop count
+            // that shouldn't be hardcoded as a fixed number of ticks.
+            async function waitForNewResolver(prev) {{
+                for (var i = 0; i < 100; i++) {{
+                    if (resolveSankey !== prev) return resolveSankey;
+                    await Promise.resolve();
+                }}
+                return null;
+            }}
+
+            var firstFetch = updateSankeyDiagram();
+            var firstResolve = await waitForNewResolver(undefined);
+
+            // sortCurrentTable calls updateSankeyDiagram() again itself,
+            // which starts a SECOND fetch (bumping the isolated
+            // sankeyFetchGeneration counter, which is what actually
+            // supersedes the first fetch now) that also needs resolving
+            // before anything can settle.
+            var sortPromise = sortCurrentTable(0);
+            var secondResolve = await waitForNewResolver(firstResolve);
+
+            // Resolve the stranded first fetch (must be a no-op on the
+            // final DOM state - it's stale) then the second.
+            firstResolve({{ json: () => Promise.resolve({{ nodes: [], links: [] }}) }});
+            await firstFetch;
+            if (secondResolve) {{
+                secondResolve({{ json: () => Promise.resolve({{ nodes: [], links: [] }}) }});
+            }}
+            await sortPromise;
+
+            window.__jsdom_result = {{
+                sankeyFetchCount: sankeyFetchCount,
+                secondResolverSeen: secondResolve !== null,
+                stillLoading: document.getElementById('sankeyPanel').innerHTML.indexOf('Loading Sankey diagram') >= 0
+            }};
+        ''')
+        self.assertTrue(result['secondResolverSeen'],
+                        'sortCurrentTable must start its own fresh Sankey fetch within a bounded number of ticks')
+        self.assertEqual(result['sankeyFetchCount'], 2,
+                         'sortCurrentTable must start its own fresh Sankey fetch, not just leave the first one stranded')
+        self.assertFalse(result['stillLoading'],
+                         'sorting mid-flight must not permanently strand the Sankey panel on Loading')
+
+    def test_updateSankeyDiagram_shows_error_instead_of_stuck_loading_on_fetch_failure(self):
+        """REGRESSION: updateSankeyDiagram had no error handling at all - a
+        network failure, a non-OK response, or a malformed payload on a
+        large sample left the panel stuck on 'Loading Sankey diagram...'
+        forever, with no error message and no recovery path."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._make_section('dns') + '''
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url.indexOf('/api/sankey-data') >= 0) {
+                    return Promise.reject(new TypeError('Failed to fetch'));
+                }
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            currentMd5 = 'abc';
+            currentFilters = {};
+            currentSearch = [];
+            diagramMode = true;
+            await updateSankeyDiagram();
+            window.__jsdom_result = {
+                panelHtml: document.getElementById('sankeyPanel').innerHTML
+            };
+        ''')
+        self.assertNotIn('Loading Sankey diagram', result['panelHtml'],
+                         'a fetch failure must not leave the panel stuck on the loading placeholder')
+        self.assertIn('Error loading Sankey diagram', result['panelHtml'],
+                      'a fetch failure must show a clear error message instead')
 
 
 class TestAggregationServerFetch(unittest.TestCase):
@@ -8056,17 +11591,17 @@ class TestUserConfigurableQueryLimit(unittest.TestCase):
         ''')
         self.assertFalse(result['isActive'])
 
-    def test_handleSettingsBackdropClick_closes_only_on_backdrop(self):
+    def test_handleModalBackdropClick_closes_only_on_backdrop_for_settings(self):
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             var modal = document.getElementById('settingsModal');
             modal.classList.add('active');
-            handleSettingsBackdropClick({ target: modal });
+            handleModalBackdropClick({ target: modal, currentTarget: modal }, closeSettingsModal);
             var closedOnBackdrop = !modal.classList.contains('active');
 
             modal.classList.add('active');
             var inner = document.querySelector('#settingsModal .modal-content');
-            handleSettingsBackdropClick({ target: inner });
+            handleModalBackdropClick({ target: inner, currentTarget: modal }, closeSettingsModal);
             var stayedOpenOnContent = modal.classList.contains('active');
 
             window.__jsdom_result = { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: stayedOpenOnContent };
@@ -9252,9 +12787,28 @@ class TestAllTabServerSideSortAndAggregation(unittest.TestCase):
 
 
 RULES_INFO_RESPONSE = {
-    'suricata': {'count': 51552, 'updated': 1000.0},
+    'suricata': {
+        'count': 51552, 'updated': 1000.0,
+        'enabledSources': ['et/open'],
+        'availableSources': {
+            'et/open': {'label': 'Emerging Threats Open', 'url': 'https://rules.emergingthreats.net/', 'bakedIn': True},
+            'oisf/trafficid': {'label': 'Suricata Traffic ID', 'url': 'https://openinfosecfoundation.org/rules/trafficid/trafficid.rules', 'bakedIn': True},
+            'abuse.ch/urlhaus': {'label': 'Abuse.ch URLhaus', 'url': 'https://urlhaus.abuse.ch/', 'bakedIn': True},
+            'ipfire/dbl': {'label': 'IPFire DBL', 'url': 'https://www.ipfire.org/dbl/', 'bakedIn': False,
+                           'note': 'Large ruleset (~51 MiB) - first fetch can take a while'},
+        },
+        'defaultSources': ['et/open'],
+        'showProtocolDecodeAlerts': False,
+        'sidRanges': [
+            {'min': 2000005, 'max': 2527021, 'label': 'Emerging Threats Open'},
+            {'min': 80878811, 'max': 200000000, 'label': 'Abuse.ch URLhaus'},
+            {'min': 300000000, 'max': 300000033, 'label': 'Suricata Traffic ID'},
+            {'min': 1, 'max': 2290020, 'label': 'Suricata (built-in)'},
+        ],
+    },
     'yara': {'count': 12364, 'updated': 2000.0},
     'sigma': {'windows': {'count': 4308, 'updated': 3000.0}, 'linux': {'count': 182, 'updated': 4000.0}},
+    'staleThresholdHours': 168,
 }
 RULE_UPDATE_STATUS_IDLE = {
     'suricata': {'running': False, 'lines': [], 'done': True, 'error': None},
@@ -9287,7 +12841,7 @@ class TestRulesModal(unittest.TestCase):
                       'renderGearMenu() output must also have a Rules item')
 
     def test_rules_modal_skeleton_exists(self):
-        self.assertIn('id="rulesModal" onclick="handleRulesBackdropClick(event)"', HTML_CONTENT,
+        self.assertIn('id="rulesModal" onclick="handleModalBackdropClick(event, closeRulesModal)"', HTML_CONTENT,
                       'rulesModal must exist with a backdrop-click handler wired up')
         self.assertIn('id="rulesModalBody"', HTML_CONTENT,
                       'rulesModal must have a body element to render per-ruleset status into')
@@ -9330,12 +12884,212 @@ class TestRulesModal(unittest.TestCase):
         render_fn = JS_CONTENT.split('function renderRulesModalBody(info, status) {')[1].split('\n        }')[0]
         self.assertNotIn('(updated', render_fn,
                          'Sigma must not use a different (parentheses) format than Suricata/YARA')
-        self.assertEqual(render_fn.count('— updated'), 4,
-                         'Suricata, YARA, and Sigma windows + linux must all use the em-dash format (4 total)')
+        self.assertEqual(render_fn.count('— updated'), 3,
+                         'Suricata, YARA, and Sigma (now a single combined line) must all use the em-dash format (3 total)')
+
+    def test_sigma_windows_and_linux_combined_into_one_total_and_date(self):
+        """REGRESSION-avoidance: Sigma used to report windows/linux as two
+        separate counts (then, briefly, two counts on one comma-separated
+        line) - now it's a single combined total (sum of both) and a single
+        'updated' date (the older of the two - see get_suricata_rules_info's
+        "oldest active file" convention that this mirrors), matching
+        YARA/Suricata's one-count-one-date presentation exactly. Windows and
+        Linux remain two separate underlying rule files for actual
+        analysis (detect_os() still picks the matching one per artifact) -
+        only this summary line changed."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            var body = document.getElementById('rulesModalBody');
+            var sigmaHeading = Array.from(body.querySelectorAll('strong')).find(function(s) { return s.textContent === 'Sigma'; });
+            var lineDiv = sigmaHeading.closest('div');
+            window.__jsdom_result = {
+                countHtml: lineDiv.innerHTML,
+                expectedOlderDate: new Date(3000.0 * 1000).toLocaleString(),
+                expectedNewerDate: new Date(4000.0 * 1000).toLocaleString(),
+            };
+        ''')
+        self.assertNotIn('<br>', result['countHtml'])
+        self.assertNotIn('Windows:', result['countHtml'], 'per-ruleset labels must be gone, not just joined onto one line')
+        self.assertNotIn('Linux:', result['countHtml'])
+        # Fixture: windows count=4308, linux count=182 -> combined 4490.
+        # windows updated=3000.0 is older than linux's 4000.0, so 3000.0 is
+        # the one that must be shown/used for staleness.
+        self.assertIn('4,490 rules', result['countHtml'])
+        self.assertIn(result['expectedOlderDate'], result['countHtml'])
+        self.assertNotIn(result['expectedNewerDate'], result['countHtml'])
+
+    def test_ruleset_heading_and_count_share_one_line(self):
+        """The name/source line and the count/date line used to be two
+        separate lines (heading in a flex row, countText in its own <div>
+        below it) - now they're one line per ruleset: '<label> (<source>)
+        — <count> — updated <date>', for YARA, Sigma, and Suricata alike."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            var body = document.getElementById('rulesModalBody');
+            function lineFor(label) {
+                var heading = Array.from(body.querySelectorAll('strong')).find(function(s) { return s.textContent === label; });
+                return heading.closest('div').innerHTML;
+            }
+            window.__jsdom_result = {
+                yaraLine: lineFor('YARA'),
+                suricataLine: lineFor('Suricata'),
+            };
+        ''')
+        self.assertIn('(YARA Forge)', result['yaraLine'])
+        self.assertIn('12,364 rules', result['yaraLine'])
+        self.assertIn('— updated', result['yaraLine'])
+        self.assertNotIn('<div', result['yaraLine'], 'count/date must be inline (span), not a block-level div forcing a new line')
+        self.assertIn('(Enable/Disable Rulesets)', result['suricataLine'])
+        self.assertIn('51,552 rules', result['suricataLine'])
+        self.assertIn('— updated', result['suricataLine'])
+        self.assertNotIn('<div', result['suricataLine'])
+
+    def test_view_log_moved_to_main_line_button_cluster(self):
+        """View/Hide Log used to be its own line below the heading (either
+        alone when idle, or paired with an 'Updating… Ns' spinner while
+        running, since folded into the Update button itself instead - see
+        test_update_button_shows_spinner_and_elapsed_time_while_running
+        below) - it must now sit in the same button cluster as Update on
+        the main line, and when idle with a log available, no second line
+        should render at all anymore (nothing left to put there)."""
+        from tests.jsdom_helper import js_statements
+        status_with_log = json.loads(json.dumps(RULE_UPDATE_STATUS_IDLE))
+        status_with_log['yara'] = {'running': False, 'lines': ['YARA Forge rules refreshed successfully'], 'done': True, 'error': None}
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(status_with_log) + ''') });
+            };
+            await showRulesModal();
+            var body = document.getElementById('rulesModalBody');
+            var heading = Array.from(body.querySelectorAll('strong')).find(function(s) { return s.textContent === 'YARA'; });
+            var mainLine = heading.closest('div[style*="justify-content: space-between"]');
+            var buttonCluster = mainLine.lastElementChild;
+            var viewLogBtn = Array.from(buttonCluster.querySelectorAll('button')).find(function(b) { return b.textContent === 'View Log'; });
+            window.__jsdom_result = {
+                viewLogInButtonCluster: !!viewLogBtn,
+                mainLineHtml: mainLine.outerHTML,
+            };
+        ''')
+        self.assertTrue(result['viewLogInButtonCluster'], 'View Log must be in the same button row as Update')
+        self.assertIn('View Log', result['mainLineHtml'])
+
+    def test_update_button_shows_spinner_and_elapsed_time_while_running(self):
+        """The separate 'Updating… Ns' line (with its spinner) used to sit
+        below the heading, repeating "Updating…" that the Update button
+        itself already showed - both the spinner and the elapsed-seconds
+        counter now render inside the Update button's own label instead,
+        and that line is gone entirely. Idle rulesets still just say
+        'Update' with no spinner."""
+        from tests.jsdom_helper import js_statements
+        running_status = json.loads(json.dumps(RULE_UPDATE_STATUS_IDLE))
+        running_status['yara'] = {'running': True, 'lines': [], 'done': False, 'error': None}
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(running_status) + ''') });
+            };
+            await showRulesModal();
+            var body = document.getElementById('rulesModalBody');
+            var yaraHeading = Array.from(body.querySelectorAll('strong')).find(function(s) { return s.textContent === 'YARA'; });
+            var yaraUpdateBtn = yaraHeading.closest('div[style*="justify-content: space-between"]').querySelector('button[onclick*="triggerRulesetUpdate"]');
+            var suricataHeading = Array.from(body.querySelectorAll('strong')).find(function(s) { return s.textContent === 'Suricata'; });
+            var suricataUpdateBtn = suricataHeading.closest('div[style*="justify-content: space-between"]').querySelector('button[onclick*="triggerRulesetUpdate"]');
+            window.__jsdom_result = {
+                yaraButtonHtml: yaraUpdateBtn.innerHTML,
+                yaraDisabled: yaraUpdateBtn.disabled,
+                suricataButtonText: suricataUpdateBtn.textContent,
+                suricataDisabled: suricataUpdateBtn.disabled,
+            };
+        ''')
+        self.assertIn('rule-spinner', result['yaraButtonHtml'], 'the spinner must render inside the running ruleset\'s Update button')
+        self.assertIn('Updating…', result['yaraButtonHtml'])
+        self.assertTrue(result['yaraDisabled'])
+        self.assertEqual(result['suricataButtonText'], 'Update', 'an idle ruleset must show plain "Update", no spinner')
+        self.assertFalse(result['suricataDisabled'])
+
+    def test_update_button_elapsed_time_ticks_every_second(self):
+        """REGRESSION: the "Updating… Ns" counter must advance every
+        second on its own, not only every 2s alongside rulesPollInterval's
+        actual network fetch - a separate 1s ticker (rulesTickInterval)
+        re-renders from cached data (no extra fetch) while a ruleset is
+        running. Asserts on real elapsed wall-clock time since jsdom_helper
+        has no fake-timer support, matching this file's existing
+        real-timer convention (e.g. the 50ms init-settle waits elsewhere)."""
+        from tests.jsdom_helper import js_statements
+        running_status = json.loads(json.dumps(RULE_UPDATE_STATUS_IDLE))
+        running_status['yara'] = {'running': True, 'lines': [], 'done': False, 'error': None}
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            var statusFetchCount = 0;
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                if (url === '/api/rule-update-status') {
+                    statusFetchCount++;
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(running_status) + ''') });
+                }
+                // init()'s own startup fetches (e.g. /api/version,
+                // /api/analyses) may still be resolving asynchronously at
+                // this point - anything other than the two rules-modal
+                // endpoints above must be a harmless no-op, not counted.
+                return Promise.resolve({ json: () => Promise.resolve([]) });
+            };
+            function yaraButtonText() {
+                var body = document.getElementById('rulesModalBody');
+                var yaraHeading = Array.from(body.querySelectorAll('strong')).find(function(s) { return s.textContent === 'YARA'; });
+                return yaraHeading.closest('div[style*="justify-content: space-between"]').querySelector('button[onclick*="triggerRulesetUpdate"]').textContent;
+            }
+            await showRulesModal();
+            var fetchCountAfterOpen = statusFetchCount;
+            var textAtStart = yaraButtonText();
+            await new Promise(r => setTimeout(r, 1100));
+            window.__jsdom_result = {
+                textAtStart: textAtStart,
+                textAfterOneSecond: yaraButtonText(),
+                fetchCountAfterOpen: fetchCountAfterOpen,
+                fetchCountAfterOneSecond: statusFetchCount,
+            };
+        ''')
+        self.assertNotEqual(result['textAtStart'], result['textAfterOneSecond'],
+                            'the elapsed-time text must change within ~1s of the modal opening')
+        self.assertEqual(result['fetchCountAfterOpen'], result['fetchCountAfterOneSecond'],
+                         'the 1s tick must re-render from cache, not trigger an additional /api/rule-update-status fetch')
 
     def test_rules_modal_shows_source_links(self):
-        """Each ruleset section must name its upstream source and link to it,
-        so an analyst can see what they're pulling in before clicking Update."""
+        """YARA/Sigma each name their upstream source and link to it, so an
+        analyst can see what they're pulling in before clicking Update.
+        Suricata is the odd one out (see test below) - it has no single
+        fixed source to name now that sources are individually
+        enable/disable-able."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             // Let init()'s own auto-triggered showWelcome() settle first -
@@ -9356,23 +13110,629 @@ class TestRulesModal(unittest.TestCase):
         ''')
         self.assertEqual(result['links']['(YARA Forge)'], 'https://github.com/YARAHQ/yara-forge')
         self.assertEqual(result['links']['(SigmaHQ)'], 'https://github.com/SigmaHQ/sigma')
-        self.assertEqual(result['links']['(Emerging Threats Open)'], 'https://rules.emergingthreats.net/')
+        self.assertNotIn('(Emerging Threats Open)', result['links'],
+                          'a single hardcoded source name/link is inaccurate now that Suricata sources are individually selectable')
+
+    def test_rules_modal_suricata_heading_opens_sources_picker_instead_of_a_link(self):
+        """REGRESSION-avoidance: Suricata's heading used to link to
+        rules.emergingthreats.net under the label '(Emerging Threats
+        Open)', implying that's the definitive/only ruleset in use - no
+        longer true now that multiple sources can be enabled at once. It
+        must instead be a '(Enable/Disable Rulesets)' button that opens the sources
+        picker directly (toggleSuricataSources()) - the only trigger for it
+        now that the formerly-separate 'Choose Rulesets' button (pure
+        duplication once this heading link did the same thing) has been
+        removed."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            var btn = Array.from(document.querySelectorAll('button')).find(function(b) {
+                return b.textContent === '(Enable/Disable Rulesets)';
+            });
+            window.__jsdom_result = {
+                buttonFound: !!btn,
+                onclick: btn ? btn.getAttribute('onclick') : null,
+                sourcesListVisibleBefore: !!document.querySelector('.suricata-sources-list'),
+            };
+        ''')
+        self.assertTrue(result['buttonFound'], 'Suricata heading must have a "(Enable/Disable Rulesets)" trigger')
+        self.assertEqual(result['onclick'], 'toggleSuricataSources()')
+        self.assertFalse(result['sourcesListVisibleBefore'], 'sources list must still be collapsed by default')
+
+    def test_no_duplicate_choose_rulesets_button(self):
+        """The old standalone 'Choose Rulesets'/'Hide Rulesets' button must
+        be gone entirely, both collapsed and expanded - the heading's
+        '(Enable/Disable Rulesets)'/'(Hide Rulesets)' link is the only trigger now,
+        toggling label to match state on its own."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+
+            function buttonTexts() {
+                return Array.from(document.querySelectorAll('button')).map(function(b) { return b.textContent; });
+            }
+            var collapsedTexts = buttonTexts();
+
+            toggleSuricataSources();
+            var expandedTexts = buttonTexts();
+
+            window.__jsdom_result = { collapsedTexts: collapsedTexts, expandedTexts: expandedTexts };
+        ''')
+        self.assertNotIn('Choose Rulesets', result['collapsedTexts'])
+        self.assertNotIn('Hide Rulesets', result['collapsedTexts'])
+        self.assertNotIn('Choose Rulesets', result['expandedTexts'])
+        self.assertIn('(Hide Rulesets)', result['expandedTexts'])
+
+    def test_showRulesModal_true_arg_opens_with_sources_picker_already_expanded(self):
+        """showRulesModal(true) (used by the welcome help table's 'Multiple
+        Rulesets' link) must render the sources picker expanded on the very
+        first paint - not require a separate click on '(Enable/Disable Rulesets)'
+        once the modal is already open. A plain no-arg call, from the
+        collapsed-by-default initial state other showRulesModal() callers
+        rely on, must still open collapsed."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            var collapsedOnPlainOpen = !document.querySelector('.suricata-sources-list');
+            closeRulesModal();
+
+            await showRulesModal(true);
+            var expandedOnOpen = !!document.querySelector('.suricata-sources-list');
+
+            window.__jsdom_result = { collapsedOnPlainOpen: collapsedOnPlainOpen, expandedOnOpen: expandedOnOpen };
+        ''')
+        self.assertTrue(result['collapsedOnPlainOpen'], 'a plain showRulesModal() must open collapsed by default')
+        self.assertTrue(result['expandedOnOpen'], 'showRulesModal(true) must show the sources picker immediately')
+
+    def test_suricata_sources_checkboxes_render_when_expanded_and_reflect_enabled(self):
+        """The sources disclosure (toggled via the Suricata heading's
+        '(Enable/Disable Rulesets)'/'(Hide Rulesets)' link) must list one checkbox per
+        info.suricata.availableSources entry (the server-provided catalog,
+        not something duplicated in JS), checked according to
+        enabledSources, and collapsed by default."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            var body = document.getElementById('rulesModalBody');
+            var collapsedCheckboxCount = body.querySelectorAll('input[type=checkbox]').length;
+
+            toggleSuricataSources();
+            var checkboxes = {};
+            body.querySelectorAll('.suricata-sources-list input[type=checkbox]').forEach(function(cb) {
+                var name = cb.getAttribute('onchange').match(/handleSuricataSourceToggle\\('([^']+)'/)[1];
+                checkboxes[name] = cb.checked;
+            });
+            window.__jsdom_result = { collapsedCheckboxCount: collapsedCheckboxCount, checkboxes: checkboxes };
+        ''')
+        self.assertEqual(result['collapsedCheckboxCount'], 0, 'checkboxes must be hidden until expanded')
+        self.assertEqual(result['checkboxes'], {
+            'et/open': True,
+            'oisf/trafficid': False,
+            'abuse.ch/urlhaus': False,
+            'ipfire/dbl': False,
+        })
+
+    def test_suricata_source_checkboxes_use_theme_switch_styling(self):
+        """Each source's checkbox is wrapped in .theme-switch/
+        .theme-switch-slider (the same slider markup helpShowAgain and every
+        theme toggle already use) so it renders as a slider matching the
+        current theme's palette, not a bare native checkbox."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            var switches = document.querySelectorAll('.suricata-sources-list .theme-switch');
+            var slidersInsideSwitches = document.querySelectorAll('.suricata-sources-list .theme-switch > .theme-switch-slider');
+            var checkboxesInsideSwitches = document.querySelectorAll('.suricata-sources-list .theme-switch > input[type=checkbox]');
+            window.__jsdom_result = {
+                switchCount: switches.length,
+                slidersInsideSwitches: slidersInsideSwitches.length,
+                checkboxesInsideSwitches: checkboxesInsideSwitches.length,
+            };
+        ''')
+        self.assertEqual(result['switchCount'], 4)
+        self.assertEqual(result['slidersInsideSwitches'], 4)
+        self.assertEqual(result['checkboxesInsideSwitches'], 4)
+
+    def test_enable_all_button_names_the_source_it_skips(self):
+        """The 'Enable All' button's own label must name whichever
+        bakedIn=False source(s) enableAllSuricataSources() actually skips
+        (driven from the same 'bakedIn' field, not a separate hardcoded
+        string) - so a user isn't tempted to click it without ever reading
+        that source's WARNING! and getting hit with its slow first fetch.
+        With no such source in the catalog, the label reverts to plain
+        'Enable All'."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            var enableAllBtn = Array.from(document.querySelectorAll('button')).find(function(b) {
+                return b.getAttribute('onclick') === 'enableAllSuricataSources()';
+            });
+            window.__jsdom_result = { label: enableAllBtn.textContent };
+        ''')
+        self.assertEqual(result['label'], 'Enable All (except IPFire DBL)')
+
+    def test_enable_all_button_is_plain_when_nothing_to_skip(self):
+        from tests.jsdom_helper import js_statements
+        info_no_exceptions = json.loads(json.dumps(RULES_INFO_RESPONSE))
+        del info_no_exceptions['suricata']['availableSources']['ipfire/dbl']
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(info_no_exceptions) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            var enableAllBtn = Array.from(document.querySelectorAll('button')).find(function(b) {
+                return b.getAttribute('onclick') === 'enableAllSuricataSources()';
+            });
+            window.__jsdom_result = { label: enableAllBtn.textContent };
+        ''')
+        self.assertEqual(result['label'], 'Enable All')
+
+    def test_suricata_source_note_and_baked_in_false_render_as_a_caveat(self):
+        """A source's optional 'note' (e.g. ipfire/dbl's ~51 MiB size
+        warning) and a bakedIn=False flag must both surface as a "WARNING!"
+        marker with the detail in its title tooltip, next to that source's
+        checkbox - REGRESSION: rendering the full text inline instead
+        forced a horizontal scrollbar in this list's narrow two-column
+        layout. Must NOT appear for a baked-in, note-less source like
+        et/open."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            var labels = {};
+            document.querySelectorAll('.suricata-sources-list label').forEach(function(label) {
+                var name = label.querySelector('input').getAttribute('onchange').match(/handleSuricataSourceToggle\\('([^']+)'/)[1];
+                var noteSpan = Array.from(label.querySelectorAll('span')).find(function(s) { return s.textContent === 'WARNING!'; });
+                labels[name] = noteSpan ? noteSpan.getAttribute('title') : null;
+            });
+            window.__jsdom_result = { labels: labels };
+        ''')
+        self.assertIn('Large ruleset (~51 MiB)', result['labels']['ipfire/dbl'])
+        self.assertIn("not included in the app image", result['labels']['ipfire/dbl'])
+        self.assertIsNone(result['labels']['et/open'], 'a baked-in, note-less source must show no WARNING! marker')
+
+    def test_suricata_source_warning_marker_shows_toast_on_click(self):
+        """title-attribute tooltips don't fire on tap on iOS/Android (no
+        hover state), so touch users would never see the note at all if the
+        marker only relied on title. Clicking/tapping it must show the same
+        text as a toast instead - and must not toggle the checkbox its
+        label wraps, the same stopPropagation() guard the '(source)' link
+        already needs."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            var label = Array.from(document.querySelectorAll('.suricata-sources-list label')).find(function(l) {
+                return l.querySelector('input').getAttribute('onchange').indexOf("'ipfire/dbl'") !== -1;
+            });
+            var checkbox = label.querySelector('input');
+            var checkedBefore = checkbox.checked;
+            var warningSpan = Array.from(label.querySelectorAll('span')).find(function(s) { return s.textContent === 'WARNING!'; });
+            warningSpan.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            window.__jsdom_result = {
+                checkedUnchanged: checkbox.checked === checkedBefore,
+                toastText: document.querySelector('.socrates-toast')?.textContent || null,
+            };
+        ''')
+        self.assertTrue(result['checkedUnchanged'], 'clicking the WARNING! marker must not toggle the checkbox')
+        self.assertIn('Large ruleset (~51 MiB)', result['toastText'])
+
+    def test_suricata_sources_enable_all_and_revert_to_default(self):
+        """enableAllSuricataSources() checks every baked-in source but
+        deliberately skips any bakedIn=False one (currently just
+        ipfire/dbl) - a user clicking "Enable All" without reading that
+        source's WARNING! would otherwise get hit with its slow first fetch
+        unexpectedly. resetSuricataSourcesToDefault() ('Revert to Default
+        (ET Open)') checks only et/open and unchecks the rest - deliberately
+        not an all-unchecked state (that was the old 'Disable All' behavior)
+        since an all-unchecked checkbox display used to lie about the
+        pending state: closing the modal without clicking Update left the
+        server's enabledSources untouched, so et/open reappeared checked on
+        reopen even though every box had shown unchecked right before
+        closing."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+
+            function checkboxStates() {
+                var states = {};
+                document.querySelectorAll('.suricata-sources-list input[type=checkbox]').forEach(function(cb) {
+                    var name = cb.getAttribute('onchange').match(/handleSuricataSourceToggle\\('([^']+)'/)[1];
+                    states[name] = cb.checked;
+                });
+                return states;
+            }
+
+            enableAllSuricataSources();
+            var afterEnableAll = checkboxStates();
+
+            resetSuricataSourcesToDefault();
+            var afterReset = checkboxStates();
+
+            window.__jsdom_result = { afterEnableAll: afterEnableAll, afterReset: afterReset };
+        ''')
+        self.assertEqual(result['afterEnableAll'], {
+            'et/open': True, 'oisf/trafficid': True, 'abuse.ch/urlhaus': True, 'ipfire/dbl': False,
+        })
+        self.assertEqual(result['afterReset'], {
+            'et/open': True, 'oisf/trafficid': False, 'abuse.ch/urlhaus': False, 'ipfire/dbl': False,
+        })
+
+    def test_revert_to_default_reads_server_provided_default_not_hardcoded(self):
+        """resetSuricataSourcesToDefault() must read info.suricata.defaultSources
+        from the server (/api/rules-info) rather than hardcoding 'et/open'
+        client-side - same reasoning as bakedIn: DEFAULT_SURICATA_SOURCES in
+        suricata_analyzer.py is the single source of truth, and a second
+        independent copy in the frontend could silently drift from it.
+        Proven here with a fixture whose defaultSources is deliberately NOT
+        et/open, so a hardcoded client-side default would fail this test."""
+        from tests.jsdom_helper import js_statements
+        info_with_different_default = json.loads(json.dumps(RULES_INFO_RESPONSE))
+        info_with_different_default['suricata']['defaultSources'] = ['oisf/trafficid']
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(info_with_different_default) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            resetSuricataSourcesToDefault();
+            var states = {};
+            document.querySelectorAll('.suricata-sources-list input[type=checkbox]').forEach(function(cb) {
+                var name = cb.getAttribute('onchange').match(/handleSuricataSourceToggle\\('([^']+)'/)[1];
+                states[name] = cb.checked;
+            });
+            window.__jsdom_result = states;
+        ''')
+        self.assertEqual(result, {
+            'et/open': False, 'oisf/trafficid': True, 'abuse.ch/urlhaus': False, 'ipfire/dbl': False,
+        })
+
+    def test_suricata_source_toggle_survives_poll_tick(self):
+        """REGRESSION: refreshRulesModal() polls /api/rules-info every 2s
+        while the modal is open - a checkbox the user just toggled must not
+        get silently reverted by the next tick's re-render, the same
+        protection already given to staleThresholdDaysInput while focused."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            handleSuricataSourceToggle('abuse.ch/urlhaus', true);
+            await refreshRulesModal();
+            var body = document.getElementById('rulesModalBody');
+            var cb = Array.from(body.querySelectorAll('input[type=checkbox]')).find(function(el) {
+                return el.getAttribute('onchange').indexOf("'abuse.ch/urlhaus'") !== -1;
+            });
+            window.__jsdom_result = { stillChecked: cb ? cb.checked : null };
+        ''')
+        self.assertTrue(result['stillChecked'], 'a poll tick must not revert a just-toggled checkbox')
+
+    def test_stale_threshold_days_input_exists(self):
+        self.assertIn('id="staleThresholdDaysInput"', HTML_CONTENT)
+        self.assertIn('onchange="handleStaleThresholdDaysChange(this)"', HTML_CONTENT)
+        self.assertIn('min="1"', HTML_CONTENT)
+        self.assertIn('max="365"', HTML_CONTENT)
+
+    def test_rules_modal_width_is_normal(self):
+        """Suricata's update log is now one concise line per source (see
+        suricata_analyzer._fetch_single_source), not suricata-update's full
+        internal log, so the modal no longer needs a widened variant."""
+        self.assertIn('#rulesModal .modal-content { max-width: 900px', CSS_CONTENT)
+        self.assertNotIn('#rulesModal.wide', CSS_CONTENT)
+
+    def test_only_one_rules_disclosure_open_at_a_time(self):
+        """REGRESSION-avoidance: stacking multiple long disclosed sections
+        (a ruleset's log, the Suricata sources checkbox list) at once used
+        to force a vertical scrollbar in the modal. Opening any one of the
+        three per-ruleset logs or the Suricata sources list must collapse
+        whichever of the other three was open, so at most one is ever
+        visible - toggling the same one again just closes it, leaving
+        nothing open."""
+        from tests.jsdom_helper import js_statements
+        status_with_logs = {
+            'suricata': {'running': False, 'lines': ['suricata line'], 'done': True, 'error': None},
+            'yara': {'running': False, 'lines': ['yara line'], 'done': True, 'error': None},
+            'sigma': {'running': False, 'lines': ['sigma line'], 'done': True, 'error': None},
+        }
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(status_with_logs) + ''') });
+            };
+            await showRulesModal();
+
+            function openState() {
+                return {
+                    suricataLog: !!document.querySelector('.rule-update-log[data-ruleset="suricata"]'),
+                    yaraLog: !!document.querySelector('.rule-update-log[data-ruleset="yara"]'),
+                    sigmaLog: !!document.querySelector('.rule-update-log[data-ruleset="sigma"]'),
+                    sourcesList: !!document.querySelector('.suricata-sources-list'),
+                };
+            }
+
+            toggleRuleLog('suricata');
+            var afterSuricataLog = openState();
+
+            toggleSuricataSources();
+            var afterSourcesList = openState();
+
+            toggleRuleLog('yara');
+            var afterYaraLog = openState();
+
+            toggleRuleLog('yara');
+            var afterClosingYaraLog = openState();
+
+            window.__jsdom_result = {
+                afterSuricataLog: afterSuricataLog,
+                afterSourcesList: afterSourcesList,
+                afterYaraLog: afterYaraLog,
+                afterClosingYaraLog: afterClosingYaraLog,
+            };
+        ''')
+        self.assertEqual(result['afterSuricataLog'], {
+            'suricataLog': True, 'yaraLog': False, 'sigmaLog': False, 'sourcesList': False,
+        })
+        self.assertEqual(result['afterSourcesList'], {
+            'suricataLog': False, 'yaraLog': False, 'sigmaLog': False, 'sourcesList': True,
+        }, 'opening the sources list must collapse the suricata log that was open')
+        self.assertEqual(result['afterYaraLog'], {
+            'suricataLog': False, 'yaraLog': True, 'sigmaLog': False, 'sourcesList': False,
+        }, 'opening the yara log must collapse the sources list that was open')
+        self.assertEqual(result['afterClosingYaraLog'], {
+            'suricataLog': False, 'yaraLog': False, 'sigmaLog': False, 'sourcesList': False,
+        }, 'toggling the same log again must close it, leaving nothing open')
+
+    def test_getUserStaleThresholdDays_valid_invalid_and_unset(self):
+        """Unlike getUserQueryLimit()/getUserMaxUploadSizeMB(), invalid or
+        unset must return null (not a fallback constant) - there is no
+        client-side default to fall back to, only the server's value."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var unset = getUserStaleThresholdDays();
+            localStorage.setItem('socrates_staleThresholdDays', '14');
+            var valid = getUserStaleThresholdDays();
+            localStorage.setItem('socrates_staleThresholdDays', '0');
+            var tooLow = getUserStaleThresholdDays();
+            localStorage.setItem('socrates_staleThresholdDays', '9999');
+            var tooHigh = getUserStaleThresholdDays();
+            localStorage.setItem('socrates_staleThresholdDays', 'not-a-number');
+            var nonNumeric = getUserStaleThresholdDays();
+            window.__jsdom_result = { unset: unset, valid: valid, tooLow: tooLow, tooHigh: tooHigh, nonNumeric: nonNumeric };
+        ''')
+        self.assertIsNone(result['unset'])
+        self.assertEqual(result['valid'], 14)
+        self.assertIsNone(result['tooLow'])
+        self.assertIsNone(result['tooHigh'])
+        self.assertIsNone(result['nonNumeric'])
+
+    def test_resolveStaleThresholdHours_prefers_override(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var noOverride = _resolveStaleThresholdHours(168);
+            localStorage.setItem('socrates_staleThresholdDays', '3');
+            var withOverride = _resolveStaleThresholdHours(168);
+            window.__jsdom_result = { noOverride: noOverride, withOverride: withOverride };
+        ''')
+        self.assertEqual(result['noOverride'], 168, 'falls back to the server value with no override')
+        self.assertEqual(result['withOverride'], 72, '3-day override must resolve to 72 hours, ignoring the server value')
+
+    def test_handleStaleThresholdDaysChange_applies_immediately_to_modal_and_notification(self):
+        """A ruleset 5 days old must flip from fresh to stale in both the
+        Rules modal's date coloring and checkForStaleRules()'s notification
+        the moment the override is set to 3 days - proving both consumers
+        actually share the same resolved threshold, not just in theory."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            localStorage.setItem('socrates_checkForStaleRules', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            var nowSec = Date.now() / 1000;
+            var fiveDaysOld = nowSec - (5 * 86400);
+            var info = {
+                suricata: { count: 51552, updated: fiveDaysOld },
+                yara: { count: 12364, updated: fiveDaysOld },
+                sigma: { windows: { count: 4308, updated: fiveDaysOld }, linux: { count: 182, updated: fiveDaysOld } },
+                staleThresholdHours: 168,
+            };
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(info) });
+                }
+                return Promise.resolve({ ok: true, json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            var beforeStaleCount = document.getElementById('rulesModalBody').querySelectorAll('span[style*="badge-warning-text"]').length;
+
+            handleStaleThresholdDaysChange({ value: '3' });
+            var afterStaleCount = document.getElementById('rulesModalBody').querySelectorAll('span[style*="badge-warning-text"]').length;
+
+            await checkForStaleRules();
+            var toast = document.querySelector('.socrates-toast');
+            window.__jsdom_result = {
+                beforeStaleCount: beforeStaleCount,
+                afterStaleCount: afterStaleCount,
+                toastText: toast ? toast.textContent : null
+            };
+        ''')
+        self.assertEqual(result['beforeStaleCount'], 0, '5 days old must not be stale under the 168h/7-day server default')
+        self.assertEqual(result['afterStaleCount'], 3, 'all 3 dates (suricata, yara, sigma\'s combined date) must flip to stale once the override drops to 3 days')
+        self.assertIn('Suricata, YARA, and Sigma rules are stale.', result['toastText'],
+                      'the notification must also respect the same 3-day override')
+
+    def test_handleStaleThresholdDaysChange_invalid_value_clears_override(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_staleThresholdDays', '5');
+            handleStaleThresholdDaysChange({ value: 'garbage' });
+            window.__jsdom_result = { cleared: localStorage.getItem('socrates_staleThresholdDays') };
+        ''')
+        self.assertIsNone(result['cleared'])
+
+    def test_refreshRulesModal_shows_override_or_server_default_in_days_input(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ ok: true, json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await refreshRulesModal();
+            var defaultShown = document.getElementById('staleThresholdDaysInput').value;
+
+            localStorage.setItem('socrates_staleThresholdDays', '21');
+            await refreshRulesModal();
+            var overrideShown = document.getElementById('staleThresholdDaysInput').value;
+            window.__jsdom_result = { defaultShown: defaultShown, overrideShown: overrideShown };
+        ''')
+        self.assertEqual(result['defaultShown'], '7', 'RULES_INFO_RESPONSE staleThresholdHours=168 -> 7 days shown with no override')
+        self.assertEqual(result['overrideShown'], '21')
+
+    def test_refreshRulesModal_does_not_clobber_focused_days_input(self):
+        """refreshRulesModal() polls every 2s while the modal is open - it
+        must not overwrite the days input while the user is mid-typing in
+        it, or a poll tick would yank back a value they haven't submitted
+        yet (same class of bug the log-scroll-preservation regression
+        guards against for the log viewer)."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ ok: true, json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await refreshRulesModal();
+            var input = document.getElementById('staleThresholdDaysInput');
+            input.value = '99';
+            input.focus();
+            await refreshRulesModal();
+            window.__jsdom_result = { valueWhileFocused: input.value };
+        ''')
+        self.assertEqual(result['valueWhileFocused'], '99', 'a focused input must not be overwritten by a poll tick')
 
     def test_isRulesetStale(self):
+        """thresholdHours comes from /api/rules-info's staleThresholdHours
+        (server's config.RULES_MAX_AGE_HOURS) rather than a hardcoded
+        frontend constant - the 168 used below is this test's own
+        arbitrary value, not a claim about the real current default (see
+        config.py for that) - see AGENTS.md's Detection Rule
+        Freshness section for why the two used to disagree."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             var nowSec = Date.now() / 1000;
             window.__jsdom_result = {
-                fresh: isRulesetStale(nowSec - 3600),
-                justUnderThreshold: isRulesetStale(nowSec - (29 * 86400)),
-                stale: isRulesetStale(nowSec - (31 * 86400)),
-                never: isRulesetStale(null),
-                undef: isRulesetStale(undefined)
+                fresh: isRulesetStale(nowSec - 3600, 168),
+                justUnderThreshold: isRulesetStale(nowSec - (6 * 86400), 168),
+                stale: isRulesetStale(nowSec - (8 * 86400), 168),
+                never: isRulesetStale(null, 168),
+                undef: isRulesetStale(undefined, 168)
             };
         ''')
         self.assertFalse(result['fresh'], 'An hour-old update must not be flagged stale')
-        self.assertFalse(result['justUnderThreshold'], 'An update just under 30 days old must not be flagged stale')
-        self.assertTrue(result['stale'], 'An update over 30 days old must be flagged stale')
+        self.assertFalse(result['justUnderThreshold'], 'An update just under 7 days old must not be flagged stale')
+        self.assertTrue(result['stale'], 'An update over 7 days old must be flagged stale')
         self.assertTrue(result['never'], 'A null (never updated) epoch must be flagged stale')
         self.assertTrue(result['undef'], 'An undefined epoch must be flagged stale')
 
@@ -9381,9 +13741,9 @@ class TestRulesModal(unittest.TestCase):
         result = js_statements('''
             var nowSec = Date.now() / 1000;
             window.__jsdom_result = {
-                staleHtml: formatDateSpan(nowSec - (31 * 86400)),
-                freshHtml: formatDateSpan(nowSec - 3600),
-                neverHtml: formatDateSpan(null)
+                staleHtml: formatDateSpan(nowSec - (8 * 86400), 168),
+                freshHtml: formatDateSpan(nowSec - 3600, 168),
+                neverHtml: formatDateSpan(null, 168)
             };
         ''')
         self.assertIn('var(--badge-warning-text)', result['staleHtml'], 'Stale dates must be colored with the warning color')
@@ -9412,9 +13772,14 @@ class TestRulesModal(unittest.TestCase):
                 staleCount: body.querySelectorAll('span[style*="badge-warning-text"]').length
             };
         ''')
-        self.assertEqual(result['staleCount'], 4, 'All 4 dates (suricata, yara, sigma windows+linux) must be flagged stale')
+        self.assertEqual(result['staleCount'], 3, 'All 3 dates (suricata, yara, sigma\'s now-combined date) must be flagged stale')
 
     def test_triggerRulesetUpdate_posts_ruleset_body(self):
+        """triggerRulesetUpdate('suricata') must also include the current
+        source checkbox selection (empty here since the modal was never
+        opened to initialize suricataSourceSelection from the server) -
+        see test_triggerRulesetUpdate_posts_selected_sources below for the
+        populated-selection case."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             var fetchCalls = [];
@@ -9427,10 +13792,144 @@ class TestRulesModal(unittest.TestCase):
             };
             await triggerRulesetUpdate('suricata');
             window.__jsdom_result = {
-                posted: fetchCalls.some(c => c.url === '/api/update-rules' && c.method === 'POST' && c.body === JSON.stringify({ ruleset: 'suricata' }))
+                posted: fetchCalls.some(c => c.url === '/api/update-rules' && c.method === 'POST' && c.body === JSON.stringify({ ruleset: 'suricata', sources: [], showProtocolDecodeAlerts: false }))
             };
         ''')
-        self.assertTrue(result['posted'], "triggerRulesetUpdate('suricata') must POST {ruleset: 'suricata'}")
+        self.assertTrue(result['posted'], "triggerRulesetUpdate('suricata') must POST {ruleset: 'suricata', sources: [], showProtocolDecodeAlerts: false}")
+
+    def test_triggerRulesetUpdate_posts_selected_sources(self):
+        """Once the Rules modal has been opened (so suricataSourceSelection
+        is initialized from /api/rules-info's enabledSources) and a
+        checkbox toggled, triggerRulesetUpdate('suricata') must send the
+        resulting selection, not just the server's original set."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            var fetchCalls = [];
+            window.fetch = function(url, opts) {
+                if (url !== '/api/update-rules') {
+                    fetchCalls.push({ url: url, method: opts && opts.method, body: opts && opts.body });
+                }
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                if (url === '/api/update-rules') {
+                    fetchCalls.push({ url: url, method: opts && opts.method, body: opts && opts.body });
+                    return Promise.resolve({ json: () => Promise.resolve({ status: 'started' }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            handleSuricataSourceToggle('abuse.ch/urlhaus', true);
+            await triggerRulesetUpdate('suricata');
+            var call = fetchCalls.find(c => c.url === '/api/update-rules');
+            window.__jsdom_result = { body: call ? JSON.parse(call.body) : null };
+        ''')
+        self.assertIsNotNone(result['body'])
+        self.assertEqual(result['body']['ruleset'], 'suricata')
+        self.assertEqual(sorted(result['body']['sources']), ['abuse.ch/urlhaus', 'et/open'])
+
+    def test_show_protocol_decode_alerts_checkbox_reflects_server_state(self):
+        """The 'Show protocol-anomaly noise alerts' checkbox in the
+        sources disclosure must initialize from
+        info.suricata.showProtocolDecodeAlerts, the same re-sync-on-open
+        pattern as suricataSourceSelection."""
+        from tests.jsdom_helper import js_statements
+        info_enabled = json.loads(json.dumps(RULES_INFO_RESPONSE))
+        info_enabled['suricata']['showProtocolDecodeAlerts'] = True
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(info_enabled) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            var cb = Array.from(document.querySelectorAll('input[type=checkbox]')).find(function(el) {
+                return el.getAttribute('onchange') === 'handleShowProtocolDecodeAlertsToggle(this.checked)';
+            });
+            window.__jsdom_result = { checked: cb ? cb.checked : null };
+        ''')
+        self.assertTrue(result['checked'], 'checkbox must reflect showProtocolDecodeAlerts: true from the server')
+
+    def test_show_protocol_decode_alerts_checkbox_unchecked_by_default(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            var cb = Array.from(document.querySelectorAll('input[type=checkbox]')).find(function(el) {
+                return el.getAttribute('onchange') === 'handleShowProtocolDecodeAlertsToggle(this.checked)';
+            });
+            window.__jsdom_result = { checked: cb ? cb.checked : null };
+        ''')
+        self.assertFalse(result['checked'], 'checkbox must be unchecked when showProtocolDecodeAlerts is false')
+
+    def test_triggerRulesetUpdate_posts_toggled_show_protocol_decode_alerts(self):
+        """Toggling the checkbox must reach the server as
+        showProtocolDecodeAlerts in the same /api/update-rules POST as the
+        source selection, so it's applied atomically with whatever else the
+        user changed before clicking Update."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            var fetchCalls = [];
+            window.fetch = function(url, opts) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                if (url === '/api/update-rules') {
+                    fetchCalls.push({ url: url, method: opts && opts.method, body: opts && opts.body });
+                    return Promise.resolve({ json: () => Promise.resolve({ status: 'started' }) });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            handleShowProtocolDecodeAlertsToggle(true);
+            await triggerRulesetUpdate('suricata');
+            var call = fetchCalls.find(c => c.url === '/api/update-rules');
+            window.__jsdom_result = { body: call ? JSON.parse(call.body) : null };
+        ''')
+        self.assertIsNotNone(result['body'])
+        self.assertIs(result['body']['showProtocolDecodeAlerts'], True)
+
+    def test_show_protocol_decode_alerts_toggle_survives_poll_tick(self):
+        """Same protection staleThresholdDaysInput and the per-source
+        checkboxes already get - a poll tick mid-edit must not revert a
+        just-toggled checkbox back to the server's last-known value."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            handleShowProtocolDecodeAlertsToggle(true);
+            await refreshRulesModal();
+            var cb = Array.from(document.querySelectorAll('input[type=checkbox]')).find(function(el) {
+                return el.getAttribute('onchange') === 'handleShowProtocolDecodeAlertsToggle(this.checked)';
+            });
+            window.__jsdom_result = { stillChecked: cb ? cb.checked : null };
+        ''')
+        self.assertTrue(result['stillChecked'], 'a poll tick must not revert a just-toggled checkbox')
 
     def test_triggerRulesetUpdate_does_not_restart_polling_after_modal_closed_mid_flight(self):
         """REGRESSION: closing the Rules modal (Escape/backdrop/close
@@ -9464,9 +13963,9 @@ class TestRulesModal(unittest.TestCase):
         fire a toast once the transition to done is observed."""
         from tests.jsdom_helper import js_statements
         running_status = json.loads(json.dumps(RULE_UPDATE_STATUS_IDLE))
-        running_status['suricata'] = {'running': True, 'lines': ['Checking for internet access...'], 'done': False, 'error': None}
+        running_status['suricata'] = {'running': True, 'lines': ['Fetched et/open in 4 seconds'], 'done': False, 'error': None}
         done_status = json.loads(json.dumps(RULE_UPDATE_STATUS_IDLE))
-        done_status['suricata'] = {'running': False, 'lines': ['Checking for internet access...', 'Suricata rules updated successfully'], 'done': True, 'error': None}
+        done_status['suricata'] = {'running': False, 'lines': ['Fetched et/open in 4 seconds', 'Suricata rules updated successfully'], 'done': True, 'error': None}
         result = js_statements('''
             var callCount = 0;
             window.fetch = function(url) {
@@ -9527,6 +14026,69 @@ class TestRulesModal(unittest.TestCase):
         self.assertTrue(result['sameElementReplaced'], 'the log box element must actually be a fresh DOM node each poll (innerHTML replace)')
         self.assertEqual(result['scrollTopAfter'], 42, 'scroll position must survive the innerHTML replace')
 
+    def test_refresh_preserves_suricata_sources_scroll_position_across_re_renders(self):
+        """REGRESSION: the checkbox list (.suricata-sources-list) is its own
+        scrollable box, same as a per-ruleset log - it must not get yanked
+        back to the top by the next 2s poll tick either."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            localStorage.setItem('socrates_hideHelp', 'true');
+            await new Promise(r => setTimeout(r, 50));
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
+            };
+            await showRulesModal();
+            toggleSuricataSources();
+            var listBox = document.querySelector('.suricata-sources-list');
+            listBox.scrollTop = 17;
+            await refreshRulesModal();
+            var listBoxAfter = document.querySelector('.suricata-sources-list');
+            window.__jsdom_result = {
+                sameElementReplaced: listBoxAfter !== listBox,
+                scrollTopAfter: listBoxAfter.scrollTop
+            };
+        ''')
+        self.assertTrue(result['sameElementReplaced'], 'the checkbox list must actually be a fresh DOM node each poll (innerHTML replace)')
+        self.assertEqual(result['scrollTopAfter'], 17, 'scroll position must survive the innerHTML replace')
+
+    def test_refresh_does_not_clear_text_selection_in_log(self):
+        """REGRESSION: a user highlighting log text to copy it would have
+        the selection silently cleared a couple seconds later by the next
+        poll tick's innerHTML replace, even though the visible text never
+        changed - a fresh DOM node isn't the node the Selection API is
+        anchored to. renderRulesModalBodyIntoDom() must skip the replace
+        entirely while a selection lives inside the modal."""
+        from tests.jsdom_helper import js_statements
+        running_status = json.loads(json.dumps(RULE_UPDATE_STATUS_IDLE))
+        running_status['suricata'] = {'running': True, 'lines': ['line 1', 'line 2'], 'done': False, 'error': None}
+        result = js_statements('''
+            window.fetch = function(url) {
+                if (url === '/api/rules-info') {
+                    return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULES_INFO_RESPONSE) + ''') });
+                }
+                return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(running_status) + ''') });
+            };
+            await refreshRulesModal();
+            toggleRuleLog('suricata');
+            var logBox = document.querySelector('.rule-update-log[data-ruleset="suricata"]');
+            var range = document.createRange();
+            range.selectNodeContents(logBox);
+            var selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            await refreshRulesModal();
+            var logBoxAfter = document.querySelector('.rule-update-log[data-ruleset="suricata"]');
+            window.__jsdom_result = {
+                sameElementKept: logBoxAfter === logBox,
+                selectionSurvived: !window.getSelection().isCollapsed
+            };
+        ''')
+        self.assertTrue(result['sameElementKept'], 'poll tick must skip the innerHTML replace while a selection lives inside the log')
+        self.assertTrue(result['selectionSurvived'], 'text selection inside the log must survive a poll tick')
+
     def test_escape_closes_rules_modal(self):
         from tests.jsdom_helper import js_statements
         result = js_statements('''
@@ -9541,23 +14103,110 @@ class TestRulesModal(unittest.TestCase):
         self.assertTrue(result['openBefore'], 'rules modal must actually be open before pressing Escape')
         self.assertFalse(result['openAfter'], 'Escape must close the rules modal')
 
-    def test_handleRulesBackdropClick_closes_only_on_backdrop(self):
+    def test_handleModalBackdropClick_closes_only_on_backdrop_for_rules(self):
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             var modal = document.getElementById('rulesModal');
             modal.classList.add('active');
-            handleRulesBackdropClick({ target: modal });
+            handleModalBackdropClick({ target: modal, currentTarget: modal }, closeRulesModal);
             var closedOnBackdrop = !modal.classList.contains('active');
 
             modal.classList.add('active');
             var inner = document.querySelector('#rulesModal .modal-content');
-            handleRulesBackdropClick({ target: inner });
+            handleModalBackdropClick({ target: inner, currentTarget: modal }, closeRulesModal);
             var stayedOpenOnContent = modal.classList.contains('active');
 
             window.__jsdom_result = { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: stayedOpenOnContent };
         ''')
         self.assertTrue(result['closedOnBackdrop'])
         self.assertTrue(result['stayedOpenOnContent'])
+
+
+class TestAlertRulesetClassification(unittest.TestCase):
+    """classifyRuleset() and its wiring into getColumnsForType/
+    buildRowForEvent/extractValue/renderAlertDetails for the alert event
+    type - client-side equivalent of suricata_sid_ranges.py's
+    classify_alert_ruleset(), fed from /api/rules-info's suricata.sidRanges
+    (see RULES_INFO_RESPONSE's sidRanges fixture above). SID_RANGES is a
+    `var` (not `let`) specifically so tests can assign it directly across
+    separate script evaluations - same reasoning as currentFilters/
+    advancedMode elsewhere in this file."""
+
+    SID_RANGES_SETUP = 'SID_RANGES = ' + json.dumps(RULES_INFO_RESPONSE['suricata']['sidRanges']) + ';'
+
+    def test_getColumnsForType_alert_includes_ruleset(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = { cols: getColumnsForType('alert') };
+        ''')
+        self.assertIn('Ruleset', result['cols'])
+        # Between Category and Severity, matching Alert/Category/Ruleset/
+        # Severity's existing left-to-right ordering.
+        self.assertLess(result['cols'].index('Category'), result['cols'].index('Ruleset'))
+        self.assertLess(result['cols'].index('Ruleset'), result['cols'].index('Severity'))
+
+    def test_classifyRuleset_returns_empty_before_sid_ranges_loaded(self):
+        """Before /api/rules-info resolves, SID_RANGES is still null -
+        classifyRuleset() must return '' (not a misleading 'Other /
+        Unrecognized', which would claim a real classification happened)."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            SID_RANGES = null;
+            window.__jsdom_result = { value: classifyRuleset(2010957) };
+        ''')
+        self.assertEqual(result['value'], '')
+
+    def test_classifyRuleset_classifies_once_sid_ranges_loaded(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.SID_RANGES_SETUP + '''
+            window.__jsdom_result = {
+                etOpen: classifyRuleset(2010957),
+                urlhaus: classifyRuleset(84760628),
+                builtin: classifyRuleset(1),
+                other: classifyRuleset(9999999999),
+                missing: classifyRuleset(undefined),
+            };
+        ''')
+        self.assertEqual(result['etOpen'], 'Emerging Threats Open')
+        self.assertEqual(result['urlhaus'], 'Abuse.ch URLhaus')
+        self.assertEqual(result['builtin'], 'Suricata (built-in)')
+        self.assertEqual(result['other'], 'Other / Unrecognized')
+        self.assertEqual(result['missing'], '')
+
+    def test_buildRowForEvent_alert_includes_ruleset_cell_and_colspan(self):
+        from tests.jsdom_helper import js_statements
+        event = {
+            'event_type': 'alert', 'timestamp': '2026-01-01T00:00:00',
+            'src_ip': '1.1.1.1', 'src_port': 1234, 'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+            'alert': {'signature': 'ET Sig', 'category': 'Trojan', 'severity': 2, 'signature_id': 2010957},
+        }
+        result = js_statements(self.SID_RANGES_SETUP + '''
+            window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertIn('<td>Emerging Threats Open</td>', result['html'])
+        # 6 prefix cells + Alert/Category/Ruleset/Severity + the trailing
+        # note-icon cell = 11 visible-row cells - the hidden detail-row's
+        # own single spanning <td> (built from the same colSpan) must
+        # match that count.
+        self.assertIn('colspan="11"', result['html'])
+
+    def test_extractValue_ruleset_case(self):
+        from tests.jsdom_helper import js_statements
+        event = {'alert': {'signature_id': 84760628}}
+        result = js_statements(self.SID_RANGES_SETUP + '''
+            window.__jsdom_result = { value: extractValue(''' + json.dumps(event) + ''', 'Ruleset') };
+        ''')
+        self.assertEqual(result['value'], 'Abuse.ch URLhaus')
+
+    def test_renderAlertDetails_includes_ruleset_row(self):
+        from tests.jsdom_helper import js_statements
+        event = {'alert': {'signature': 'ET Sig', 'category': 'Trojan', 'severity': 2,
+                            'gid': 1, 'signature_id': 2010957, 'rule': 'alert ...'}}
+        result = js_statements(self.SID_RANGES_SETUP + '''
+            window.__jsdom_result = { html: renderAlertDetails(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertIn('Ruleset', result['html'])
+        self.assertIn('Emerging Threats Open', result['html'])
 
 
 if __name__ == '__main__':

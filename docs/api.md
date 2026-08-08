@@ -16,7 +16,7 @@ Redirects to `/socrates.html`.
 
 Returns the running SO-CRATES version.
 
-**Response:** `{"version": "3.1.0"}`
+**Response:** `{"version": "3.2.0"}`
 
 ---
 
@@ -30,7 +30,7 @@ Checks GitHub's releases API for a newer SO-CRATES version. Only ever called by 
 
 ### `GET /api/theme`
 
-Reads the active OhMyDebn theme's name and color palette, for the opt-in "Sync theme with OS" feature. A no-op (`theme`/`customColors` both `null`) unless the `OHMYDEBN_THEME_DIR` environment variable is set.
+Reads the active OhMyDebn theme's name and color palette, for the opt-in "Sync theme to OhMyDebn theme" feature. A no-op (`theme`/`customColors` both `null`) unless the `OHMYDEBN_THEME_DIR` environment variable is set.
 
 **Response:** `{"theme": <string or null>, "customColors": <object or null>}` - `theme` is the raw theme name (from `<OHMYDEBN_THEME_DIR>/current/theme.name`) if it's set and passes a loose name-format check, else `null`. `customColors` is a set of ~25 CSS custom-property name/hex-value pairs synthesized from the theme's `colors.toml`/`alacritty.toml` palette (see [Themes](themes.md)), or `null` if no theme directory is configured or no palette could be derived.
 
@@ -38,7 +38,7 @@ Reads the active OhMyDebn theme's name and color palette, for the opt-in "Sync t
 
 ### `GET /api/theme-sync-available`
 
-Tells the frontend whether the "Sync theme with OS" toggle could ever do anything, so it isn't shown as a dead control on deployments not launched via OhMyDebn.
+Tells the frontend whether the "Sync theme to OhMyDebn theme" toggle could ever do anything, so it isn't shown as a dead control on deployments not launched via OhMyDebn.
 
 **Response:** `{"available": <boolean>}` - `true` iff `OHMYDEBN_THEME_DIR` is set and its `current/theme.name` file is currently readable (regardless of whether its *contents* are valid - that's `/api/theme`'s concern).
 
@@ -53,17 +53,20 @@ Returns event data from Suricata's eve.json (via SQLite index or direct JSON par
 | Parameter | Required | Default | Description |
 |---|---|---|---|
 | `md5` | No | none | MD5 hash of a historical analysis (returns an empty array if omitted) |
-| `type` | No | all | Filter by event type - any `event_type` Suricata's eve.json can produce (see [Event Types](architecture/event-types.md)), plus the app's own synthetic types (`filealerts`, `log`, `sigmaalert`) |
+| `type` | No | all | Filter by event type - any `event_type` Suricata's eve.json can produce (see [Event Types](architecture/event-types.md)), plus the app's own synthetic types (`filealerts`, `log`, `sigmaalert`, `protocol_decode`) |
 | `q` | No | none | Full-text search query (searches all event JSON). Multiple `q` params AND together. |
 | `offset` | No | `0` | Pagination offset |
 | `limit` | No | `1000` | Max events to return (capped at `MAX_QUERY_LIMIT`, 100,000 by default - see `GET /api/limits`) |
 | `order_by` | No | none (sorts by `timestamp`) | Server-side sort column, e.g. `Source IP`. Only sortable for columns with a static JSON path for the given `type` (mirrors the same source-of-truth constraint as `GET /api/aggregation-data`); silently falls back to `timestamp` if the column isn't server-sortable for that type, rather than erroring |
 | `sort_dir` | No | `asc` | `asc` or `desc`; any other value is treated as `asc` |
 
-**Response:** Array of eve.json event objects.
+**Response:** Array of eve.json event objects. Any event with a saved row-level
+note (see `POST /api/row-note`) includes an extra `row_note` field with the
+note text; events with no note omit the field entirely rather than sending
+an empty string.
 
 **Example:**
-```
+```text
 GET /api/events?type=alert&limit=100
 GET /api/events?q=192.168.1.1
 GET /api/events?type=http&q=GET
@@ -80,7 +83,7 @@ Returns event-type counts for the current or specified analysis.
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
-| `md5` | Yes | — | MD5 hash of a historical analysis |
+| `md5` | Yes | - | MD5 hash of a historical analysis |
 | `q` | No | none | Full-text search query (counts only matching events). Multiple `q` params AND together. |
 
 **Response:** `{"counts": <event type to count map>, "date_range": {"min": <timestamp or null>, "max": <timestamp or null>}}`
@@ -101,7 +104,7 @@ Returns total event count, optionally filtered by type or search query.
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
-| `md5` | Yes | — | MD5 hash of a historical analysis |
+| `md5` | Yes | - | MD5 hash of a historical analysis |
 | `type` | No | all | Filter by event type |
 | `q` | No | none | Full-text search query (counts only matching events). Multiple `q` params AND together. |
 
@@ -119,9 +122,9 @@ Returns server-enforced limits the client should respect (e.g. when validating t
 
 ### `GET /api/rules-info`
 
-Returns on-disk rule counts and last-updated times for all three rulesets, for the Rules modal (gear menu > Rules). Purely a snapshot of what's currently on disk - no job/update state involved (that's `/api/rule-update-status`'s job).
+Returns on-disk rule counts, last-updated times, and staleness for all three rulesets, for the Rules modal (gear menu > Rules) and the opt-in stale-rules notification (`checkForStaleRules()`). Purely a snapshot of what's currently on disk - no job/update state involved (that's `/api/rule-update-status`'s job), and no network access either.
 
-**Response:** `{"suricata": {"count": <number or null>, "updated": <epoch or null>}, "yara": {"count": <number or null>, "updated": <epoch or null>}, "sigma": {"windows": {"count": ..., "updated": ...}, "linux": {"count": ..., "updated": ...}}}` - fields are `null` if that ruleset has never been set up.
+**Response:** `{"suricata": {"count": <number or null>, "updated": <epoch or null>, "stale": <boolean or null>}, "yara": {"count": ..., "updated": ..., "stale": ...}, "sigma": {"windows": {"count": ..., "updated": ..., "stale": ...}, "linux": {...}}, "staleThresholdHours": <number>}` - `count`/`updated`/`stale` are all `null` if that ruleset has never been set up (rather than `stale: true`, since "never downloaded" is a different, more urgent problem the Rules modal's counts already surface, distinct from "downloaded but old"). `stale` is `true` once `updated` is older than `staleThresholdHours` (the server's `config.RULES_MAX_AGE_HOURS`) - the single source of truth both the Rules modal's own date-color warning and the notification read, rather than each hardcoding its own threshold.
 
 ---
 
@@ -153,7 +156,7 @@ Returns a pre-aggregated `{nodes, links}` Sankey diagram (Source IP → Dest IP 
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
-| `md5` | Yes | — | MD5 hash of the analysis |
+| `md5` | Yes | - | MD5 hash of the analysis |
 | `type` | No | all | Filter by event type |
 | `q` | No | none | Full-text search query. Multiple `q` params AND together. |
 
@@ -176,7 +179,7 @@ Returns per-column frequency tables (top 10 values by count) for the given event
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
-| `md5` | Yes | — | MD5 hash of the analysis |
+| `md5` | Yes | - | MD5 hash of the analysis |
 | `type` | No | all (merged view) | Event type (see [Event Types](architecture/event-types.md)), or omitted for the merged "All Events" view. Not supported for event types whose fields have no static JSON path to aggregate on server-side - currently `log`/`sigmaalert`/`binary` (dynamic/untrusted columns) and `mqtt`/`ldap` (dynamically keyed by message/operation subtype) - these fall back to client-side computation instead; see `AGGREGATION_JSON_PATHS` in `db.py` for the authoritative, current list. |
 | `q` | No | none | Full-text search query. Multiple `q` params AND together. |
 
@@ -224,7 +227,7 @@ Extracts ASCII payload from a TCP/UDP stream using `tshark`. Tries TCP first, fa
 | `dport` | Yes | Destination port |
 | `md5` | Yes | MD5 hash of a historical analysis |
 
-**Response:** `application/json` — `{"lines": [{"text": "...", "direction": "src"|"dst"}, ...], "truncated": false}`. Non-printable characters replaced with `.`. Each line is tagged with which side of the connection sent it.
+**Response:** `application/json` - `{"lines": [{"text": "...", "direction": "src"|"dst"}, ...], "truncated": false}`. Non-printable characters replaced with `.`. Each line is tagged with which side of the connection sent it.
 
 ---
 
@@ -242,7 +245,7 @@ Extracts per-packet hex dumps from a TCP/UDP stream using `tcpdump -X`. Truncate
 | `dport` | Yes | Destination port |
 | `md5` | Yes | MD5 hash of a historical analysis |
 
-**Response:** `application/json` — `{"packets": [{"header": "...", "lines": ["..."]}], "truncated": false}`.
+**Response:** `application/json` - `{"packets": [{"header": "...", "lines": ["..."]}], "truncated": false}`.
 
 **Validation:** IP addresses and ports are validated before passing to tcpdump. Invalid values return `400`.
 
@@ -301,11 +304,11 @@ Same status information as `POST /api/check-status`, but accessible via query pa
 
 **Response:**
 ```json
-{"status": "ready", "meta": {"version": 1, "original": "<filename>", "extracted": "<filename>", "detected_type": "pcap", "extracted_at": "<ISO timestamp>"}}
+{"status": "ready", "meta": {"version": 1, "original": "<filename>", "extracted": "<filename>", "detected_type": "pcap", "extracted_at": "<ISO timestamp>"}, "hasRowNotes": false}
 ```
 or
 ```json
-{"status": "processing", "phase": "network", "meta": {...}}
+{"status": "processing", "phase": "network", "meta": {...}, "hasRowNotes": false}
 ```
 or, if analysis (Suricata/YARA/Zircolite) failed:
 ```json
@@ -314,7 +317,9 @@ or, if analysis (Suricata/YARA/Zircolite) failed:
 
 `meta` is present whenever `.meta` exists for the analysis (written after the file type is detected) and is omitted otherwise; it's absent entirely from the `error` response.
 
-**Errors:** `400` for invalid or malformed MD5. There is no `404` for a well-formed MD5 that doesn't correspond to an existing analysis directory — the directory's absence just reads the same as "not ready yet" (`{"status": "processing", "phase": ""}`), since this endpoint never separately checks for the directory's existence.
+`hasRowNotes` is `true` if the analysis has at least one row-level note (see `POST /api/row-note`) - used by the reanalyze confirmation dialog to conditionally warn that reanalyzing deletes them. This field is added only on this GET route, not on the identically-shaped `POST /api/check-status` response below - that endpoint is polled every 2 seconds during active processing, and the extra lookup has no reason to run that often.
+
+**Errors:** `400` for invalid or malformed MD5. There is no `404` for a well-formed MD5 that doesn't correspond to an existing analysis directory - the directory's absence just reads the same as "not ready yet" (`{"status": "processing", "phase": ""}`), since this endpoint never separately checks for the directory's existence.
 
 ---
 
@@ -332,7 +337,8 @@ Returns Sigma alerts stored in `events.db` for the specified analysis.
 | `severity` | No | none | Filter by severity level |
 | `q` | No | none | Full-text search query. Multiple `q` params AND together. |
 
-**Response:** Array of Sigma alert objects.
+**Response:** Array of Sigma alert objects. Same `row_note` field convention
+as `GET /api/events` above (present only when a note exists).
 
 ---
 
@@ -344,7 +350,7 @@ Returns the total Sigma alert count for the specified analysis, optionally filte
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
-| `md5` | Yes | — | MD5 hash of a historical analysis |
+| `md5` | Yes | - | MD5 hash of a historical analysis |
 | `severity` | No | none | Filter by severity level |
 | `q` | No | none | Full-text search query. Multiple `q` params AND together. |
 
@@ -363,6 +369,27 @@ Returns Sigma alert statistics (counts grouped by severity/rule/etc.) for the sp
 | `md5` | No | none | MD5 hash of a historical analysis (returns an empty object if omitted) |
 
 **Response:** Object mapping statistic names to counts.
+
+---
+
+### `GET /api/playbook`
+
+Returns Security Onion Playbook investigation guidance (plain-English
+questions to ask, per detection rule) for a Suricata or Sigma alert. Global
+static reference data baked into the Docker image - unlike almost every
+other route in this API, this one takes no `md5` and isn't scoped to an
+analysis.
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|---|---|---|
+| `type` | Yes | `nids` (Suricata) or `sigma` |
+| `id` | Yes | For `type=nids`, the alert's `signature_id` (1-10 digits). For `type=sigma`, the alert's `rule_id` (a UUID) |
+
+**Response:** `{"playbook": {"name": "...", "description": "...", "questions": [{"question": "...", "context": "..."}, ...]}}` if a playbook exists (an exact match for that rule, or the generic engine-wide fallback if not), or `{"playbook": null}` if none is baked in at all (e.g. a manual install with nothing baked in, or an image built without the Dockerfile's `playbooks-builder` stage).
+
+**Errors:** `400` if `type` isn't `nids`/`sigma` or `id` doesn't match the expected shape for that type.
 
 ---
 
@@ -426,7 +453,7 @@ Downloads a file from a URL and analyzes it.
 {"url": "https://example.com/capture.pcap"}
 ```
 
-**Response:** Same as `/api/upload` — `{"status": "processing", "md5": "...", "phase": "..."}` or `{"status": "ready", "md5": "..."}`.
+**Response:** Same as `/api/upload` - `{"status": "processing", "md5": "...", "phase": "..."}` or `{"status": "ready", "md5": "..."}`.
 
 **Special handling:**
 - Password-protected zips are auto-decrypted using the common `infected` password (same as `/api/upload`); for `malware-traffic-analysis.net` URLs specifically, the date-based password format (`infected_YYYYMMDD`, derived from the URL's `/YYYY/MM/DD/` path) is also tried, before the plain fallback
@@ -474,7 +501,7 @@ Re-runs the analysis pipeline for an existing MD5 directory. The original upload
 {"md5": "<hash>"}
 ```
 
-Only `md5` is read from the request body — the response's `phase` is determined automatically from what's actually in the analysis's directory (`network` if a PCAP is found, `logs` if a log file is found, otherwise `files`), not accepted as client input.
+Only `md5` is read from the request body - the response's `phase` is determined automatically from what's actually in the analysis's directory (`network` if a PCAP is found, `logs` if a log file is found, otherwise `files`), not accepted as client input.
 
 **Response:**
 ```json
@@ -505,7 +532,7 @@ Deletes a single historical analysis (removes the entire MD5 directory).
 
 ### `POST /api/rename-analysis`
 
-Sets a custom display name for an analysis, overwriting `name.txt`. Only changes what's displayed (header, previous-analyses list) — the real originally-uploaded filename is unaffected, preserved separately in `.meta`'s `original` field.
+Sets a custom display name for an analysis, overwriting `name.txt`. Only changes what's displayed (header, previous-analyses list) - the real originally-uploaded filename is unaffected, preserved separately in `.meta`'s `original` field.
 
 **Request Body:**
 ```json
@@ -543,6 +570,38 @@ The notes are trimmed and capped at 10,000 characters. An empty (or whitespace-o
 
 ---
 
+### `POST /api/row-note`
+
+Sets (or clears) a freeform note on one row of the `events` or `sigma_alerts`
+table - the row-scoped counterpart to `POST /api/analysis-notes` above (a
+short annotation on one specific alert/event, not the whole analysis). Same
+clear-on-empty convention.
+
+**Request Body:**
+```json
+{"md5": "<hash>", "table": "events", "rowId": 42, "note": "<note text>"}
+```
+
+`table` must be `"events"` or `"sigma_alerts"`. `rowId` must be an integer
+(not a boolean - Python's `bool` is a subclass of `int`, so this is checked
+explicitly). The note is trimmed and capped at 500 characters
+(`MAX_ROW_NOTE_LENGTH`, distinct from `MAX_NOTES_LENGTH`'s 10,000 for
+whole-analysis notes). An empty (or whitespace-only) value clears the note.
+
+**Response:**
+```json
+{"success": true, "note": "<note text>"}
+```
+
+**Errors:** `400` for invalid MD5, unsafe path, invalid `table`, invalid
+`rowId`, or non-string `note`. `404` if analysis not found.
+
+Row-level notes are lost on `POST /api/reanalyze` (it rebuilds `events.db`
+from scratch) - unlike whole-analysis notes (`notes.txt`), which reanalyze
+never touches. This is intentional, not a bug.
+
+---
+
 ### `POST /api/delete-all-analyses`
 
 Deletes all historical analyses (every MD5-shaped directory under the data root). Non-analysis directories and files are left untouched.
@@ -564,7 +623,7 @@ Deletes all historical analyses (every MD5-shaped directory under the data root)
 |---|---|
 | `400` | Invalid input (bad IP, port, MD5, URL, path traversal) |
 | `404` | Resource not found (no file, no analysis, no packets) |
-| `409` | Conflict — analysis already in progress for this MD5 |
+| `409` | Conflict - analysis already in progress for this MD5 |
 | `413` | File too large |
 | `500` | Internal server error (generic message, no details leaked) |
 | `507` | Not enough disk space available for this upload |

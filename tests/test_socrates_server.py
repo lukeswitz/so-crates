@@ -520,8 +520,20 @@ class TestAPIEndpoints(unittest.TestCase):
         cls.server_thread.start()
         time.sleep(0.3)
 
+        # None of these tests exercise real Suricata analysis - they only
+        # check upload/API plumbing - so spawn_suricata is mocked class-wide
+        # to avoid launching real `suricata` subprocesses per pcap upload.
+        # A full-suite run previously spawned a dozen-plus real, unmocked
+        # Suricata processes in the background (each with its own 5-minute
+        # watchdog) and contributed to an OOM crash. Individual tests that
+        # need specific spawn_suricata behavior (e.g. simulating a startup
+        # failure) still override this with their own nested patch.
+        cls._spawn_suricata_patcher = unittest.mock.patch('socrates.spawn_suricata', return_value=True)
+        cls._spawn_suricata_patcher.start()
+
     @classmethod
     def tearDownClass(cls):
+        cls._spawn_suricata_patcher.stop()
         cls.server.shutdown()
         cls.server.server_close()
         server.DATA_DIR = cls.original_base
@@ -584,6 +596,61 @@ class TestAPIEndpoints(unittest.TestCase):
         data = json.loads(body)
         self.assertIn('version', data)
         self.assertRegex(data['version'], r'^\d+\.\d+\.\d+$')
+
+    def test_playbook_endpoint_valid_nids_id_with_mocked_lookup(self):
+        with unittest.mock.patch('socrates.get_playbook', return_value={'name': 'X', 'description': 'Y', 'questions': []}) as mock_get:
+            status, body = self._get('/api/playbook?type=nids&id=2000005')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['playbook']['name'], 'X')
+        mock_get.assert_called_once_with('nids', '2000005')
+
+    def test_playbook_endpoint_valid_sigma_id_with_mocked_lookup(self):
+        sigma_id = '221b251a-357a-49a9-920a-271802777cc0'
+        with unittest.mock.patch('socrates.get_playbook', return_value=None) as mock_get:
+            status, body = self._get(f'/api/playbook?type=sigma&id={sigma_id}')
+        self.assertEqual(status, 200)
+        self.assertIsNone(json.loads(body)['playbook'])
+        mock_get.assert_called_once_with('sigma', sigma_id)
+
+    def test_playbook_endpoint_no_baked_in_data_returns_null(self):
+        # No mocking - exercises the real playbook_lookup.get_playbook
+        # against this test environment's real (nonexistent) baked-in dir,
+        # proving the "nothing baked in" path degrades to null rather than
+        # erroring (e.g. local dev, or an image built without the
+        # playbooks-builder stage).
+        status, body = self._get('/api/playbook?type=nids&id=2000005')
+        self.assertEqual(status, 200)
+        self.assertIsNone(json.loads(body)['playbook'])
+
+    def test_playbook_endpoint_invalid_type_rejected(self):
+        status, body = self._get('/api/playbook?type=yara&id=2000005')
+        self.assertEqual(status, 400)
+
+    def test_playbook_endpoint_missing_type_rejected(self):
+        status, body = self._get('/api/playbook?id=2000005')
+        self.assertEqual(status, 400)
+
+    def test_playbook_endpoint_missing_id_rejected(self):
+        status, body = self._get('/api/playbook?type=nids')
+        self.assertEqual(status, 400)
+
+    def test_playbook_endpoint_non_numeric_nids_id_rejected(self):
+        status, body = self._get('/api/playbook?type=nids&id=abc')
+        self.assertEqual(status, 400)
+
+    def test_playbook_endpoint_malicious_nids_id_rejected(self):
+        for malicious in ('../../../etc/passwd', '2000005;rm -rf', '2000005/../../etc/passwd', '2000005 OR 1=1'):
+            status, body = self._get('/api/playbook?type=nids&id=' + urllib.parse.quote(malicious, safe=''))
+            self.assertEqual(status, 400, f'{malicious!r} should be rejected')
+
+    def test_playbook_endpoint_malformed_sigma_id_rejected(self):
+        for malicious in ('not-a-uuid', '221b251a-357a-49a9-920a', '', '../../../etc/passwd'):
+            status, body = self._get('/api/playbook?type=sigma&id=' + urllib.parse.quote(malicious, safe=''))
+            self.assertEqual(status, 400, f'{malicious!r} should be rejected')
+
+    def test_playbook_endpoint_post_not_allowed(self):
+        status, body = self._post('/api/playbook', {'type': 'nids', 'id': '2000005'})
+        self.assertEqual(status, 404)
 
     def test_events_with_valid_md5(self):
         md5dir = os.path.join(self.tmpdir, 'd41d8cd98f00b204e9800998ecf8427e')
@@ -2002,6 +2069,241 @@ bright_magenta = "#D9B9D9"
         finally:
             shutil.rmtree(md5dir, ignore_errors=True)
 
+    def _make_events_db_with_rows(self, md5):
+        """Creates an analysis dir with a real events.db containing one
+        events row and one sigma_alerts row, for row-note tests. Returns
+        (md5dir, event_id, sigma_alert_id)."""
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        eve_file = os.path.join(md5dir, 'eve.json')
+        with open(eve_file, 'w') as f:
+            f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:00"}\n')
+        db_file = os.path.join(md5dir, 'events.db')
+        db.create_sqlite_db(db_file, eve_file)
+        db.insert_sigma_alerts(db_file, [{
+            'timestamp': '2026-01-01T00:00:00', 'rule_title': 'Test Rule',
+            'rule_id': 'test-rule', 'severity': 'high', 'level': 'high',
+        }])
+        event_id = db.query_events_sqlite(db_file)[0]['id']
+        sigma_alert_id = db.query_sigma_alerts_sqlite(db_file)[0]['id']
+        return md5dir, event_id, sigma_alert_id
+
+    def test_row_note_invalid_md5_returns_400(self):
+        status, body = self._post('/api/row-note', {'md5': 'not-a-real-md5', 'table': 'events', 'rowId': 1, 'note': 'x'})
+        self.assertEqual(status, 400)
+
+    def test_row_note_nonexistent_analysis_returns_404(self):
+        status, body = self._post('/api/row-note', {'md5': 'a' * 32, 'table': 'events', 'rowId': 1, 'note': 'x'})
+        self.assertEqual(status, 404)
+
+    def test_row_note_get_returns_404(self):
+        """GET /api/row-note must return 404 - POST only."""
+        status, body = self._get('/api/row-note?md5=' + 'a' * 32)
+        self.assertEqual(status, 404)
+
+    def test_row_note_malformed_json_returns_400(self):
+        status, body = self._post('/api/row-note', b'not-json-at-all')
+        self.assertEqual(status, 400)
+
+    def test_row_note_invalid_table_returns_400(self):
+        md5 = '5' * 32
+        md5dir, event_id, _ = self._make_events_db_with_rows(md5)
+        try:
+            status, body = self._post('/api/row-note', {'md5': md5, 'table': 'not_a_table', 'rowId': event_id, 'note': 'x'})
+            self.assertEqual(status, 400)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_row_note_invalid_row_id_returns_400(self):
+        md5 = '6' * 32
+        md5dir, _, _ = self._make_events_db_with_rows(md5)
+        try:
+            status, body = self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': 'not-an-int', 'note': 'x'})
+            self.assertEqual(status, 400)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_row_note_bool_row_id_returns_400(self):
+        """REGRESSION: bool is a subclass of int in Python - a bare
+        isinstance(x, int) check would silently accept True/False."""
+        md5 = '7' * 32
+        md5dir, _, _ = self._make_events_db_with_rows(md5)
+        try:
+            status, body = self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': True, 'note': 'x'})
+            self.assertEqual(status, 400)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_row_note_non_string_note_returns_400(self):
+        md5 = '8' * 32
+        md5dir, event_id, _ = self._make_events_db_with_rows(md5)
+        try:
+            status, body = self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': event_id, 'note': 12345})
+            self.assertEqual(status, 400)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_row_note_success_events_table(self):
+        md5 = '9' * 32
+        md5dir, event_id, _ = self._make_events_db_with_rows(md5)
+        try:
+            status, body = self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': event_id, 'note': 'false positive, known scanner'})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data, {'success': True, 'note': 'false positive, known scanner'})
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_row_note_success_sigma_alerts_table(self):
+        md5 = 'aa' + '0' * 30
+        md5dir, _, sigma_id = self._make_events_db_with_rows(md5)
+        try:
+            status, body = self._post('/api/row-note', {'md5': md5, 'table': 'sigma_alerts', 'rowId': sigma_id, 'note': 'escalated to IR ticket #4521'})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data, {'success': True, 'note': 'escalated to IR ticket #4521'})
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_row_note_overwrite_existing(self):
+        md5 = 'bb' + '0' * 30
+        md5dir, event_id, _ = self._make_events_db_with_rows(md5)
+        try:
+            self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': event_id, 'note': 'first note'})
+            status, body = self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': event_id, 'note': 'second note'})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data['note'], 'second note')
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_row_note_empty_clears_note(self):
+        """REGRESSION: mirrors analysis-notes' clear-on-empty convention -
+        an empty submission removes the row from row_notes rather than
+        storing an empty string."""
+        md5 = 'cc' + '0' * 30
+        md5dir, event_id, _ = self._make_events_db_with_rows(md5)
+        try:
+            self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': event_id, 'note': 'will be cleared'})
+            status, body = self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': event_id, 'note': '  '})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(data, {'success': True, 'note': ''})
+            notes = db.get_row_notes(os.path.join(md5dir, 'events.db'), 'events', [event_id])
+            self.assertEqual(notes, {})
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_row_note_empty_when_no_note_existed(self):
+        """Clearing a row that was never noted must not error."""
+        md5 = 'dd' + '0' * 30
+        md5dir, event_id, _ = self._make_events_db_with_rows(md5)
+        try:
+            status, body = self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': event_id, 'note': ''})
+            self.assertEqual(status, 200)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_row_note_truncates_long_note(self):
+        md5 = 'ee' + '0' * 30
+        md5dir, event_id, _ = self._make_events_db_with_rows(md5)
+        try:
+            long_note = 'x' * (config.MAX_ROW_NOTE_LENGTH + 100)
+            status, body = self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': event_id, 'note': long_note})
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual(len(data['note']), config.MAX_ROW_NOTE_LENGTH)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_row_note_unique_per_table_and_id(self):
+        """REGRESSION: the same numeric row id in events vs sigma_alerts
+        must be independent notes - proves the source_table discriminator
+        actually discriminates, not just a bare row_id lookup."""
+        md5 = 'ff' + '0' * 30
+        md5dir, event_id, sigma_id = self._make_events_db_with_rows(md5)
+        try:
+            self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': event_id, 'note': 'events note'})
+            status, body = self._get('/api/events?md5=' + md5)
+            events = json.loads(body)
+            self.assertEqual(events[0].get('row_note'), 'events note')
+
+            status, body = self._get('/api/sigma-alerts?md5=' + md5)
+            alerts = json.loads(body)
+            self.assertNotIn('row_note', alerts[0], 'A note on events must not leak onto a sigma_alerts row with the same numeric id')
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_events_api_includes_id_field(self):
+        md5 = '11' + '0' * 30
+        md5dir, event_id, _ = self._make_events_db_with_rows(md5)
+        try:
+            status, body = self._get('/api/events?md5=' + md5)
+            events = json.loads(body)
+            self.assertEqual(events[0]['id'], event_id)
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_events_api_includes_row_note_when_present(self):
+        md5 = '22' + '0' * 30
+        md5dir, event_id, _ = self._make_events_db_with_rows(md5)
+        try:
+            self._post('/api/row-note', {'md5': md5, 'table': 'events', 'rowId': event_id, 'note': 'round trip note'})
+            status, body = self._get('/api/events?md5=' + md5)
+            events = json.loads(body)
+            self.assertEqual(events[0]['row_note'], 'round trip note')
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_events_api_row_note_absent_when_not_set(self):
+        """A row with no note must omit row_note entirely, not send an
+        empty string - keeps the has-a-note signal unambiguous."""
+        md5 = '33' + '0' * 30
+        md5dir, event_id, _ = self._make_events_db_with_rows(md5)
+        try:
+            status, body = self._get('/api/events?md5=' + md5)
+            events = json.loads(body)
+            self.assertNotIn('row_note', events[0])
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_sigma_alerts_api_includes_row_note(self):
+        md5 = '44' + '0' * 30
+        md5dir, _, sigma_id = self._make_events_db_with_rows(md5)
+        try:
+            self._post('/api/row-note', {'md5': md5, 'table': 'sigma_alerts', 'rowId': sigma_id, 'note': 'sigma note'})
+            status, body = self._get('/api/sigma-alerts?md5=' + md5)
+            alerts = json.loads(body)
+            self.assertEqual(alerts[0]['row_note'], 'sigma note')
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
+    def test_row_note_survives_pagination(self):
+        """A note set on a specific row must stay attached to that exact
+        row when fetching different pages, not bleed onto whichever row
+        happens to occupy the same position on another page."""
+        md5 = '55' + '0' * 30
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        eve_file = os.path.join(md5dir, 'eve.json')
+        with open(eve_file, 'w') as f:
+            for i in range(3):
+                f.write('{"event_type": "alert", "timestamp": "2026-01-01T00:00:0%d"}\n' % i)
+        db_file = os.path.join(md5dir, 'events.db')
+        db.create_sqlite_db(db_file, eve_file)
+        try:
+            all_events = db.query_events_sqlite(db_file, order_by='Time', sort_dir='asc')
+            second_id = all_events[1]['id']
+            db.set_row_note(db_file, 'events', second_id, 'middle row note')
+
+            status, body = self._get(f'/api/events?md5={md5}&order_by=Time&sort_dir=asc&offset=1&limit=1')
+            page = json.loads(body)
+            self.assertEqual(len(page), 1)
+            self.assertEqual(page[0]['id'], second_id)
+            self.assertEqual(page[0]['row_note'], 'middle row note')
+        finally:
+            shutil.rmtree(md5dir, ignore_errors=True)
+
     def test_delete_all_analyses_removes_directories(self):
         md5_one = 'd41d8cd98f00b204e9800998ecf8427e'
         md5_two = 'a3f5c5f7e7b5f5e5d5c5b5a595857565'
@@ -2339,8 +2641,17 @@ bright_magenta = "#D9B9D9"
         self.assertEqual(meta['original'], 'test.json')
 
     def test_upload_binary_writes_meta_with_detected_type(self):
-        """Direct binary upload must write .meta with detected_type 'binary'."""
-        file_data = b'MZ' + b'\x00' * 62
+        """Direct binary upload must write .meta with detected_type 'binary'.
+
+        REGRESSION: this used to share byte-identical content
+        (b'MZ' + b'\\x00' * 62) with test_upload_non_pcap_creates_file_analysis_db,
+        both hashing to the same MD5 - since this test's name sorts first
+        alphabetically, it always ran first and left that MD5's directory
+        behind, so the other test deterministically hit the "already
+        analyzed" (status: ready) response instead of a fresh upload
+        whenever the full suite ran, even though each test passed fine in
+        isolation. A distinguishing suffix keeps their MD5s from colliding."""
+        file_data = b'MZ' + b'\x00' * 62 + b'BINARY_META_TEST'
         status, body = self._post_multipart('/api/upload', 'test.exe', file_data)
         self.assertEqual(status, 200)
         data = json.loads(body)
@@ -2615,6 +2926,24 @@ bright_magenta = "#D9B9D9"
             error_msg = f.read()
         self.assertIn('YARA scan failed', error_msg)
         self.assertTrue(os.path.exists(db_path), 'events.db must be created with empty matches when YARA fails')
+
+    @unittest.mock.patch('socrates.setup_yara_rules', return_value='/dummy/rules.yar')
+    @unittest.mock.patch('socrates.check_yara_executable', return_value=False)
+    def test_analyze_standalone_file_never_allows_network_rule_refresh(self, mock_yara_exec, mock_rules):
+        """REGRESSION: analyzing a file must never silently phone home to
+        refresh YARA rules as a side effect of just uploading it - that's
+        now an explicit, opt-in action (Rules modal, or the
+        checkForStaleRules() notification), not something the analysis
+        path triggers on its own. See AGENTS.md and setup_yara_rules()'s
+        network_allowed parameter."""
+        file_data = b'MZ' + b'\x00' * 62 + b'NETWORK_CONSENT_TEST'
+        status, body = self._post_multipart('/api/upload', 'test.exe', file_data)
+        self.assertEqual(status, 200)
+        for _ in range(30):
+            time.sleep(0.2)
+            if mock_rules.called:
+                break
+        mock_rules.assert_called_once_with(server.DATA_DIR, network_allowed=False)
 
     def test_reanalyze_preserves_meta(self):
         """Re-analyzing a file must preserve the existing .meta file."""
@@ -3370,9 +3699,9 @@ bright_magenta = "#D9B9D9"
         status, body = self._get('/api/events?md5=' + md5)
         self.assertEqual(status, 200, 'Malformed row must not crash endpoint')
         events = json.loads(body)
-        self.assertEqual(len(events), 3, 'All rows must be returned (malformed ones as empty objects)')
+        self.assertEqual(len(events), 3, 'All rows must be returned (malformed ones as an id-only object)')
         self.assertEqual(events[0].get('valid'), True)
-        self.assertEqual(events[1], {}, 'Malformed json_data must become empty object')
+        self.assertEqual(events[1], {'id': 2}, 'Malformed json_data must become an object with just its row id')
         self.assertEqual(events[2].get('valid'), True)
 
     def test_api_status_get_alias_works(self):
@@ -3400,6 +3729,62 @@ bright_magenta = "#D9B9D9"
 
         self.assertEqual(result_get['status'], result_post['status'])
 
+    def test_get_status_includes_has_row_notes_false_by_default(self):
+        import hashlib
+        md5 = hashlib.md5(b'status_has_row_notes_test').hexdigest()
+        dir_path = os.path.join(server.DATA_DIR, md5)
+        os.makedirs(dir_path, exist_ok=True)
+        conn = sqlite3.connect(os.path.join(dir_path, 'events.db'))
+        conn.executescript(db.SQLITE_SCHEMA)
+        conn.commit()
+        conn.close()
+        with open(os.path.join(dir_path, 'name.txt'), 'w') as f:
+            f.write('test.pcap')
+
+        status, body = self._get('/api/status?md5=' + md5)
+        self.assertEqual(status, 200)
+        self.assertIn('hasRowNotes', json.loads(body))
+        self.assertFalse(json.loads(body)['hasRowNotes'])
+
+    def test_get_status_has_row_notes_true_once_a_row_note_exists(self):
+        import hashlib
+        md5 = hashlib.md5(b'status_has_row_notes_true_test').hexdigest()
+        dir_path = os.path.join(server.DATA_DIR, md5)
+        os.makedirs(dir_path, exist_ok=True)
+        db_path = os.path.join(dir_path, 'events.db')
+        conn = sqlite3.connect(db_path)
+        conn.executescript(db.SQLITE_SCHEMA)
+        conn.execute("INSERT INTO events (event_type, timestamp, json_data) VALUES ('alert', '2026-01-01T00:00:00', '{}')")
+        conn.commit()
+        conn.close()
+        with open(os.path.join(dir_path, 'name.txt'), 'w') as f:
+            f.write('test.pcap')
+        db.set_row_note(db_path, 'events', 1, 'a note')
+
+        status, body = self._get('/api/status?md5=' + md5)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)['hasRowNotes'])
+
+    def test_post_check_status_does_not_include_has_row_notes(self):
+        """Deliberate: POST /api/check-status is polled every 2s during
+        active processing (see checkStatus() in socrates.js) - the extra
+        has_row_notes() query only runs on the one-off GET /api/status
+        call sites (loadAnalysis/openReanalyzeModal), not this hot path."""
+        import hashlib
+        md5 = hashlib.md5(b'check_status_no_row_notes_test').hexdigest()
+        dir_path = os.path.join(server.DATA_DIR, md5)
+        os.makedirs(dir_path, exist_ok=True)
+        conn = sqlite3.connect(os.path.join(dir_path, 'events.db'))
+        conn.executescript(db.SQLITE_SCHEMA)
+        conn.commit()
+        conn.close()
+        with open(os.path.join(dir_path, 'name.txt'), 'w') as f:
+            f.write('test.pcap')
+
+        status, body = self._post('/api/check-status', {'md5': md5})
+        self.assertEqual(status, 200)
+        self.assertNotIn('hasRowNotes', json.loads(body))
+
     @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
     @unittest.mock.patch('socrates.setup_suricata_config')
     def test_update_rules_single_ruleset_returns_started_and_status_reflects_progress(self, mock_suricata):
@@ -3410,7 +3795,7 @@ bright_magenta = "#D9B9D9"
         SyncThread makes the spawned thread run inline, so by the time the
         POST response is sent the (mocked, instant) job has already
         finished - no polling needed here."""
-        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True):
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
             on_progress('suricata rules updated (fake)')
         mock_suricata.side_effect = fake_suricata
 
@@ -3462,7 +3847,7 @@ bright_magenta = "#D9B9D9"
         """POST /api/update-rules with ruleset='all' must trigger all three
         rulesets (spawned as separate threads - SyncThread just makes each
         one run inline here for a deterministic assertion)."""
-        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True):
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
             on_progress('suricata done (fake)')
         def fake_yara(data_dir, on_progress=print, network_allowed=True, force=False):
             on_progress('yara done (fake)')
@@ -3509,6 +3894,85 @@ bright_magenta = "#D9B9D9"
         status, body = self._post('/api/update-rules', {'ruleset': 'not-a-real-ruleset'})
         self.assertEqual(status, 400)
 
+    def test_update_rules_unknown_source_returns_400(self):
+        """A 'sources' entry that isn't a curated SURICATA_RULE_SOURCES key
+        must be rejected up front, rather than reaching
+        _reconcile_suricata_sources() and being handed to a suricata-update
+        subprocess as an arbitrary string."""
+        status, body = self._post('/api/update-rules', {'ruleset': 'suricata', 'sources': ['et/open', 'not-a-real-source']})
+        self.assertEqual(status, 400)
+        self.assertIn('not-a-real-source', json.loads(body).get('error', ''))
+
+    def test_update_rules_sources_must_be_list_of_strings(self):
+        status, body = self._post('/api/update-rules', {'ruleset': 'suricata', 'sources': 'et/open'})
+        self.assertEqual(status, 400)
+
+    def test_update_rules_show_protocol_decode_alerts_must_be_bool(self):
+        status, body = self._post('/api/update-rules', {'ruleset': 'suricata', 'showProtocolDecodeAlerts': 'yes'})
+        self.assertEqual(status, 400)
+
+    @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
+    @unittest.mock.patch('socrates.setup_suricata_config')
+    def test_update_rules_show_protocol_decode_alerts_passed_through(self, mock_suricata):
+        """An explicit 'showProtocolDecodeAlerts' must reach
+        setup_suricata_config() as its own kwarg - the only way this
+        setting actually takes effect (see the disable.conf --disable-conf
+        wiring in _fetch_single_source)."""
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+            on_progress('suricata rules updated (fake)')
+        mock_suricata.side_effect = fake_suricata
+
+        status, body = self._post('/api/update-rules', {'ruleset': 'suricata', 'showProtocolDecodeAlerts': True})
+        self.assertEqual(status, 200)
+        mock_suricata.assert_called_once()
+        self.assertIs(mock_suricata.call_args.kwargs.get('show_protocol_decode_alerts'), True)
+
+    @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
+    @unittest.mock.patch('socrates.setup_suricata_config')
+    def test_update_rules_no_show_protocol_decode_alerts_leaves_it_none(self, mock_suricata):
+        """Omitting 'showProtocolDecodeAlerts' entirely must reach
+        setup_suricata_config() as show_protocol_decode_alerts=None, so the
+        previously persisted setting is left untouched rather than reset."""
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+            on_progress('suricata rules updated (fake)')
+        mock_suricata.side_effect = fake_suricata
+
+        status, body = self._post('/api/update-rules', {'ruleset': 'suricata'})
+        self.assertEqual(status, 200)
+        mock_suricata.assert_called_once()
+        self.assertIsNone(mock_suricata.call_args.kwargs.get('show_protocol_decode_alerts'))
+
+    @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
+    @unittest.mock.patch('socrates.setup_suricata_config')
+    def test_update_rules_valid_sources_passed_through_as_enabled_sources(self, mock_suricata):
+        """A valid 'sources' list must reach setup_suricata_config() as its
+        enabled_sources kwarg - the only way source selection actually
+        takes effect."""
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+            on_progress('suricata rules updated (fake)')
+        mock_suricata.side_effect = fake_suricata
+
+        status, body = self._post('/api/update-rules', {'ruleset': 'suricata', 'sources': ['et/open', 'abuse.ch/urlhaus']})
+        self.assertEqual(status, 200)
+        mock_suricata.assert_called_once()
+        self.assertEqual(mock_suricata.call_args.kwargs.get('enabled_sources'), ['et/open', 'abuse.ch/urlhaus'])
+
+    @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
+    @unittest.mock.patch('socrates.setup_suricata_config')
+    def test_update_rules_no_sources_leaves_enabled_sources_none(self, mock_suricata):
+        """Omitting 'sources' entirely (plain Update click, no checkbox
+        interaction) must reach setup_suricata_config() as
+        enabled_sources=None, so reconciliation is skipped and behavior is
+        unchanged from before this feature existed."""
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+            on_progress('suricata rules updated (fake)')
+        mock_suricata.side_effect = fake_suricata
+
+        status, body = self._post('/api/update-rules', {'ruleset': 'suricata'})
+        self.assertEqual(status, 200)
+        mock_suricata.assert_called_once()
+        self.assertIsNone(mock_suricata.call_args.kwargs.get('enabled_sources'))
+
     def test_update_rules_blocked_when_same_ruleset_already_running(self):
         """A second POST for the SAME ruleset while it's already running
         must get 409, not start a concurrent second job - guards the
@@ -3517,7 +3981,7 @@ bright_magenta = "#D9B9D9"
         release = threading.Event()
         entered = threading.Event()
 
-        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True):
+        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
             entered.set()
             release.wait(timeout=5)
 
@@ -3547,7 +4011,7 @@ bright_magenta = "#D9B9D9"
         release = threading.Event()
         entered = threading.Event()
 
-        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True):
+        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
             entered.set()
             release.wait(timeout=5)
 
@@ -3588,7 +4052,7 @@ bright_magenta = "#D9B9D9"
         release = threading.Event()
         entered = threading.Event()
 
-        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True):
+        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
             entered.set()
             release.wait(timeout=5)
 
@@ -3618,10 +4082,109 @@ bright_magenta = "#D9B9D9"
             status, body = self._get('/api/rules-info')
             self.assertEqual(status, 200)
             result = json.loads(body)
-            self.assertEqual(result['suricata'], {'count': 111, 'updated': 1000.0})
+            # suricata also gets enabledSources/availableSources merged in
+            # by handle_get_rules_info (see TestSuricataRulesInfoSources
+            # below) - check the get_suricata_rules_info()-sourced fields
+            # specifically rather than full dict equality.
+            self.assertEqual(result['suricata']['count'], 111)
+            self.assertEqual(result['suricata']['updated'], 1000.0)
             self.assertEqual(result['yara'], {'count': 222, 'updated': 2000.0})
             self.assertEqual(result['sigma']['windows']['count'], 10)
             self.assertEqual(result['sigma']['linux']['count'], 5)
+
+    def test_rules_info_includes_stale_threshold(self):
+        """GET /api/rules-info must expose config.RULES_MAX_AGE_HOURS as
+        staleThresholdHours - the single source of truth the frontend reads
+        instead of hardcoding its own separate threshold (see AGENTS.md's
+        Detection Rule Freshness section: the Rules modal's date-color
+        warning and checkForStaleRules()'s notification used to disagree,
+        24h vs a 30-day frontend-only constant, until unified here)."""
+        status, body = self._get('/api/rules-info')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertEqual(result['staleThresholdHours'], config.RULES_MAX_AGE_HOURS)
+
+    def test_rules_info_includes_suricata_sources(self):
+        """GET /api/rules-info's suricata sub-dict must carry both the
+        currently-enabled source names (enabledSources, from
+        get_suricata_enabled_sources()) and the full curated catalog
+        (availableSources, from SURICATA_RULE_SOURCES) - the frontend reads
+        both to render/initialize the Rules modal's ruleset checkboxes
+        without duplicating the catalog in JS."""
+        status, body = self._get('/api/rules-info')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertIn('enabledSources', result['suricata'])
+        self.assertIn('et/open', result['suricata']['enabledSources'])
+        self.assertIn('availableSources', result['suricata'])
+        self.assertIn('et/open', result['suricata']['availableSources'])
+        self.assertIn('label', result['suricata']['availableSources']['et/open'])
+
+    def test_rules_info_includes_show_protocol_decode_alerts_default_false(self):
+        """GET /api/rules-info's suricata sub-dict must carry
+        showProtocolDecodeAlerts (from
+        get_suricata_show_protocol_decode_alerts()), defaulting to False
+        when never explicitly set - the Rules modal's checkbox reads this
+        to initialize its checked state."""
+        status, body = self._get('/api/rules-info')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertIn('showProtocolDecodeAlerts', result['suricata'])
+        self.assertIs(result['suricata']['showProtocolDecodeAlerts'], False)
+
+    def test_rules_info_includes_sid_ranges(self):
+        """GET /api/rules-info's suricata sub-dict must carry sidRanges -
+        the single source of truth static/socrates.js's classifyRuleset()
+        reads instead of hardcoding a duplicate range table, generated from
+        the same suricata_sid_ranges.SURICATA_SID_RANGES that db.py's
+        sid_ranges_sql_case() uses for the server-side aggregation column."""
+        status, body = self._get('/api/rules-info')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        ranges = result['suricata']['sidRanges']
+        self.assertIsInstance(ranges, list)
+        self.assertGreater(len(ranges), 0)
+        for entry in ranges:
+            self.assertIn('min', entry)
+            self.assertIn('max', entry)
+            self.assertIn('label', entry)
+        labels = [r['label'] for r in ranges]
+        self.assertIn('Emerging Threats Open', labels)
+        # The built-in-rules entry must be included too, not just the
+        # curated online sources.
+        self.assertIn('Suricata (built-in)', labels)
+        # abuse.ch/urlhaus has a concrete (not JSON-null-via-None-forever)
+        # ceiling - see suricata_sid_ranges.py for why an unbounded entry
+        # would have silently swallowed every curated range above it.
+        urlhaus = next(r for r in ranges if r['label'] == 'Abuse.ch URLhaus')
+        self.assertIsNotNone(urlhaus['max'])
+
+
+class TestGetSuricataRulesInfoStaleness(unittest.TestCase):
+    """'stale' must be False for a just-written rules file and True once
+    its mtime is older than config.RULES_MAX_AGE_HOURS - purely a local
+    os.path.getmtime() comparison via validators.is_file_stale(), no
+    network access."""
+
+    def test_stale_field_reflects_file_age(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, 'suricata', 'rules')
+            os.makedirs(rules_dir, exist_ok=True)
+            # Active rules/ now holds one file per curated source, not a
+            # single merged suricata.rules - must use a recognized curated
+            # filename (see suricata_analyzer._CURATED_RULE_FILENAMES) or
+            # get_suricata_rules_info() won't count it at all.
+            rules_file = os.path.join(rules_dir, 'et-open.rules')
+            with open(rules_file, 'w') as f:
+                f.write('alert tcp any any -> any any (msg:"test"; sid:1;)\n')
+
+            fresh = suricata_analyzer.get_suricata_rules_info(data_dir=tmpdir)
+            self.assertFalse(fresh['stale'], 'a just-written rules file must not be stale')
+
+            old_time = time.time() - (config.RULES_MAX_AGE_HOURS + 1) * 3600
+            os.utime(rules_file, (old_time, old_time))
+            stale = suricata_analyzer.get_suricata_rules_info(data_dir=tmpdir)
+            self.assertTrue(stale['stale'], 'a rules file older than RULES_MAX_AGE_HOURS must be stale')
 
 
 class TestSpawnSuricataErrorHandling(unittest.TestCase):
@@ -4146,15 +4709,19 @@ class TestReanalyzeEndpoint(unittest.TestCase):
 
 class TestRuleDownloadPrompt(unittest.TestCase):
     def test_rule_download_message_in_stdout(self):
-        """Verify that suricata-update outputs messages when rules are downloaded"""
+        """Verify that suricata-update outputs a message when rules are
+        downloaded. The preceding "Internet access detected — refreshing
+        Suricata rules..." announcement was deliberately removed - it
+        stated an internal implementation fact (the reachability check
+        passed) rather than anything actionable, same reasoning as removing
+        the standalone "Checking for internet access..." line before it;
+        the Fetched/updated-successfully messages already make the outcome
+        self-explanatory without it."""
         with open(SURICATA_FILE, 'r') as f:
             content = f.read()
 
-        # Check for informative messages about rule download
-        self.assertIn('Internet access detected', content,
-                      'Should log when internet is detected')
-        self.assertIn('updating Suricata rules', content,
-                      'Should log when updating rules')
+        self.assertNotIn('Internet access detected', content,
+                         'the internal reachability-check announcement was removed')
         self.assertIn('Suricata rules updated successfully', content,
                       'Should log when rules update completes')
 
@@ -4213,7 +4780,9 @@ class TestSuricataExistingRulesNoInternetMessage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             rules_dir = os.path.join(tmpdir, 'suricata', 'rules')
             os.makedirs(rules_dir, exist_ok=True)
-            with open(os.path.join(rules_dir, 'suricata.rules'), 'w') as f:
+            # A recognized curated filename, not the old single
+            # suricata.rules - see suricata_analyzer._CURATED_RULE_FILENAMES.
+            with open(os.path.join(rules_dir, 'et-open.rules'), 'w') as f:
                 f.write('# pre-existing rules from a previous run\n')
 
             captured = io.StringIO()
@@ -4230,93 +4799,62 @@ class TestSuricataExistingRulesNoInternetMessage(unittest.TestCase):
         """REGRESSION: the no-live-update branch used to check
         baked_in_rules_exist BEFORE rules_exist, so on every startup
         (network_allowed=False unconditionally, per socrates.py's main())
-        a previously-fetched, larger/fresher suricata.rules on disk would
-        be silently overwritten by the generic baked-in copy via
-        shutil.copytree(..., dirs_exist_ok=True) - destroying a real
-        Docker/Podman deployment's live-updated rules on every single
-        container restart. Existing on-disk rules must take priority."""
+        a previously-fetched, larger/fresher ruleset on disk would be
+        silently overwritten by the generic baked-in copy - destroying a
+        real Docker/Podman deployment's live-updated rules on every single
+        container restart. Existing on-disk rules must take priority, so
+        _seed_active_from_library() (the baked-in-library entry point)
+        must never even be called in this case."""
         real_isdir = os.path.isdir
-        real_exists = os.path.exists
-        baked_in_dir = '/usr/share/suricata/rules'
-        baked_in_rules_file = os.path.join(baked_in_dir, 'suricata.rules')
+        real_listdir = os.listdir
+        baked_in_library_dir = '/usr/share/suricata/rules-available'
 
         def fake_isdir(path):
-            return True if path == baked_in_dir else real_isdir(path)
+            return True if path == baked_in_library_dir else real_isdir(path)
 
-        def fake_exists(path):
-            return True if path == baked_in_rules_file else real_exists(path)
+        def fake_listdir(path):
+            return ['et-open.rules'] if path == baked_in_library_dir else real_listdir(path)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             rules_dir = os.path.join(tmpdir, 'suricata', 'rules')
             os.makedirs(rules_dir, exist_ok=True)
-            with open(os.path.join(rules_dir, 'suricata.rules'), 'w') as f:
+            with open(os.path.join(rules_dir, 'et-open.rules'), 'w') as f:
                 f.write('# real rules from a previous live update\n')
 
             with unittest.mock.patch('suricata_analyzer.has_internet_access', return_value=False), \
                  unittest.mock.patch('os.path.isdir', side_effect=fake_isdir), \
-                 unittest.mock.patch('os.path.exists', side_effect=fake_exists), \
-                 unittest.mock.patch('shutil.copytree', wraps=shutil.copytree) as mock_copytree:
+                 unittest.mock.patch('os.listdir', side_effect=fake_listdir), \
+                 unittest.mock.patch('suricata_analyzer._seed_active_from_library') as mock_seed:
                 suricata_analyzer.setup_suricata_config(tmpdir, network_allowed=False)
-                for call in mock_copytree.call_args_list:
-                    self.assertNotEqual(call.args[0], baked_in_dir,
-                                         'Must not copy from the baked-in rules dir when rules already exist on disk')
+                mock_seed.assert_not_called()
 
-            with open(os.path.join(rules_dir, 'suricata.rules')) as f:
+            with open(os.path.join(rules_dir, 'et-open.rules')) as f:
                 self.assertEqual(f.read(), '# real rules from a previous live update\n',
                                   'Pre-existing rules must survive an offline startup untouched')
 
 
-class _FakeStdout:
-    """Empty, closeable stdout stand-in for a Popen mock - a plain
-    iter([]) has no .close(), which _stream_suricata_update() calls
-    unconditionally after its read loop."""
-    def __iter__(self):
-        return iter([])
-
-    def close(self):
-        pass
-
-
-class _FakeTimedOutProc:
-    """Simulates suricata-update hanging past the deadline: the watchdog
-    thread's proc.wait(timeout=...) call raises TimeoutExpired (as a real
-    Popen would), and the subsequent no-timeout proc.wait() call from the
-    main read loop (after the kill) resolves normally."""
-    def __init__(self):
-        self.stdout = _FakeStdout()
-        self.returncode = None
-
-    def wait(self, timeout=None):
-        if timeout is not None:
-            raise subprocess.TimeoutExpired('suricata-update', timeout)
-        self.returncode = -9
-        return self.returncode
-
-    def kill(self):
-        pass
-
-
 class TestSuricataUpdateTimeout(unittest.TestCase):
-    @unittest.mock.patch('suricata_analyzer.subprocess.Popen')
-    @unittest.mock.patch('suricata_analyzer.has_internet_access')
-    def test_suricata_update_timeout_does_not_crash(self, mock_internet, mock_popen):
-        """TimeoutExpired from suricata-update must be caught, not crash setup."""
-        mock_internet.return_value = True
-        mock_popen.return_value = _FakeTimedOutProc()
+    """_fetch_single_source() (not the old Popen-streamed
+    _stream_suricata_update, removed when rules moved to one file per
+    source) catches subprocess.TimeoutExpired from any of its
+    subprocess.run() calls generically - str(TimeoutExpired(...)) itself
+    already reads as "Command '...' timed out after Ns" (confirmed
+    directly), so a plain 'Warning: could not fetch {name}: {e}' message
+    still clearly communicates a timeout without needing a dedicated
+    timeout-specific message path."""
+
+    @unittest.mock.patch('suricata_analyzer.subprocess.run', side_effect=subprocess.TimeoutExpired('suricata-update', 5))
+    @unittest.mock.patch('suricata_analyzer.has_internet_access', return_value=True)
+    def test_suricata_update_timeout_does_not_crash(self, mock_internet, mock_run):
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
                 suricata_analyzer.setup_suricata_config(tmpdir)
             except subprocess.TimeoutExpired:
                 self.fail('setup_suricata_config raised TimeoutExpired')
 
-    @unittest.mock.patch('suricata_analyzer.subprocess.Popen')
-    @unittest.mock.patch('suricata_analyzer.has_internet_access')
-    def test_suricata_update_timeout_reports_clear_message(self, mock_internet, mock_popen):
-        """REGRESSION: a watchdog-killed process used to report
-        'exited with code -9', reading like an arbitrary crash rather than
-        the enforced timeout it actually was."""
-        mock_internet.return_value = True
-        mock_popen.return_value = _FakeTimedOutProc()
+    @unittest.mock.patch('suricata_analyzer.subprocess.run', side_effect=subprocess.TimeoutExpired('suricata-update', 5))
+    @unittest.mock.patch('suricata_analyzer.has_internet_access', return_value=True)
+    def test_suricata_update_timeout_reports_clear_message(self, mock_internet, mock_run):
         messages = []
         with tempfile.TemporaryDirectory() as tmpdir:
             suricata_analyzer.setup_suricata_config(tmpdir, on_progress=messages.append)
@@ -4324,38 +4862,23 @@ class TestSuricataUpdateTimeout(unittest.TestCase):
         self.assertFalse(any('exited with code' in m for m in messages), messages)
 
 
-class _FakeFailedProc:
-    """Simulates suricata-update exiting non-zero (not a timeout) -
-    e.g. a proxy blocking the real rule mirrors, a cert error, or bad
-    --data-dir permissions despite the reachability probe passing."""
-    def __init__(self):
-        self.stdout = _FakeStdout()
-        self.returncode = 1
-
-    def wait(self, timeout=None):
-        return self.returncode
-
-    def kill(self):
-        pass
-
-
 class TestSuricataUpdateFailureFallsBack(unittest.TestCase):
     """REGRESSION: a reachable network doesn't guarantee suricata-update
-    itself succeeds. setup_suricata_config used to only fall back to
-    baked-in/cached rules when the reachability probe failed - if the
-    probe passed but the update command itself then failed, Suricata was
-    left with no rules at all even when a perfectly good fallback was
-    sitting right there, unlike setup_yara_rules/setup_sigma_rules."""
+    itself succeeds. setup_suricata_config must fall back to
+    baked-in/cached rules when the fetch itself fails even though the
+    reachability probe passed - e.g. a proxy blocking the real rule
+    mirrors, a cert error, or bad --data-dir permissions - unlike
+    setup_yara_rules/setup_sigma_rules previously only having this
+    fallback for the "probe itself failed" case."""
 
-    @unittest.mock.patch('suricata_analyzer.subprocess.Popen')
-    @unittest.mock.patch('suricata_analyzer.has_internet_access')
-    def test_falls_back_to_existing_rules_when_update_fails(self, mock_internet, mock_popen):
-        mock_internet.return_value = True
-        mock_popen.return_value = _FakeFailedProc()
+    @unittest.mock.patch('suricata_analyzer.subprocess.run')
+    @unittest.mock.patch('suricata_analyzer.has_internet_access', return_value=True)
+    def test_falls_back_to_existing_rules_when_update_fails(self, mock_internet, mock_run):
+        mock_run.return_value = unittest.mock.Mock(returncode=1)
         with tempfile.TemporaryDirectory() as tmpdir:
             rules_dir = os.path.join(tmpdir, 'suricata', 'rules')
             os.makedirs(rules_dir, exist_ok=True)
-            rules_file = os.path.join(rules_dir, 'suricata.rules')
+            rules_file = os.path.join(rules_dir, 'et-open.rules')
             with open(rules_file, 'w') as f:
                 f.write('alert tcp any any -> any any (msg:"pre-existing"; sid:1;)\n')
 
@@ -4366,35 +4889,27 @@ class TestSuricataUpdateFailureFallsBack(unittest.TestCase):
                 self.assertIn('pre-existing', f.read(), 'existing rules must survive a failed update attempt')
             self.assertTrue(any('despite the failed update' in m for m in messages), messages)
 
-    @unittest.mock.patch('suricata_analyzer.subprocess.Popen')
-    @unittest.mock.patch('suricata_analyzer.has_internet_access')
-    def test_falls_back_to_baked_in_rules_when_update_fails_and_none_exist(self, mock_internet, mock_popen):
-        mock_internet.return_value = True
-        mock_popen.return_value = _FakeFailedProc()
+    @unittest.mock.patch('suricata_analyzer.subprocess.run')
+    @unittest.mock.patch('suricata_analyzer.has_internet_access', return_value=True)
+    def test_falls_back_to_baked_in_rules_when_update_fails_and_none_exist(self, mock_internet, mock_run):
+        mock_run.return_value = unittest.mock.Mock(returncode=1)
         real_isdir = os.path.isdir
-        real_exists = os.path.exists
-        baked_in_dir = '/usr/share/suricata/rules'
+        real_listdir = os.listdir
+        baked_in_library_dir = '/usr/share/suricata/rules-available'
 
         def fake_isdir(path):
-            if path == baked_in_dir:
-                return True
-            return real_isdir(path)
+            return True if path == baked_in_library_dir else real_isdir(path)
 
-        def fake_exists(path):
-            if path == os.path.join(baked_in_dir, 'suricata.rules'):
-                return True
-            return real_exists(path)
+        def fake_listdir(path):
+            return ['et-open.rules'] if path == baked_in_library_dir else real_listdir(path)
 
         with tempfile.TemporaryDirectory() as tmpdir, \
                 unittest.mock.patch('os.path.isdir', side_effect=fake_isdir), \
-                unittest.mock.patch('os.path.exists', side_effect=fake_exists), \
-                unittest.mock.patch('suricata_analyzer.shutil.copytree') as mock_copytree:
+                unittest.mock.patch('os.listdir', side_effect=fake_listdir), \
+                unittest.mock.patch('suricata_analyzer._seed_active_from_library') as mock_seed:
             messages = []
             suricata_analyzer.setup_suricata_config(tmpdir, on_progress=messages.append)
-        # /etc/suricata (a real dir on this dev box) also gets copied into
-        # the fresh tmp data_dir as part of the initial config bootstrap -
-        # only assert our specific baked-in-rules fallback call happened.
-        mock_copytree.assert_any_call(baked_in_dir, os.path.join(tmpdir, 'suricata', 'rules'), dirs_exist_ok=True)
+        mock_seed.assert_called_once_with(baked_in_library_dir, tmpdir, ['et/open'], unittest.mock.ANY)
         self.assertTrue(any('Falling back to baked-in Suricata rules' in m for m in messages), messages)
 
 
@@ -4514,11 +5029,16 @@ class TestSuricataProtocolEnable(unittest.TestCase):
         self.assertNotIn('enabled: no', result)
 
     def test_suricata_update_uses_suricata_conf(self):
-        """suricata-update must be told which Suricata config to read."""
+        """suricata-update must be told which Suricata config to read -
+        _fetch_single_source() (used by both the on-demand refresh path
+        and, identically, the Docker image's per-source bake loop) passes
+        the real suricata.yaml even though it fetches into a scratch
+        --data-dir, so version-aware rule filtering still uses the actual
+        installed Suricata version rather than silently falling back to
+        /etc/suricata/suricata.yaml's default."""
         with open(SURICATA_FILE, 'r') as f:
             content = f.read()
-        # Find the suricata-update argument list.
-        self.assertIn("'--suricata-conf', suricata_config", content,
+        self.assertIn("'--suricata-conf', os.path.join(suricata_dir, 'suricata.yaml')", content,
                       'suricata-update must use --suricata-conf for the Suricata config')
         self.assertNotIn("'--no-test', '-c', suricata_config", content,
                          'must not pass -c as the Suricata config argument')
@@ -4910,7 +5430,7 @@ class TestSetupYaraRulesFreshness(unittest.TestCase):
         path = os.path.join(rules_dir, yara_analyzer.YARA_FORGE_FILENAME)
         with open(path, 'w') as f:
             f.write('rule Old { condition: true }')
-        old_time = time.time() - (25 * 3600)
+        old_time = time.time() - (config.RULES_MAX_AGE_HOURS + 1) * 3600
         os.utime(path, (old_time, old_time))
         return path
 
@@ -5291,15 +5811,59 @@ class TestDockerfile(unittest.TestCase):
         module can't silently go missing from the image the way
         ohmydebn_colors.py once did (added this session, imported by
         socrates.py, but never added to the Dockerfile's COPY line - the
-        container failed at import time as a result)."""
+        container failed at import time as a result).
+
+        REGRESSION: playbook_lookup.py went through this exact failure
+        mode a second time - imported unconditionally by socrates.py, but
+        missing from the COPY line - and this test still passed, because
+        it only checked substring membership against the *whole file*,
+        and playbook_lookup.py happened to be named in three unrelated
+        comments elsewhere in the Dockerfile. Must check the actual COPY
+        instruction's own argument list, not just "mentioned somewhere in
+        the file"."""
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         py_files = sorted(f for f in os.listdir(repo_root) if f.endswith('.py'))
         self.assertIn('ohmydebn_colors.py', py_files, 'sanity check: this test must actually see the repo root')
         with open(DOCKERFILE, 'r') as f:
             content = f.read()
+        copy_match = re.search(r'^COPY config\.py .*\.\/$', content, re.MULTILINE)
+        self.assertIsNotNone(copy_match, 'Dockerfile must have a COPY line starting with config.py and ending with ./')
+        copy_line = copy_match.group(0)
+        copied_files = set(copy_line.split()[1:-1])  # drop leading 'COPY' and trailing './'
         for py_file in py_files:
-            self.assertIn(py_file, content, f'Dockerfile must copy {py_file}')
-        self.assertIn('socrates.html', content, 'Dockerfile must copy socrates.html')
+            self.assertIn(py_file, copied_files, f'Dockerfile\'s COPY line must copy {py_file}')
+        self.assertIn('socrates.html', copied_files, 'Dockerfile\'s COPY line must copy socrates.html')
+
+    def test_dockerfile_bake_loop_uses_baked_in_sources_dynamically(self):
+        """The per-source Suricata rules bake loop must derive its slug
+        list from suricata_analyzer.BAKED_IN_SURICATA_SOURCES (which
+        itself excludes ipfire/dbl - see that module's comment for why:
+        biggest space cost of the curated set, and a content-filtering
+        blocklist rather than threat detection) rather than hand-listing
+        slugs separately in the Dockerfile, where they could drift out of
+        sync with the curated catalog."""
+        with open(DOCKERFILE, 'r') as f:
+            content = f.read()
+        self.assertIn('from suricata_analyzer import BAKED_IN_SURICATA_SOURCES, _source_filename', content)
+        self.assertIn('for slug in BAKED_IN_SURICATA_SOURCES:', content)
+        # Deriving the loop from BAKED_IN_SURICATA_SOURCES (asserted
+        # above) rather than a hand-written slug list is what actually
+        # keeps ipfire/dbl out - it's still fine (expected, even) for
+        # ipfire/dbl to appear in the surrounding prose explaining why.
+
+    def test_dockerfile_bake_loop_isolates_non_et_open_sources(self):
+        """REGRESSION: enable-source on a brand-new --data-dir silently
+        ALSO auto-enables et/open as its own "default source" regardless
+        of what was actually requested (confirmed by hand: an unpatched
+        fetch of oisf/trafficid alone produced a merged file with
+        et/open's full ~52k rules mixed in, not just trafficid's own much
+        smaller set) - the bake loop must explicitly disable it again for
+        every other source, or none of the baked-in per-source files are
+        actually isolated."""
+        with open(DOCKERFILE, 'r') as f:
+            content = f.read()
+        self.assertIn("if slug != 'et/open':", content)
+        self.assertIn("['suricata-update', 'disable-source', 'et/open', '--data-dir', scratch_data]", content)
 
     def test_dockerfile_has_python_build_dependencies(self):
         """Dockerfile must install build tools for compiling Python packages."""
@@ -5315,29 +5879,37 @@ class TestDockerfile(unittest.TestCase):
     def _dockerfile_final_stage(self):
         """Return the Dockerfile content for just the final (runtime) stage.
 
-        The Dockerfile has exactly two `FROM debian:13-slim` stages: a named
-        builder stage that compiles the Zircolite venv, and an unnamed final
-        stage that ships. Splitting on the FROM lines isolates the final
-        stage so tests can assert build-only tools never land in it.
+        The Dockerfile has exactly three `FROM debian:13-slim` stages: named
+        builder stages that compile the Zircolite venv and convert the
+        Security Onion Playbooks YAML into gzip-compressed JSON indexes
+        (see playbook_lookup.py), and an unnamed final stage that ships.
+        Splitting on the FROM lines and taking the last part isolates the
+        final stage so tests can assert build-only tools never land in it,
+        regardless of how many builder stages precede it.
         """
         with open(DOCKERFILE, 'r') as f:
             content = f.read()
         parts = content.split('FROM debian:13-slim')
-        self.assertEqual(len(parts), 3,
-                          'Dockerfile must have exactly one builder stage and one final stage')
-        return parts[2]
+        self.assertEqual(len(parts), 4,
+                          'Dockerfile must have exactly two builder stages and one final stage')
+        return parts[-1]
 
     def test_dockerfile_uses_multistage_build(self):
         """REGRESSION: Dockerfile must build the Zircolite venv in a separate
         stage so its Rust toolchain/build-essential/dev headers/git never
         ship in the final image (previously added ~800MB of unused build
-        tooling to every image)."""
+        tooling to every image). The Playbooks conversion (python3-yaml +
+        the ~125MB upstream YAML tree - see playbook_lookup.py) gets its
+        own builder stage for the same reason.
+        """
         with open(DOCKERFILE, 'r') as f:
             content = f.read()
         self.assertIn('AS zircolite-builder', content,
                       'Dockerfile must define a named zircolite-builder stage')
-        self.assertEqual(content.count('FROM debian:13-slim'), 2,
-                          'Dockerfile must have exactly two build stages')
+        self.assertIn('AS playbooks-builder', content,
+                      'Dockerfile must define a named playbooks-builder stage')
+        self.assertEqual(content.count('FROM debian:13-slim'), 3,
+                          'Dockerfile must have exactly three build stages')
 
     def test_build_toolchain_absent_from_final_stage(self):
         """REGRESSION: the Rust/build toolchain used to compile the
@@ -5491,6 +6063,56 @@ class TestDockerfile(unittest.TestCase):
                         'podman compose file must set userns_mode')
         self.assertIn('keep-id', content,
                         'podman compose file must use keep-id userns_mode')
+
+
+class TestVersionConsistency(unittest.TestCase):
+    """Locks in Release Checklist item 4: VERSION in socrates.py, the
+    docs/api.md /api/version example, and the latest docs/release-notes.md
+    heading must never disagree - previously just a "remember to bump all
+    three together" step a human (or agent) could forget."""
+
+    def test_version_matches_across_source_and_docs(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        api_md_path = os.path.join(repo_root, 'docs', 'api.md')
+        release_notes_path = os.path.join(repo_root, 'docs', 'release-notes.md')
+
+        with open(api_md_path, 'r') as f:
+            api_md_content = f.read()
+        api_version_match = re.search(r'/api/version.*?\{"version":\s*"([^"]+)"\}',
+                                      api_md_content, re.DOTALL)
+        self.assertIsNotNone(api_version_match,
+                             'docs/api.md must show a {"version": "X.Y.Z"} example under /api/version')
+
+        with open(release_notes_path, 'r') as f:
+            release_notes_content = f.read()
+        release_notes_match = re.search(r'^## (\d+\.\d+\.\d+)', release_notes_content, re.MULTILINE)
+        self.assertIsNotNone(release_notes_match,
+                             'docs/release-notes.md must start with a ## X.Y.Z heading for the '
+                             'latest release')
+
+        self.assertEqual(server.VERSION, api_version_match.group(1),
+                         "docs/api.md's /api/version example is out of sync with socrates.VERSION")
+        self.assertEqual(server.VERSION, release_notes_match.group(1),
+                         "docs/release-notes.md's latest heading is out of sync with "
+                         'socrates.VERSION - add a new ## entry (and bump VERSION) when releasing')
+
+
+class TestRoutesPointToRealHandlerMethods(unittest.TestCase):
+    """do_GET/do_POST dispatch via getattr(self, GET_ROUTES[path]) /
+    POST_ROUTES[path] with no existence check (see socrates.py's do_GET/
+    do_POST) - a typo'd or renamed handler name would only surface as an
+    AttributeError the first time that route is actually requested. Locks
+    in that every registered route names a real Handler method."""
+
+    def test_get_routes_point_to_real_methods(self):
+        for path, handler_name in server.Handler.GET_ROUTES.items():
+            self.assertTrue(hasattr(server.Handler, handler_name),
+                            f'GET_ROUTES[{path!r}] = {handler_name!r} is not a method on Handler')
+
+    def test_post_routes_point_to_real_methods(self):
+        for path, handler_name in server.Handler.POST_ROUTES.items():
+            self.assertTrue(hasattr(server.Handler, handler_name),
+                            f'POST_ROUTES[{path!r}] = {handler_name!r} is not a method on Handler')
 
 
 class _ChunkedReader:

@@ -40,6 +40,7 @@
 | `arp` | ARP requests/replies (decode-layer, not app-layer - disabled by default, see note below) | `arp.opcode`, `arp.src_mac`, `arp.dest_mac` |
 | `log` | Imported log events (EVTX, JSON, CSV, XML, generic logs) | `original_log`, parsed dynamic fields |
 | `sigmaalert` | Sigma rule matches on imported logs | `title`, `severity`, `rule_level` |
+| `protocol_decode` | Suricata's built-in protocol-command-decode alerts, reclassified out of `alert` - labeled "Decoder Alerts" in the UI (synthetic - see note below) | `alert.signature`, `alert.severity`, `alert.category`, `alert.rule` |
 | `stats` | Suricata internal stats | (excluded from display) |
 
 **Note on Suricata 8 / DNS logging:** this app now runs on Suricata 8.0.6
@@ -62,7 +63,33 @@ default** in Suricata's own config (comment: "Many events can be logged") -
 unlike modbus/dnp3/enip/ntp/pgsql, this app doesn't force it on by default
 either; it's a real volume/signal tradeoff on a live network that should be
 a deliberate choice, not a silent default. Set the `ENABLE_ARP_LOGGING`
-environment variable (see [Manual Installation](../installation/manual.md#environment-variables))
+environment variable (see [Development Setup](../development-setup.md#environment-variables))
 to opt in - `setup_suricata_config()`'s `enable_arp` parameter, wired to
 that env var in `socrates.py`'s `main()`, calls `_enable_eve_log_arp` in
 `suricata_analyzer.py` when set.
+
+**Note on `protocol_decode`:** when the opt-in `show_protocol_decode_alerts`
+setting (Rules modal) is enabled, Suricata's own built-in
+protocol-command-decode detection rules stay active and generate real
+`alert` events with `alert.category === "Generic Protocol Command Decode"`.
+These are noise, not threat detections, so `create_sqlite_db` (`db.py`)
+rewrites their `event_type` to `protocol_decode` at ingestion time, giving
+them a dedicated tab (labeled "Decoder Alerts" in the UI - the internal
+event_type/setting name intentionally stays `protocol_decode`/
+`show_protocol_decode_alerts`, matching Suricata's own
+"protocol-command-decode" classtype) instead of diluting `alert`. The
+event otherwise keeps the exact same shape as `alert` (same fields, same
+aggregation columns, same Detail-column logic) - the only differences are
+the tab/label/color and that it has no Playbook section, since there's no
+investigation guidance for something that isn't a real detection. When the
+setting is off (the default), Suricata never generates this category at
+all, so the tab never appears.
+
+Note this is a related but distinct signal from the separate `anomaly`
+event type above: Suricata's anomaly logger fires for every detected
+protocol anomaly regardless of rule configuration, while `protocol_decode`
+only fires when a specific built-in decoder *rule* matches - some anomaly
+types (e.g. TLS `weak_crypto_*`) have no corresponding decoder rule at
+all, and even for overlapping categories the counts don't match exactly.
+Enabling `show_protocol_decode_alerts` therefore surfaces a second,
+overlapping (not identical) view of much of the same underlying signal.
