@@ -5885,6 +5885,26 @@ class TestDockerfile(unittest.TestCase):
         self.assertIn("if slug != 'et/open':", content)
         self.assertIn("['suricata-update', 'disable-source', 'et/open', '--data-dir', scratch_data]", content)
 
+    def test_dockerfile_bake_loop_updates_sources_before_enabling(self):
+        """REGRESSION: enable-source on a brand-new --data-dir can only
+        resolve a slug against a local source-index cache that
+        update-sources populates first. Skipping this step broke a real CI
+        build with a StopIteration deep inside suricata-update's own
+        get_sources_from_dir() for the-hunters-ledger/open - a slug not in
+        suricata-update's own bundled index, unlike long-established ones
+        like et/open (which happened to keep working without this call,
+        masking the bug for the other sources). Must mirror
+        _fetch_single_source()'s equivalent runtime call in
+        suricata_analyzer.py, and must run before enable-source, not after."""
+        with open(DOCKERFILE, 'r') as f:
+            content = f.read()
+        bake_loop = content.split('for slug in BAKED_IN_SURICATA_SOURCES:')[1].split("PY\n")[0]
+        update_idx = bake_loop.find("'suricata-update', 'update-sources'")
+        enable_idx = bake_loop.find("'suricata-update', 'enable-source'")
+        self.assertGreater(update_idx, -1, 'bake loop must call suricata-update update-sources')
+        self.assertGreater(enable_idx, -1, 'bake loop must call suricata-update enable-source')
+        self.assertLess(update_idx, enable_idx, 'update-sources must run before enable-source')
+
     def test_dockerfile_has_python_build_dependencies(self):
         """Dockerfile must install build tools for compiling Python packages."""
         with open(DOCKERFILE, 'r') as f:

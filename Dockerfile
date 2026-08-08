@@ -204,6 +204,22 @@ for slug in BAKED_IN_SURICATA_SOURCES:
     scratch_data = tempfile.mkdtemp()
     scratch_out = tempfile.mkdtemp()
     try:
+        # Populates the local source-index cache that enable-source resolves
+        # slugs against - required for any slug not already in
+        # suricata-update's own bundled index (e.g. the-hunters-ledger/open,
+        # a much less common source than the long-established ones like
+        # et/open). Without this, enable-source on a brand-new --data-dir
+        # fails with a StopIteration deep in suricata-update's own
+        # get_sources_from_dir() (empty/nonexistent index directory) for any
+        # slug that isn't bundled - confirmed for real in CI. Mirrors
+        # _fetch_single_source()'s equivalent runtime call in
+        # suricata_analyzer.py exactly, just with check=True instead of a
+        # swallowed failure - a build-time network hiccup should fail the
+        # image build loudly, not silently ship an incomplete bake.
+        subprocess.run(
+            ['suricata-update', 'update-sources', '--data-dir', scratch_data],
+            check=True,
+        )
         subprocess.run(
             ['suricata-update', 'enable-source', slug, '--data-dir', scratch_data],
             check=True,
