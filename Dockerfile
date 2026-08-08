@@ -77,10 +77,23 @@ RUN mkdir -p /tmp/playbooks-out && python3 - <<'PY'
 import gzip
 import json
 import os
+import sys
 import yaml
 
 SRC = '/tmp/playbooks-src/public'
 OUT = '/tmp/playbooks-out'
+
+# python3-yaml's default yaml.safe_load() uses the pure-Python SafeLoader,
+# not the C-accelerated one, even though Debian's package already bundles
+# it - measured 13.6x faster on the real ~58k-file nids/individual/ tree
+# (3.6min -> 16s natively). That gap is why this step looked hung under
+# QEMU's linux/arm64 emulation in CI: pure-Python parsing of 58k tiny
+# files, already slow natively, multiplied by emulation's own 5-20x
+# CPU-bound slowdown, with zero progress output the entire time to show it
+# was still working. CSafeLoader is present in the exact python3-yaml
+# package this stage installs (confirmed directly, not assumed) - fall
+# back to SafeLoader only if some future base image variant lacks it.
+YamlLoader = getattr(yaml, 'CSafeLoader', yaml.SafeLoader)
 
 
 def slim(entry):
@@ -97,15 +110,17 @@ def slim(entry):
 for detection_type, engine_file in (('nids', 'engine_nids.yaml'), ('sigma', 'engine_sigma.yaml')):
     index = {}
     individual_dir = os.path.join(SRC, detection_type, 'individual')
-    for filename in os.listdir(individual_dir):
-        if not filename.endswith('.yaml'):
-            continue
+    filenames = [f for f in os.listdir(individual_dir) if f.endswith('.yaml')]
+    for i, filename in enumerate(filenames, 1):
         rule_id = filename[:-len('.yaml')]
         with open(os.path.join(individual_dir, filename)) as f:
-            entry = yaml.safe_load(f)
+            entry = yaml.load(f, Loader=YamlLoader)
         index[rule_id] = slim(entry)
+        if i % 5000 == 0 or i == len(filenames):
+            print(f'  {detection_type}: {i}/{len(filenames)} individual playbooks converted')
+            sys.stdout.flush()
     with open(os.path.join(SRC, detection_type, 'engine', engine_file)) as f:
-        index['_default'] = slim(yaml.safe_load(f))
+        index['_default'] = slim(yaml.load(f, Loader=YamlLoader))
     out_path = os.path.join(OUT, f'{detection_type}.json.gz')
     with gzip.open(out_path, 'wt', encoding='utf-8') as f:
         json.dump(index, f)

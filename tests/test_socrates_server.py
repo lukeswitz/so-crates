@@ -5885,6 +5885,27 @@ class TestDockerfile(unittest.TestCase):
         self.assertIn("if slug != 'et/open':", content)
         self.assertIn("['suricata-update', 'disable-source', 'et/open', '--data-dir', scratch_data]", content)
 
+    def test_playbooks_builder_uses_c_accelerated_yaml_loader(self):
+        """REGRESSION: the playbooks-builder stage's yaml.safe_load() (the
+        pure-Python SafeLoader) parsing ~58k individual playbook YAML files
+        one at a time, with zero progress output the whole time, measured
+        13.6x slower than yaml.CSafeLoader on the real dataset (3.6min ->
+        16s natively) - and Debian's python3-yaml package already bundles
+        CSafeLoader, confirmed directly against the exact package this
+        stage installs. Combined with QEMU's own CPU-bound slowdown, the
+        pure-Python path made a real linux/arm64 CI build look hung."""
+        with open(DOCKERFILE, 'r') as f:
+            content = f.read()
+        playbooks_stage = content.split('AS playbooks-builder')[1].split('FROM debian:13-slim\n\n')[0]
+        self.assertIn('CSafeLoader', playbooks_stage,
+                      'playbooks-builder stage must use the C-accelerated YAML loader')
+        # The exact invocation pattern, not a bare substring match - the
+        # comment explaining *why* this was changed necessarily mentions
+        # "yaml.safe_load()" in prose, which a plain substring check would
+        # also (wrongly) flag.
+        self.assertNotIn('yaml.safe_load(f)', playbooks_stage,
+                          'playbooks-builder stage must not use the slow pure-Python safe_load() path')
+
     def test_dockerfile_bake_loop_updates_sources_before_enabling(self):
         """REGRESSION: enable-source on a brand-new --data-dir can only
         resolve a slug against a local source-index cache that
