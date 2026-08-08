@@ -7,6 +7,7 @@ on first run if internet is available.
 """
 
 import config
+import gzip
 import hashlib
 import json
 import os
@@ -25,7 +26,10 @@ YARA_FORGE_URL = (
     'https://github.com/YARAHQ/yara-forge/releases/latest/download/'
     'yara-forge-rules-full.zip'
 )
-BAKED_IN_YARA_FILE = '/usr/share/yara-rules/yara-rules-full.yar'
+# Baked in gzip-compressed (~19MB -> 3MB - see the Dockerfile's YARA Forge
+# bake step) and decompressed here into the plain .yar file every other
+# reader in this module already expects.
+BAKED_IN_YARA_FILE = '/usr/share/yara-rules/yara-rules-full.yar.gz'
 YARA_RULES_SUBDIR = 'yara-rules'
 YARA_FORGE_FILENAME = 'yara-rules-full.yar'
 
@@ -125,7 +129,8 @@ def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, for
     if os.path.isfile(BAKED_IN_YARA_FILE):
         os.makedirs(os.path.dirname(rules_file), exist_ok=True)
         try:
-            shutil.copy2(BAKED_IN_YARA_FILE, rules_file)
+            with gzip.open(BAKED_IN_YARA_FILE, 'rb') as f_in, open(rules_file, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
             return rules_file
         except OSError as e:
             on_progress(f'Warning: could not copy baked-in rules: {e}')

@@ -18,6 +18,7 @@ offline (see git history / conversation - that state lived in a
 --data-dir with no relationship between build-time image and run-time
 DATA_DIR)."""
 
+import gzip
 import json
 import os
 import shutil
@@ -542,6 +543,32 @@ class TestSeedActiveFromLibrary(unittest.TestCase):
             set(suricata_analyzer.get_suricata_enabled_sources(self.tmpdir)),
             {'et/open', 'abuse.ch/urlhaus'},
             'oisf/trafficid was never in the fake baked-in dir, so it must not be claimed as active')
+
+    def test_decompresses_gzip_baked_in_files(self):
+        """The real Docker image bakes rules-available/*.rules.gz (see the
+        Dockerfile's bake loop) - the .rules fixtures used by every other
+        test in this class only cover the legacy plain-file fallback, not
+        the actual production path."""
+        gz_dir = tempfile.mkdtemp()
+        try:
+            src_path = os.path.join(self.baked_in_dir, 'et-open.rules')
+            with open(src_path, 'rb') as f_in, gzip.open(os.path.join(gz_dir, 'et-open.rules.gz'), 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+            with open(src_path, 'rb') as f:
+                original_content = f.read()
+
+            suricata_analyzer._seed_active_from_library(
+                gz_dir, self.tmpdir, ['et/open'], lambda m: None)
+
+            library_dir = os.path.join(self.tmpdir, 'suricata', 'rules-available')
+            active_dir = os.path.join(self.tmpdir, 'suricata', 'rules')
+            self.assertEqual(os.listdir(library_dir), ['et-open.rules'],
+                              'the .gz suffix must be stripped from the decompressed filename')
+            with open(os.path.join(library_dir, 'et-open.rules'), 'rb') as f:
+                self.assertEqual(f.read(), original_content)
+            self.assertEqual(os.listdir(active_dir), ['et-open.rules'])
+        finally:
+            shutil.rmtree(gz_dir, ignore_errors=True)
 
 
 class TestSetupSuricataConfigEnabledSources(unittest.TestCase):

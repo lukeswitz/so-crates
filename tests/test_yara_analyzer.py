@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for yara_analyzer.py."""
 
+import gzip
 import os
 import sys
 import tempfile
@@ -12,6 +13,31 @@ import zipfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 import yara_analyzer
+
+
+class TestSetupYaraRulesBakedInGzip(unittest.TestCase):
+    """The real Docker image bakes BAKED_IN_YARA_FILE gzip-compressed (see
+    the Dockerfile's YARA Forge bake step) - must be decompressed into the
+    plain .yar file setup_yara_rules() promises its caller."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.baked_in_dir = tempfile.mkdtemp()
+        self.baked_in_gz = os.path.join(self.baked_in_dir, 'yara-rules-full.yar.gz')
+        self.rule_content = b'rule dummy { condition: true }'
+        with gzip.open(self.baked_in_gz, 'wb') as f:
+            f.write(self.rule_content)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        shutil.rmtree(self.baked_in_dir, ignore_errors=True)
+
+    def test_decompresses_baked_in_gzip_file(self):
+        with unittest.mock.patch('yara_analyzer.BAKED_IN_YARA_FILE', self.baked_in_gz):
+            rules_file = yara_analyzer.setup_yara_rules(self.tmpdir, network_allowed=False)
+        self.assertTrue(os.path.isfile(rules_file))
+        with open(rules_file, 'rb') as f:
+            self.assertEqual(f.read(), self.rule_content)
 
 
 class TestSetupYaraRulesForceNoNetwork(unittest.TestCase):

@@ -2,16 +2,45 @@
 """Tests for sigma_analyzer.py's setup_sigma_rules() (separate from
 test_sigma_analyzer.py's log-type-detection/parsing tests)."""
 
+import gzip
 import os
 import sys
 import tempfile
 import shutil
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 import config
 import sigma_analyzer
+
+
+class TestSetupSigmaRulesBakedInGzip(unittest.TestCase):
+    """The real Docker image bakes BAKED_IN_SIGMA_DIR's <ruleset>.json.gz
+    gzip-compressed (see the Dockerfile's Sigma rules bake step) - must be
+    decompressed into the plain .json file setup_sigma_rules() promises
+    its caller."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.baked_in_dir = tempfile.mkdtemp()
+        self.rule_content = {'windows': b'[{"windows": true}]', 'linux': b'[{"linux": true}]'}
+        for ruleset_name, content in self.rule_content.items():
+            with gzip.open(os.path.join(self.baked_in_dir, f'{ruleset_name}.json.gz'), 'wb') as f:
+                f.write(content)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        shutil.rmtree(self.baked_in_dir, ignore_errors=True)
+
+    def test_decompresses_baked_in_gzip_files(self):
+        with unittest.mock.patch('sigma_analyzer.BAKED_IN_SIGMA_DIR', self.baked_in_dir):
+            result = sigma_analyzer.setup_sigma_rules(self.tmpdir, network_allowed=False)
+        for ruleset_name, content in self.rule_content.items():
+            self.assertTrue(os.path.isfile(result[ruleset_name]))
+            with open(result[ruleset_name], 'rb') as f:
+                self.assertEqual(f.read(), content)
 
 
 class TestSetupSigmaRulesForceNoNetwork(unittest.TestCase):

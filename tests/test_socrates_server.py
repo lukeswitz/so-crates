@@ -6052,10 +6052,10 @@ class TestDockerfile(unittest.TestCase):
         self.assertIn(yara_analyzer.BAKED_IN_YARA_FILE, content,
                       'Dockerfile must write the baked-in YARA file at the exact path BAKED_IN_YARA_FILE points to')
         for ruleset_name in sigma_analyzer.ZIRCOLITE_RULES_URLS:
-            expected_path = os.path.join(sigma_analyzer.BAKED_IN_SIGMA_DIR, f'{ruleset_name}.json')
+            expected_path = os.path.join(sigma_analyzer.BAKED_IN_SIGMA_DIR, f'{ruleset_name}.json.gz')
             self.assertIn(expected_path, content,
                           f'Dockerfile must write the baked-in Sigma {ruleset_name} rules at {expected_path}, '
-                          'matching setup_sigma_rules()\'s BAKED_IN_SIGMA_DIR + \'<ruleset>.json\' lookup')
+                          'matching setup_sigma_rules()\'s BAKED_IN_SIGMA_DIR + \'<ruleset>.json.gz\' lookup')
 
     def test_docker_compose_uses_so_crates_image(self):
         """docker-compose.yml must reference the SO-CRATES image."""

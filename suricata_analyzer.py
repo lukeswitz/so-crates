@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import gzip
 import json
 import os
 import re
@@ -474,7 +475,15 @@ def _seed_active_from_library(baked_in_library_dir, data_dir, source_names, on_p
     enabled_sources.json (not the requested one, in case a file is
     missing/corrupt) so the Rules modal never claims something is enabled
     that isn't. Used both for the very first startup on a fresh volume and
-    as a last-resort fallback if every live refresh attempt fails."""
+    as a last-resort fallback if every live refresh attempt fails.
+
+    The image bakes these in gzip-compressed (`<name>.rules.gz` - see the
+    Dockerfile's bake loop; plain-text Suricata rules compress ~93%, 73MB
+    down to 5MB across all 14 curated sources) - decompressed here into the
+    plain `.rules` filename every other reader in this module already
+    expects, so nothing downstream needs to know the baked-in copy was ever
+    compressed.
+    """
     suricata_dir = os.path.join(data_dir, 'suricata')
     library_dir = os.path.join(suricata_dir, 'rules-available')
     active_dir = os.path.join(suricata_dir, 'rules')
@@ -482,9 +491,16 @@ def _seed_active_from_library(baked_in_library_dir, data_dir, source_names, on_p
     os.makedirs(active_dir, exist_ok=True)
     try:
         for filename in os.listdir(baked_in_library_dir):
-            dest = os.path.join(library_dir, filename)
-            if not os.path.exists(dest):
-                shutil.copy2(os.path.join(baked_in_library_dir, filename), dest)
+            dest_filename = filename[:-len('.gz')] if filename.endswith('.gz') else filename
+            dest = os.path.join(library_dir, dest_filename)
+            if os.path.exists(dest):
+                continue
+            src = os.path.join(baked_in_library_dir, filename)
+            if filename.endswith('.gz'):
+                with gzip.open(src, 'rb') as f_in, open(dest, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            else:
+                shutil.copy2(src, dest)
     except OSError as e:
         on_progress(f'Warning: could not copy baked-in rules library: {e}')
         return

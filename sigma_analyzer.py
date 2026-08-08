@@ -6,6 +6,7 @@ are scanned with Sigma rules after upload. Rules are baked into Docker
 images; non-Docker deployments download on first run if internet is available.
 """
 
+import gzip
 import json
 import os
 import re
@@ -168,11 +169,15 @@ def setup_sigma_rules(data_dir=None, on_progress=print, network_allowed=True, fo
             result[ruleset_name] = rules_file
             continue
 
-        # Baked-in rules (Docker image)
-        baked_in = os.path.join(BAKED_IN_SIGMA_DIR, f'{ruleset_name}.json')
+        # Baked-in rules (Docker image) - gzip-compressed (windows.json is
+        # ~7.4MB uncompressed, ~0.9MB compressed - see the Dockerfile's
+        # Sigma rules bake step), decompressed here into the plain .json
+        # file every other reader in this module already expects.
+        baked_in = os.path.join(BAKED_IN_SIGMA_DIR, f'{ruleset_name}.json.gz')
         if os.path.isfile(baked_in):
             try:
-                shutil.copy2(baked_in, rules_file)
+                with gzip.open(baked_in, 'rb') as f_in, open(rules_file, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
                 result[ruleset_name] = rules_file
                 continue
             except OSError as e:

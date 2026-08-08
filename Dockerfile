@@ -191,6 +191,7 @@ PY
 # noise on ordinary browsing traffic. It stays selectable for online users
 # to fetch on demand via the Rules modal.
 RUN mkdir -p /usr/share/suricata/rules-available && python3 - <<'PY'
+import gzip
 import os
 import shutil
 import subprocess
@@ -241,33 +242,45 @@ for slug in BAKED_IN_SURICATA_SOURCES:
              '--data-dir', scratch_data, '--output', scratch_out],
             check=True,
         )
-        dest = f'/usr/share/suricata/rules-available/{_source_filename(slug)}'
-        shutil.move(os.path.join(scratch_out, 'suricata.rules'), dest)
+        # Baked in gzip-compressed - plain-text Suricata rules compress
+        # ~93% (measured: 73MB -> 5MB across all 14 curated sources) - see
+        # _seed_active_from_library() in suricata_analyzer.py for the
+        # matching decompress-on-read.
+        dest = f'/usr/share/suricata/rules-available/{_source_filename(slug)}.gz'
+        with open(os.path.join(scratch_out, 'suricata.rules'), 'rb') as f_in, gzip.open(dest, 'wb') as f_out:
+            shutil.copyfileobj(f_in, f_out)
         print(f'Baked in {slug} -> {dest}')
     finally:
         shutil.rmtree(scratch_data, ignore_errors=True)
         shutil.rmtree(scratch_out, ignore_errors=True)
 PY
 
-# Bake YARA Forge rules into image for air-gapped deployments
+# Bake YARA Forge rules into image for air-gapped deployments. Baked in
+# gzip-compressed (measured: ~19MB -> 3MB) - see yara_analyzer.py's
+# BAKED_IN_YARA_FILE/setup_yara_rules() for the matching decompress-on-read.
 RUN mkdir -p /usr/share/yara-rules && \
     curl -fsSL -o /tmp/yara-forge-full.zip \
     "https://github.com/YARAHQ/yara-forge/releases/latest/download/yara-forge-rules-full.zip" && \
     python3 -c "import zipfile; zipfile.ZipFile('/tmp/yara-forge-full.zip').extract('packages/full/yara-rules-full.yar', '/tmp/yara-forge-extract')" && \
-    mv /tmp/yara-forge-extract/packages/full/yara-rules-full.yar /usr/share/yara-rules/yara-rules-full.yar && \
+    gzip -9 -c /tmp/yara-forge-extract/packages/full/yara-rules-full.yar > /usr/share/yara-rules/yara-rules-full.yar.gz && \
     rm -rf /tmp/yara-forge-full.zip /tmp/yara-forge-extract
 
 # Bake Sigma rules (Zircolite JSON format) into image for air-gapped
-# deployments. Destination filenames must be windows.json/linux.json (not
-# the upstream rules_*.json names) - sigma_analyzer.py's setup_sigma_rules()
-# looks for '<ruleset>.json' under BAKED_IN_SIGMA_DIR, keyed by the
-# ZIRCOLITE_RULES_URLS dict keys ('windows'/'linux'), not by the source URL's
-# own filename.
+# deployments. Destination filenames must be windows.json.gz/linux.json.gz
+# (not the upstream rules_*.json names) - sigma_analyzer.py's
+# setup_sigma_rules() looks for '<ruleset>.json.gz' under BAKED_IN_SIGMA_DIR,
+# keyed by the ZIRCOLITE_RULES_URLS dict keys ('windows'/'linux'), not by
+# the source URL's own filename. Baked in gzip-compressed (measured:
+# windows.json ~7.4MB -> 0.9MB) - see setup_sigma_rules() for the matching
+# decompress-on-read.
 RUN mkdir -p /usr/share/sigma-rules && \
-    curl -fsSL -o /usr/share/sigma-rules/windows.json \
+    curl -fsSL -o /tmp/windows.json \
     "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_windows_merged.json" && \
-    curl -fsSL -o /usr/share/sigma-rules/linux.json \
-    "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_linux.json"
+    curl -fsSL -o /tmp/linux.json \
+    "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_linux.json" && \
+    gzip -9 -c /tmp/windows.json > /usr/share/sigma-rules/windows.json.gz && \
+    gzip -9 -c /tmp/linux.json > /usr/share/sigma-rules/linux.json.gz && \
+    rm -f /tmp/windows.json /tmp/linux.json
 
 # Bake Security Onion Playbooks (investigation guidance) into image for
 # air-gapped deployments - see the playbooks-builder stage above for how
