@@ -231,7 +231,28 @@ Before cutting a release:
    this pointed at port 8000. If a full run ever reports a handful of
    failures you can't otherwise explain, check for a listener on
    `JSDOM_TEST_ORIGIN`'s port before assuming a real regression.
-8. **Remove any stray `tmp*` directories or files** left in the project root
+8. **Build the container image locally and smoke-test it** (`podman build -t
+   socrates-buildtest .` or the `docker` equivalent). The test suite's
+   Dockerfile checks are all static string/regex matching against its text -
+   they cannot catch a build that actually fails to execute, and this is not
+   hypothetical: two separate real CI failures (a missing `ca-certificates`
+   package breaking `git clone` with "Problem with the SSL CA cert", and a
+   missing `suricata-update update-sources` call breaking `enable-source`
+   for any curated rule source not in suricata-update's own bundled index)
+   both went straight through every existing checklist step undetected and
+   were only caught by an actual build. Neither required a Dockerfile edit
+   to trigger, either - a base image refresh alone can silently break a
+   build with no local diff to review, so run this every release, not just
+   when the Dockerfile changed. After a successful build, run it
+   (`podman run -d -p <port>:8000 <tag>`) and confirm: the container starts
+   and logs "Baked-in rules copied successfully", `GET /api/version`
+   responds, `GET /api/rules-info` shows the expected baked-in Suricata
+   source count, and `/usr/share/playbooks/` has both `.json.gz` indexes
+   (`podman exec <container> ls /usr/share/playbooks/
+   /usr/share/suricata/rules-available/`). Clean up the test container and
+   image afterward (`podman rm -f`/`podman rmi`) rather than leaving it
+   alongside the deployment's real image.
+9. **Remove any stray `tmp*` directories or files** left in the project root
    (e.g. `tmp-********` dirs, `tmp*.js` files) - both patterns are already
    gitignored, so they won't show up in `git status`, but they're debris
    from interrupted test runs or agent sandboxes (see `tests/jsdom_helper.py`'s
