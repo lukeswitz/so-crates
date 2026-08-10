@@ -1678,6 +1678,7 @@
                         }
                     }
                     loadPlaybookSectionIfPresent(detailRow);
+                    loadAiSummaryPlaceholders(detailRow);
                 }
             }
         }
@@ -1750,6 +1751,32 @@
             } catch (e) {
                 // Quiet failure - no playbook shown is the correct outcome either way.
             }
+        }
+
+        // Fetches /api/ai-summary for every not-yet-attempted
+        // .ai-summary-placeholder in detailRow and, for each one that comes
+        // back with a summary, inserts an "AI Summary" row directly before
+        // it - same lazy-on-first-expand shape as
+        // loadPlaybookSectionIfPresent above, except a single detail row can
+        // contain more than one placeholder (renderFileInfoDetails' File
+        // Alerts list renders one per YARA match), so this queries for all
+        // of them and fetches in parallel rather than assuming exactly one.
+        async function loadAiSummaryPlaceholders(detailRow) {
+            const placeholders = detailRow.querySelectorAll('.ai-summary-placeholder:not([data-attempted])');
+            await Promise.all(Array.from(placeholders).map(async (placeholder) => {
+                placeholder.dataset.attempted = 'true';
+                const detectionType = placeholder.dataset.detectionType;
+                const ruleId = placeholder.dataset.ruleId;
+                try {
+                    const resp = await fetch(`/api/ai-summary?type=${encodeURIComponent(detectionType)}&id=${encodeURIComponent(ruleId)}`);
+                    const data = await resp.json();
+                    if (data.summary) {
+                        placeholder.insertAdjacentHTML('beforebegin', htmlRowText('AI Summary', data.summary));
+                    }
+                } catch (e) {
+                    // Quiet failure - no summary shown is the correct outcome either way.
+                }
+            }));
         }
 
         async function loadAsciiTranscript(src, sport, dst, dport, pre) {
@@ -1961,8 +1988,30 @@
             return `<div class="stream-payload" data-src-ip="${srcIpHtml}" data-src-port="${srcPort}" data-dst-ip="${dstIpHtml}" data-dst-port="${dstPort}" style="margin-top: 15px;"><div style="color: var(--text-muted); font-size: 0.85rem; border-bottom: 1px solid var(--border-color); padding-bottom: 5px; margin-bottom: 5px;">Payload</div><div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px;"><div class="view-tabs"><button class="view-tab active" onclick="switchStreamView('ascii','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">ASCII Transcript</button><button class="view-tab" onclick="switchStreamView('hexdump','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">Hexdump</button></div><button class="stream-btn" onclick="downloadPcap('${srcIpJs}','${srcPort}','${dstIpJs}','${dstPort}')" style="margin-left: 12px;">Download PCAP</button></div><div class="stream-view-container" style="background: var(--bg-primary); padding: 15px; border-radius: 8px; font-size: 0.8rem; margin: 0;"><div class="ascii-transcript" style="white-space: pre-wrap; overflow-wrap: break-word;"></div><div class="hexdump-content" style="display: none;"></div></div></div>`;
         }
 
-        function renderAlertFields(e) {
+        // Hidden anchor for an AI Summary field - see
+        // loadAiSummaryPlaceholders. display:none means it takes no space
+        // and shows nothing if the fetch it triggers on first expand comes
+        // back with no summary (e.g. a manual install with nothing baked
+        // in) - there's never an empty "AI Summary" row shown, only ever a
+        // populated one or nothing at all. Unlike the single
+        // playbook-section-placeholder per row, a detail row can contain
+        // more than one of these (see renderFileInfoDetails' matches loop),
+        // so loadAiSummaryPlaceholders queries for all of them, not just one.
+        function aiSummaryPlaceholderHtml(detectionType, ruleId) {
+            return `<span class="ai-summary-placeholder" data-detection-type="${escapeHtml(detectionType)}" data-rule-id="${escapeHtml(String(ruleId || ''))}" style="display:none;"></span>`;
+        }
+
+        // includeAiSummary defaults true (renderAlertDetails' real-alert
+        // case) - renderProtocolDecodeDetails explicitly passes false, same
+        // reasoning as why it never gets a playbook-section-placeholder
+        // either: decoder-noise "alerts" aren't real detections, so neither
+        // Playbook guidance nor an AI summary of "what this rule detects"
+        // applies to them.
+        function renderAlertFields(e, includeAiSummary) {
             let html = htmlRowText('Signature', e.alert?.signature);
+            if (includeAiSummary !== false) {
+                html += aiSummaryPlaceholderHtml('nids', e.alert?.signature_id);
+            }
             html += htmlRowText('Category', e.alert?.category);
             html += htmlRowText('Severity', e.alert?.severity);
             html += htmlRowText('Action', e.alert?.action);
@@ -1990,10 +2039,11 @@
             // Suricata's own built-in protocol-command-decode alerts are
             // noise, not real detections (see create_sqlite_db's
             // reclassification in db.py) - same fields as Alert Details,
-            // but deliberately no Playbook section, since there's no
-            // investigation guidance for "this isn't a threat."
+            // but deliberately no Playbook section and no AI summary
+            // placeholder, since there's no investigation guidance (or
+            // rule explanation) needed for "this isn't a threat."
             let html = htmlSection('Decoder Alert Details', COLORS.EVENT.protocol_decode);
-            html += renderAlertFields(e);
+            html += renderAlertFields(e, false);
             return html;
         }
 
@@ -2186,6 +2236,7 @@
         function renderFileAlertDetails(e) {
             const fa = e.filealerts || {};
             let html = htmlRowText('Rule', fa.rule_name);
+            html += aiSummaryPlaceholderHtml('yara', fa.rule_name);
             html += htmlRowText('SHA256', fa.sha256, 'mono');
             if (fa.author) {
                 html += htmlRowText('Author', fa.author);
@@ -2230,6 +2281,7 @@
             if (matches.length > 0) {
                 matches.forEach(m => {
                     html += htmlRowText('Rule', m.filealerts?.rule_name);
+                    html += aiSummaryPlaceholderHtml('yara', m.filealerts?.rule_name);
                     if (m.filealerts?.tags && m.filealerts.tags.length) {
                         html += htmlRowText('Tags', m.filealerts.tags.join(', '));
                     }
@@ -4592,6 +4644,7 @@
                 detailRow.classList.toggle('visible');
                 if (wasHidden) {
                     loadPlaybookSectionIfPresent(detailRow);
+                    loadAiSummaryPlaceholders(detailRow);
                 }
             }
         }
@@ -5157,6 +5210,7 @@
             // Sigma Rule
             html += htmlSection('Sigma Rule', COLORS.EVENT.sigmaalert);
             html += htmlRowText('Rule Title', alert.rule_title);
+            html += aiSummaryPlaceholderHtml('sigma', alert.rule_id);
             html += htmlRowText('Rule ID', alert.rule_id);
             html += htmlRowText('Severity', alert.severity);
             html += htmlRowText('Level', alert.level);

@@ -80,8 +80,9 @@ event_type/setting name intentionally stays `protocol_decode`/
 "protocol-command-decode" classtype) instead of diluting `alert`. The
 event otherwise keeps the exact same shape as `alert` (same fields, same
 aggregation columns, same Detail-column logic) - the only differences are
-the tab/label/color and that it has no Playbook section, since there's no
-investigation guidance for something that isn't a real detection. When the
+the tab/label/color and that it has no Playbook section or AI Summary
+field, since there's no investigation guidance (or rule explanation) needed
+for something that isn't a real detection. When the
 setting is off (the default), Suricata never generates this category at
 all, so the tab never appears.
 

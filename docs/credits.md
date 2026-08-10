@@ -10,6 +10,7 @@ SO-CRATES is built on top of several excellent open-source projects:
 | [SigmaHQ Rules](https://github.com/SigmaHQ/sigma) | Detection Rule License (DRL) 1.1 | Detection logic for log analysis |
 | [YARA Forge](https://github.com/YARAHQ/yara-forge) | Various | Curated YARA rules |
 | [Security Onion Playbooks](https://github.com/Security-Onion-Solutions/securityonion-resources-playbooks) | Custom | Investigation guidance for Suricata/Sigma alerts |
+| [Security Onion AI Summaries](https://github.com/Security-Onion-Solutions/securityonion-resources/tree/generated-summaries-published) | Custom | AI-generated rule summaries for Suricata/Sigma/YARA alerts |
 | [Emerging Threats Open](https://rules.emergingthreats.net/) | MIT | Suricata network rules (default) |
 | [Suricata Traffic ID](https://openinfosecfoundation.org/rules/trafficid/trafficid.rules) | MIT | Suricata network rules (optional) |
 | [Abuse.ch SSL Blacklist](https://sslbl.abuse.ch/) | CC0-1.0 | Suricata network rules (optional) |

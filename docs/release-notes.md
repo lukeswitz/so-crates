@@ -2,6 +2,20 @@
 
 ## 3.2.0
 
+### Per-row notes
+
+A small note icon on each table row (Suricata alerts, DNS/HTTP/TLS/flow
+events, Sigma alerts, file/YARA matches, imported log events) lets an
+analyst attach a short annotation to that specific piece of evidence -
+"false positive, known scanner", "escalated to IR ticket #4521" - separate
+from the existing whole-analysis Notes field. The icon reuses the same
+modal component as analysis-level notes, scoped to the clicked row instead.
+Row-level notes are lost on reanalyze (which rebuilds the underlying database from
+scratch) - intentional, and now surfaced explicitly: the reanalyze
+confirmation dialog shows a bold "WARNING! You have one or more notes on a
+table row and these will be destroyed" line and turns the Re-analyze button
+red, but only when the analysis actually has row-level notes to lose.
+
 ### Pivot menu: right-click-style Include/Exclude/Only/Hunt on any value
 
 Clicking a value in a data table row, an expanded row's detail panel, or an
@@ -31,19 +45,23 @@ This replaced the aggregation table's old single-click-to-filter behavior
 entirely - clicking a value there now opens the same menu rather than
 applying a filter immediately.
 
-### Per-row notes
+### AI-generated rule summaries
 
-A small note icon on each table row (Suricata alerts, DNS/HTTP/TLS/flow
-events, Sigma alerts, file/YARA matches, imported log events) lets an
-analyst attach a short annotation to that specific piece of evidence -
-"false positive, known scanner", "escalated to IR ticket #4521" - separate
-from the existing whole-analysis Notes field. The icon reuses the same
-modal component as analysis-level notes, scoped to the clicked row instead.
-Row-level notes are lost on reanalyze (which rebuilds the underlying database from
-scratch) - intentional, and now surfaced explicitly: the reanalyze
-confirmation dialog shows a bold "WARNING! You have one or more notes on a
-table row and these will be destroyed" line and turns the Re-analyze button
-red, but only when the analysis actually has row-level notes to lose.
+Expanding a Suricata alert, Sigma alert, or YARA file match now shows an
+**AI Summary** row right at the top of Alert Details/Sigma Rule/Rule - a
+one-paragraph, plain-English explanation of what the rule actually detects,
+fetched only on first expand and shown only if a summary actually comes
+back. Unlike Playbook's investigation questions, there's no generic
+fallback here: a summary for the wrong rule would be actively misleading,
+so a miss just shows nothing. A single row can show more than one of these
+(a file with multiple YARA matches gets one summary per match).
+
+Same baked-in-only shape as Playbooks and for the same reason - summaries
+are generated from Security Onion's `securityonion-resources` repository
+(`generated-summaries-published` branch), gzip-compressed down to a few MB
+total across all three detection engines, with no runtime refresh
+mechanism. Manual installs get nothing by default, but can point
+`AI_SUMMARIES_DIR` at their own locally-built index.
 
 ### Security Onion Playbooks
 

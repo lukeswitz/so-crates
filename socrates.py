@@ -53,6 +53,7 @@ from ohmydebn_colors import (
     derive_theme_colors, derive_theme_colors_from_alacritty, derive_theme_colors_from_named_palette,
 )
 from playbook_lookup import get_playbook
+from ai_summary_lookup import get_ai_summary
 import config
 import tomllib
 
@@ -748,6 +749,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '/api/rule-update-status': 'handle_get_rule_update_status',
         '/api/rules-info': 'handle_get_rules_info',
         '/api/playbook': 'handle_get_playbook',
+        '/api/ai-summary': 'handle_get_ai_summary',
     }
 
     POST_ROUTES = {
@@ -1435,6 +1437,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_error(400, 'Invalid type or id')
             return
         self._send_json({'playbook': get_playbook(detection_type, rule_id)})
+
+    # Same rationale as _PLAYBOOK_ID_PATTERNS above, kept as a separate dict
+    # (not shared) so the two can evolve independently - e.g. 'yara' is valid
+    # here but not (yet) for Playbooks. nids/sigma reuse identical shapes;
+    # 'yara' rule names are bare identifiers (checked against every baked-in
+    # name: max observed length 116, so 200 leaves headroom).
+    _AI_SUMMARY_ID_PATTERNS = {
+        'nids': re.compile(r'^[0-9]{1,10}$'),
+        'sigma': re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'),
+        'yara': re.compile(r'^[A-Za-z_][A-Za-z0-9_]{0,199}$'),
+    }
+
+    def handle_get_ai_summary(self, params):
+        """AI-generated per-rule summaries - global static reference data
+        baked into the image (see ai_summary_lookup.py), deliberately not
+        scoped to an analysis - same shape as handle_get_playbook above."""
+        detection_type = params.get('type', [''])[0]
+        rule_id = params.get('id', [''])[0]
+        pattern = self._AI_SUMMARY_ID_PATTERNS.get(detection_type)
+        if not pattern or not pattern.match(rule_id):
+            self._send_error(400, 'Invalid type or id')
+            return
+        self._send_json({'summary': get_ai_summary(detection_type, rule_id)})
 
     def handle_get_pcap_path(self, params):
         md5 = params.get('md5', [''])[0]

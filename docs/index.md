@@ -26,11 +26,11 @@ After analysis, you can view network alerts, file alerts, network metadata, and 
 
 ![Analysis screen](images/so-crates-analysis.png)
 
-Drilling into a Suricata or Sigma alert shows a Playbook with plain-English investigation guidance for that specific detection:
+Drilling into a Suricata, Sigma, or YARA alert shows an AI-generated summary of what the rule detects, plus a Playbook with plain-English investigation guidance for that specific detection:
 
 ![Playbook](images/so-crates-playbook.png)
 
-When you find something interesting, you can drill into the row in the data table at the bottom. This will allow you to see the ASCII transcript:
+You can optionally collapse the Playbook questions. You can also scroll to the bottom to see the ASCII transcript:
 
 ![ASCII transcript view](images/so-crates-transcript.png)
 

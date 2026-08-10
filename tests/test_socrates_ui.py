@@ -8368,6 +8368,319 @@ class TestPlaybookSectionLazyLoad(unittest.TestCase):
         self.assertEqual(result['scriptCount'], 0)
 
 
+def _yara_matches_fetch_mock_js():
+    """JS snippet (shared by TestAiSummaryPlaceholder and
+    TestAiSummaryLazyLoad) that populates allEvents with a fileinfo event
+    plus two YARA filealerts matches on the same sha256.
+
+    allEvents is a top-level `let`, not `var` - unlike currentFilters etc.
+    used elsewhere in this suite, assigning it directly from test code only
+    creates a same-eval-call shadow that the already-loaded
+    renderFileInfoDetails closure never sees (confirmed empirically: a bare
+    `allEvents = [...]` here is invisible to it). Routing through the real
+    ensureCappedBatch('all') - which performs the assignment itself, inside
+    its own closure - is the only reliable way to populate it for a test."""
+    return '''
+        var fileinfoEvent = { id: 1, event_type: 'fileinfo', timestamp: '2026-01-01T00:00:00',
+            fileinfo: { filename: 'evil.exe', sha256: 'abc123', size: 100 } };
+        var events = [
+            fileinfoEvent,
+            { event_type: 'filealerts', filealerts: { rule_name: 'RULE_ONE', sha256: 'abc123', tags: [] } },
+            { event_type: 'filealerts', filealerts: { rule_name: 'RULE_TWO', sha256: 'abc123', tags: [] } }
+        ];
+        window.fetch = function(url) {
+            if (url.indexOf('/api/events') >= 0) {
+                return Promise.resolve({ json: () => Promise.resolve(events) });
+            }
+            return Promise.resolve({ json: () => Promise.resolve({ count: events.length }) });
+        };
+        currentFilters = {};
+        isLogAnalysisMode = false;
+        await ensureCappedBatch('all');
+    '''
+
+
+class TestAiSummaryPlaceholder(unittest.TestCase):
+    """renderAlertFields/Sigma's rule section/renderFileAlertDetails/
+    renderFileInfoDetails emit a hidden .ai-summary-placeholder anchor (see
+    loadAiSummaryPlaceholders) right after the rule's name/title field -
+    unlike .playbook-section-placeholder (always exactly one, at the end of
+    the section), a single detail row can contain more than one of these,
+    since renderFileInfoDetails' File Alerts list renders one per YARA
+    match."""
+
+    def test_buildRowForEvent_alert_row_has_placeholder_right_after_signature(self):
+        from tests.jsdom_helper import js_statements
+        event = {
+            'id': 1, 'event_type': 'alert', 'timestamp': '2026-01-01T00:00:00',
+            'src_ip': '1.1.1.1', 'src_port': 1234, 'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+            'alert': {'signature': 'Test Sig', 'category': 'Trojan', 'severity': 2, 'signature_id': 2000005},
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(event) + ''') };
+        ''')
+        html = result['html']
+        self.assertIn('ai-summary-placeholder', html)
+        self.assertIn('data-detection-type="nids"', html)
+        self.assertIn('data-rule-id="2000005"', html)
+        self.assertIn('style="display:none;"', html)
+        # Label-based search, not the value text - "Test Sig"/"Trojan" also
+        # appear earlier in the outer summary row's own <td> cells (see
+        # buildRowForEvent's 'alert' case), which would otherwise make this
+        # positional check pass trivially regardless of where the
+        # placeholder actually landed inside the detail panel.
+        sig_idx = html.find('>Signature<')
+        placeholder_idx = html.find('ai-summary-placeholder')
+        category_idx = html.find('>Category<')
+        self.assertLess(sig_idx, placeholder_idx, 'placeholder must come after Signature')
+        self.assertLess(placeholder_idx, category_idx, 'placeholder must come before Category')
+
+    def test_buildRowForEvent_non_alert_rows_have_no_placeholder(self):
+        from tests.jsdom_helper import js_statements
+        for event_type, extra in (
+            ('dns', {'dns': {'rrname': 'example.com', 'rrtype': 'A'}}),
+            ('http', {'http': {'http_method': 'GET', 'hostname': 'example.com', 'url': '/', 'status': 200}}),
+            ('tls', {'tls': {'sni': 'example.com', 'version': 'TLS 1.3'}}),
+            ('flow', {'flow': {'pkts_toserver': 1, 'pkts_toclient': 1, 'bytes_toserver': 1, 'bytes_toclient': 1, 'state': 'established'}}),
+        ):
+            event = {
+                'id': 1, 'event_type': event_type, 'timestamp': '2026-01-01T00:00:00',
+                'src_ip': '1.1.1.1', 'src_port': 1234, 'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+                **extra,
+            }
+            result = js_statements('''
+                window.__jsdom_result = { html: buildRowForEvent(''' + json.dumps(event) + ''') };
+            ''')
+            self.assertNotIn('ai-summary-placeholder', result['html'], f'{event_type} rows must not get an AI summary placeholder')
+
+    def test_renderProtocolDecodeDetails_no_ai_summary_placeholder(self):
+        """REGRESSION: unlike renderAlertDetails, renderProtocolDecodeDetails
+        must never emit an ai-summary-placeholder either - same reasoning as
+        the existing no-playbook-placeholder regression test: decoder-noise
+        "alerts" aren't real detections, so neither Playbook guidance nor an
+        AI summary of "what this rule detects" applies."""
+        from tests.jsdom_helper import js_statements
+        event = {
+            'id': 1, 'event_type': 'protocol_decode', 'timestamp': '2026-01-01T00:00:00',
+            'src_ip': '1.1.1.1', 'src_port': 1234, 'dest_ip': '2.2.2.2', 'dest_port': 80, 'proto': 'TCP',
+            'alert': {'signature': 'SURICATA STREAM bad TCP', 'category': 'Generic Protocol Command Decode',
+                      'severity': 3, 'signature_id': 2200003},
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: formatEvent(''' + json.dumps(event) + ''') };
+        ''')
+        self.assertIn('SURICATA STREAM bad TCP', result['html'])
+        self.assertNotIn('ai-summary-placeholder', result['html'])
+
+    def test_buildSigmaAlertRow_has_placeholder_right_after_rule_title(self):
+        from tests.jsdom_helper import js_statements
+        alert = {
+            'id': 1, 'timestamp': '2026-01-01T00:00:00', 'severity': 'high',
+            'rule_title': 'Test Rule', 'rule_id': '221b251a-357a-49a9-920a-271802777cc0',
+            'mitre_techniques': '[]', 'logsource': 'windows', 'original_log': '{}',
+        }
+        result = js_statements('''
+            window.__jsdom_result = { html: buildSigmaAlertRow(''' + json.dumps(alert) + ''') };
+        ''')
+        html = result['html']
+        self.assertIn('ai-summary-placeholder', html)
+        self.assertIn('data-detection-type="sigma"', html)
+        self.assertIn('data-rule-id="221b251a-357a-49a9-920a-271802777cc0"', html)
+        # Label-based search - "Test Rule" also appears earlier in the outer
+        # summary row's own <td> cell, same reasoning as the Suricata
+        # positional test above.
+        title_idx = html.find('>Rule Title<')
+        placeholder_idx = html.find('ai-summary-placeholder')
+        rule_id_idx = html.find('>Rule ID<')
+        self.assertLess(title_idx, placeholder_idx, 'placeholder must come after Rule Title')
+        self.assertLess(placeholder_idx, rule_id_idx, 'placeholder must come before Rule ID')
+
+    def test_buildBinaryYaraRow_has_placeholder(self):
+        from tests.jsdom_helper import js_statements
+        event = {'id': 1, 'event_type': 'filealerts', 'filealerts': {'rule_name': 'EVIL_RULE', 'tags': [], 'author': 'someone'}}
+        result = js_statements('''
+            window.__jsdom_result = { html: buildBinaryYaraRow(''' + json.dumps(event) + ''') };
+        ''')
+        html = result['html']
+        self.assertIn('ai-summary-placeholder', html)
+        self.assertIn('data-detection-type="yara"', html)
+        self.assertIn('data-rule-id="EVIL_RULE"', html)
+
+    def test_renderFileInfoDetails_emits_one_placeholder_per_yara_match(self):
+        """File Info's nested File Alerts list can show more than one YARA
+        match for the same file - each needs its own placeholder so
+        loadAiSummaryPlaceholders fetches a summary for each rule
+        independently."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(_yara_matches_fetch_mock_js() + '''
+            window.__jsdom_result = { html: formatEvent(fileinfoEvent) };
+        ''')
+        html = result['html']
+        self.assertEqual(html.count('ai-summary-placeholder'), 2)
+        self.assertIn('data-rule-id="RULE_ONE"', html)
+        self.assertIn('data-rule-id="RULE_TWO"', html)
+
+
+class TestAiSummaryLazyLoad(unittest.TestCase):
+    """loadAiSummaryPlaceholders() - fetches /api/ai-summary only on a
+    row's first expand, inserting an "AI Summary" row before the placeholder
+    only when a summary actually comes back - mirrors
+    loadPlaybookSectionIfPresent's lazy-load shape, generalized to handle
+    more than one placeholder per row (see TestAiSummaryPlaceholder's
+    multi-match YARA test above)."""
+
+    def _alert_row_html(self):
+        return '''
+            var e = { id: 1, event_type: 'alert', timestamp: '2024-01-01T00:00:00', proto: 'TCP',
+                      src_ip: '1.1.1.1', src_port: 111, dest_ip: '2.2.2.2', dest_port: 80,
+                      alert: { signature: 'Test Sig', category: 'Trojan', severity: 2, signature_id: 2000005 } };
+            var table = document.createElement('table');
+            table.innerHTML = buildRowForEvent(e);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-pivot]');
+        '''
+
+    def _sigma_row_html(self):
+        return '''
+            var alert = { id: 1, timestamp: '2024-01-01T00:00:00', severity: 'high',
+                      rule_title: 'Test Rule', rule_id: '221b251a-357a-49a9-920a-271802777cc0',
+                      mitre_techniques: '[]', logsource: 'windows', original_log: '{}' };
+            var table = document.createElement('table');
+            table.innerHTML = buildSigmaAlertRow(alert);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-pivot]');
+            var detailId = tr.getAttribute('onclick').match(/toggleSigmaRow\\(this, '([^']+)'/)[1];
+        '''
+
+    def test_expanding_alert_row_fetches_ai_summary_and_shows_it(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._alert_row_html() + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: function() {
+                    return Promise.resolve({ summary: 'This rule detects a trojan callback.' });
+                } });
+            };
+            await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            var detailRow = tr.nextElementSibling;
+            window.__jsdom_result = {
+                summaryCalls: fetchCalls.filter(function(u) { return u.indexOf('/api/ai-summary') === 0; }),
+                detailHtml: detailRow.innerHTML
+            };
+        ''')
+        self.assertEqual(result['summaryCalls'], ['/api/ai-summary?type=nids&id=2000005'])
+        self.assertIn('AI Summary', result['detailHtml'])
+        self.assertIn('This rule detects a trojan callback.', result['detailHtml'])
+
+    def test_null_summary_shows_no_ai_summary_row(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._alert_row_html() + '''
+            window.fetch = function(url) {
+                return Promise.resolve({ json: function() { return Promise.resolve({ summary: null }); } });
+            };
+            await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            var detailRow = tr.nextElementSibling;
+            window.__jsdom_result = { hasAiSummaryRow: detailRow.innerHTML.indexOf('AI Summary') >= 0 };
+        ''')
+        self.assertFalse(result['hasAiSummaryRow'])
+
+    def test_fetch_error_does_not_throw_and_shows_no_row(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._alert_row_html() + '''
+            window.fetch = function(url) { return Promise.reject(new Error('boom')); };
+            var threw = false;
+            try {
+                await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            } catch (e) { threw = true; }
+            var detailRow = tr.nextElementSibling;
+            window.__jsdom_result = { threw: threw, hasAiSummaryRow: detailRow.innerHTML.indexOf('AI Summary') >= 0 };
+        ''')
+        self.assertFalse(result['threw'])
+        self.assertFalse(result['hasAiSummaryRow'])
+
+    def test_collapse_and_reexpand_does_not_refetch(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._alert_row_html() + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: function() { return Promise.resolve({ summary: null }); } });
+            };
+            await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            toggleRow(tr, null);
+            await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            window.__jsdom_result = {
+                summaryCallCount: fetchCalls.filter(function(u) { return u.indexOf('/api/ai-summary') === 0; }).length
+            };
+        ''')
+        self.assertEqual(result['summaryCallCount'], 1)
+
+    def test_expanding_sigma_alert_row_fetches_ai_summary_and_shows_it(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._sigma_row_html() + '''
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                return Promise.resolve({ json: function() {
+                    return Promise.resolve({ summary: 'This Sigma rule detects suspicious activity.' });
+                } });
+            };
+            await new Promise(function(resolve) { toggleSigmaRow(tr, detailId, null); setTimeout(resolve, 20); });
+            var detailRow = document.getElementById(detailId);
+            window.__jsdom_result = {
+                summaryCalls: fetchCalls.filter(function(u) { return u.indexOf('/api/ai-summary') === 0; }),
+                detailHtml: detailRow.innerHTML
+            };
+        ''')
+        self.assertEqual(result['summaryCalls'], ['/api/ai-summary?type=sigma&id=221b251a-357a-49a9-920a-271802777cc0'])
+        self.assertIn('This Sigma rule detects suspicious activity.', result['detailHtml'])
+
+    def test_multiple_placeholders_in_one_row_all_fetch_independently(self):
+        """Two YARA matches on the same File Info row -> two placeholders ->
+        two independent /api/ai-summary fetches -> two inserted rows."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(_yara_matches_fetch_mock_js() + '''
+            var table = document.createElement('table');
+            table.innerHTML = buildRowForEvent(fileinfoEvent);
+            document.body.appendChild(table);
+            var tr = table.querySelector('tr[data-id]');
+
+            var fetchCalls = [];
+            window.fetch = function(url) {
+                fetchCalls.push(url);
+                var summary = url.indexOf('RULE_ONE') >= 0 ? 'Summary for rule one' : 'Summary for rule two';
+                return Promise.resolve({ json: function() { return Promise.resolve({ summary: summary }); } });
+            };
+            await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            var detailRow = tr.nextElementSibling;
+            window.__jsdom_result = {
+                summaryCalls: fetchCalls.filter(function(u) { return u.indexOf('/api/ai-summary') === 0; }).sort(),
+                detailHtml: detailRow.innerHTML
+            };
+        ''')
+        self.assertEqual(result['summaryCalls'], [
+            '/api/ai-summary?type=yara&id=RULE_ONE',
+            '/api/ai-summary?type=yara&id=RULE_TWO',
+        ])
+        self.assertIn('Summary for rule one', result['detailHtml'])
+        self.assertIn('Summary for rule two', result['detailHtml'])
+
+    def test_malicious_summary_content_is_escaped(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._alert_row_html() + '''
+            window.fetch = function(url) {
+                return Promise.resolve({ json: function() {
+                    return Promise.resolve({ summary: '<img src=x onerror=alert(1)>' });
+                } });
+            };
+            await new Promise(function(resolve) { toggleRow(tr, null); setTimeout(resolve, 20); });
+            var detailRow = tr.nextElementSibling;
+            window.__jsdom_result = { imgCount: detailRow.querySelectorAll('img').length };
+        ''')
+        self.assertEqual(result['imgCount'], 0)
+
+
 class TestFormatDateRange(unittest.TestCase):
     """Shared by loadAnalysis() (analysis header) and showWelcome()
     (Previous Analyses list rows) so both display a sample's date range

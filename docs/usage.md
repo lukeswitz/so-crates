@@ -49,6 +49,10 @@ Clicking a value in a data table row, an expanded row's detail panel, or an aggr
 - **Lookups** - one-click lookups against Google, VirusTotal, Shodan, AbuseIPDB, urlscan.io, and CyberChef, plus any custom lookup sites you've added in Settings
 - **Expand Row / Collapse Row** - expand or collapse the row's detail panel (the row's timestamp cell also does this directly on click, without opening the menu)
 
+## AI Summary
+
+Expanding a Suricata alert, Sigma alert, or YARA file match shows an **AI Summary** field right at the top of Alert Details/Sigma Rule/Rule - a one-paragraph, plain-English explanation of what the rule actually detects. It only appears if a summary is actually available for that specific rule (there's no generic fallback, unlike Playbook below - a summary for the wrong rule would be misleading). A file with more than one YARA match shows one summary per match. AI Summary data ships baked into the official Docker/Podman image - a manually-installed (non-container) deployment won't see this field unless the maintainer has set it up with its own summary data (see [Development Setup](development-setup.md#environment-variables)).
+
 ## Playbook
 
 Expanding a Suricata or Sigma alert shows a **Playbook** section (after Alert Details/Sigma Rule) with plain-English investigation guidance for that specific detection - a name, description, and a list of questions to help guide your investigation, which you can collapse if it's in the way while you're also looking at the Rule/Payload sections. The section only appears if a playbook is actually available for that detection; if none is available, no trace of the feature shows at all. Playbook data ships baked into the official Docker/Podman image - a manually-installed (non-container) deployment won't see this section unless the maintainer has set it up with its own playbook data (see [Development Setup](development-setup.md#environment-variables)).

@@ -387,9 +387,33 @@ analysis.
 | `type` | Yes | `nids` (Suricata) or `sigma` |
 | `id` | Yes | For `type=nids`, the alert's `signature_id` (1-10 digits). For `type=sigma`, the alert's `rule_id` (a UUID) |
 
-**Response:** `{"playbook": {"name": "...", "description": "...", "questions": [{"question": "...", "context": "..."}, ...]}}` if a playbook exists (an exact match for that rule, or the generic engine-wide fallback if not), or `{"playbook": null}` if none is baked in at all (e.g. a manual install with nothing baked in, or an image built without the Dockerfile's `playbooks-builder` stage).
+**Response:** `{"playbook": {"name": "...", "description": "...", "questions": [{"question": "...", "context": "..."}, ...]}}` if a playbook exists (an exact match for that rule, or the generic engine-wide fallback if not), or `{"playbook": null}` if none is baked in at all (e.g. a manual install with nothing baked in, or an image built without the Dockerfile's `resources-builder` stage).
 
 **Errors:** `400` if `type` isn't `nids`/`sigma` or `id` doesn't match the expected shape for that type.
+
+---
+
+### `GET /api/ai-summary`
+
+Returns an AI-generated one-paragraph summary ("what this rule detects") for
+a Suricata, Sigma, or YARA rule. Global static reference data baked into the
+Docker image - same as `/api/playbook` above, this one takes no `md5` and
+isn't scoped to an analysis.
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|---|---|---|
+| `type` | Yes | `nids` (Suricata), `sigma`, or `yara` |
+| `id` | Yes | For `type=nids`, the alert's `signature_id` (1-10 digits). For `type=sigma`, the alert's `rule_id` (a UUID). For `type=yara`, the rule's name (bare identifier, up to 200 characters) |
+
+**Response:** `{"summary": "..."}` if a summary exists for that exact rule,
+or `{"summary": null}` if none is baked in (e.g. a manual install with
+nothing baked in, an image built without the Dockerfile's `resources-builder`
+stage, or a rule with no summary upstream). Unlike `/api/playbook`, there is
+no engine-wide fallback - a summary for the wrong rule would be misleading.
+
+**Errors:** `400` if `type` isn't `nids`/`sigma`/`yara` or `id` doesn't match the expected shape for that type.
 
 ---
 

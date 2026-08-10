@@ -8,7 +8,20 @@ ffmpeg, separate from any system ffmpeg). Also needs a running server
 Uses the app's own built-in "Sample pcap file" (DEFAULT_SAMPLE_URL in
 static/socrates.js), same as scripts/capture_screenshots.py, so it needs no
 pre-existing local analysis or hardcoded MD5 - it works on a clean checkout
-with an empty DATA_DIR.
+with an empty DATA_DIR. Pointing the server's DATA_DIR at one that's already
+analyzed that same sample skips straight to the "ready" response (see
+_commit_file_or_return_ready in socrates.py) instead of re-running Suricata/
+Sigma/YARA, and is also the only way to get real Playbook/AI Summary
+content in the recording, since playbook_lookup.py/ai_summary_lookup.py
+read from PLAYBOOKS_DIR//usr/share/playbooks and AI_SUMMARIES_DIR//usr/
+share/ai-summaries (Docker-image-baked, not part of DATA_DIR).
+
+Each caption() call can optionally take a target (a Playwright Locator) -
+see point_to()/DRAW_ARROW_JS - which draws an amber arrow from the caption
+box to whatever it's currently describing, so a caption never leaves it
+ambiguous which stat card/button/row it refers to. Caption styling uses a
+solid on-brand blue rather than translucent black specifically so it stays
+legible against the app's own near-black UI (see CAPTION_JS's own comment).
 
 Playwright's own video muxing can only record to WebM, but that raw
 recording is treated as a discarded intermediate, not a published asset -
@@ -43,9 +56,19 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MP4_OUTPUT = os.path.join(REPO_ROOT, 'docs', 'videos', 'demo.mp4')
 WEBM_FALLBACK_OUTPUT = os.path.join(REPO_ROOT, 'docs', 'videos', 'demo.webm')
 POSTER_OUTPUT = os.path.join(REPO_ROOT, 'docs', 'videos', 'demo-poster.jpg')
-POSTER_TIMESTAMP_SECONDS = 48  # lands during "Collapsing the Sankey Diagram..." - a visually rich frame
+POSTER_TIMESTAMP_SECONDS = 62  # lands on the full merged All Events Sankey diagram, pointer arrow included
 VIEWPORT = {'width': 1920, 'height': 1400}
 
+# Solid on-brand blue (not translucent black) - a black/near-black caption
+# box used to disappear into the app's own near-black UI (welcome screen,
+# dark theme background) since rgba(0,0,0,0.85) barely differs from what's
+# behind it. #1f6feb matches the app's own button/accent blue (see
+# so-crates-welcome.png's "Got it!" button) so it reads as part of the UI's
+# own visual language rather than a foreign overlay, while still being
+# solid enough to contrast against literally any app background. The
+# brighter border plus a two-layer shadow (soft ambient + a crisp 1px outer
+# ring) keeps the box's edges legible even against similarly-dark page
+# content directly behind it.
 CAPTION_JS = """
 (text) => {
     let el = document.getElementById('demoCaption');
@@ -54,12 +77,12 @@ CAPTION_JS = """
         el.id = 'demoCaption';
         el.style.cssText = [
             'position:fixed', 'left:50%', 'transform:translateX(-50%)',
-            'background:rgba(0,0,0,0.85)', 'color:#fff', 'padding:14px 30px',
+            'background:#1f6feb', 'color:#fff', 'padding:14px 30px',
             'border-radius:10px', 'font-family:system-ui,-apple-system,sans-serif',
             'font-size:24px', 'font-weight:600', 'z-index:2147483647',
-            'box-shadow:0 6px 20px rgba(0,0,0,0.6)', 'max-width:92vw',
-            'text-align:center', 'line-height:1.3', 'pointer-events:none',
-            'white-space:pre-line', 'border:1px solid rgba(255,255,255,0.15)'
+            'box-shadow:0 8px 24px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.1)',
+            'max-width:92vw', 'text-align:center', 'line-height:1.3', 'pointer-events:none',
+            'white-space:pre-line', 'border:1px solid rgba(255,255,255,0.35)'
         ].join(';');
         document.body.appendChild(el);
     }
@@ -70,7 +93,68 @@ CAPTION_JS = """
 }
 """
 
-CAPTION_REMOVE_JS = "() => { const el = document.getElementById('demoCaption'); if (el) el.remove(); }"
+# Draws (or moves, if already present) an SVG line+arrowhead from whichever
+# edge of the caption box is nearest the target to whichever edge of the
+# target is nearest the caption box - not hardcoded to point straight down,
+# since targets appear above/below/beside the caption depending on where
+# they land on the page (a stat card near the top vs. a hexdump button far
+# down the scrolled page). `rect` is a Playwright bounding_box() dict
+# ({x, y, width, height}, viewport-relative, same coordinate space as
+# getBoundingClientRect()) computed in Python right before this runs, not a
+# selector re-resolved here - several targets (the currently-open pivot
+# menu's own button, "the first alert row") aren't reliably re-selectable
+# by a generic CSS selector the way the already-resolved Locator is.
+# Amber, not the caption's own blue - so the arrow reads as a distinct
+# annotation layer rather than blending into the caption box or the app's
+# own blue accent/links.
+#
+# The arrowhead lands inside the target (its horizontal center, a quarter
+# of the way down) rather than at the nearest edge point - REGRESSION: an
+# earlier version pointed at the nearest edge, which for tightly-packed
+# neighbors (e.g. the three "Sample ... file" cards sitting side by side)
+# put the arrowhead right on the shared border between two cards, reading
+# as ambiguous or pointing at the wrong one. Landing inside the target's
+# own body instead of on any edge it might share with a neighbor is
+# unambiguous regardless of what else is nearby.
+DRAW_ARROW_JS = """
+(rect) => {
+    const captionEl = document.getElementById('demoCaption');
+    if (!captionEl || !rect) return;
+    const capRect = captionEl.getBoundingClientRect();
+    const targetCenter = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    function nearestPoint(r, fx, fy) {
+        return {
+            x: Math.max(r.left, Math.min(fx, r.right)),
+            y: Math.max(r.top, Math.min(fy, r.bottom))
+        };
+    }
+    const start = nearestPoint(capRect, targetCenter.x, targetCenter.y);
+    const end = { x: targetCenter.x, y: rect.y + Math.min(rect.height * 0.3, rect.height / 2) };
+    let svg = document.getElementById('demoPointerArrow');
+    if (!svg) {
+        svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.id = 'demoPointerArrow';
+        svg.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:2147483646;';
+        svg.innerHTML = '<defs><marker id="demoArrowhead" markerWidth="10" markerHeight="9" refX="8" refY="4.5" orient="auto">' +
+            '<polygon points="0 0, 9 4.5, 0 9" fill="#ffb300"/></marker></defs>' +
+            '<line id="demoArrowLine" stroke="#ffb300" stroke-width="4" stroke-linecap="round" ' +
+            'style="filter:drop-shadow(0 0 3px rgba(0,0,0,0.6))" marker-end="url(#demoArrowhead)"/>';
+        document.body.appendChild(svg);
+    }
+    const line = svg.querySelector('#demoArrowLine');
+    line.setAttribute('x1', start.x);
+    line.setAttribute('y1', start.y);
+    line.setAttribute('x2', end.x);
+    line.setAttribute('y2', end.y);
+}
+"""
+
+REMOVE_ARROW_JS = "() => { const el = document.getElementById('demoPointerArrow'); if (el) el.remove(); }"
+
+CAPTION_REMOVE_JS = ("() => { "
+                     "const el = document.getElementById('demoCaption'); if (el) el.remove(); "
+                     "const arrow = document.getElementById('demoPointerArrow'); if (arrow) arrow.remove(); "
+                     "}")
 
 # Registered via page.add_init_script so it runs before the app's own scripts
 # on the very first navigation - shows the caption from the first paint, over
@@ -89,12 +173,12 @@ CAPTION_INIT_JS_TEMPLATE = """
         el.id = 'demoCaption';
         el.style.cssText = [
             'position:fixed', 'left:50%', 'top:72px', 'transform:translateX(-50%)',
-            'background:rgba(0,0,0,0.85)', 'color:#fff', 'padding:14px 30px',
+            'background:#1f6feb', 'color:#fff', 'padding:14px 30px',
             'border-radius:10px', 'font-family:system-ui,-apple-system,sans-serif',
             'font-size:24px', 'font-weight:600', 'z-index:2147483647',
-            'box-shadow:0 6px 20px rgba(0,0,0,0.6)', 'max-width:92vw',
-            'text-align:center', 'line-height:1.3', 'pointer-events:none',
-            'white-space:pre-line', 'border:1px solid rgba(255,255,255,0.15)'
+            'box-shadow:0 8px 24px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.1)',
+            'max-width:92vw', 'text-align:center', 'line-height:1.3', 'pointer-events:none',
+            'white-space:pre-line', 'border:1px solid rgba(255,255,255,0.35)'
         ].join(';');
         el.textContent = __CAPTION_TEXT__;
         document.documentElement.appendChild(el);
@@ -112,8 +196,40 @@ def find_chromium():
     return None
 
 
-async def caption(page, text):
+async def caption(page, text, target=None):
+    """Sets the caption text and, if target (a Playwright Locator) is
+    given, points an arrow at it - otherwise clears any arrow left over
+    from the previous caption, so a caption with no specific referent
+    (e.g. a general status message) never inherits a stale, now-wrong
+    arrow from whatever the last one pointed at."""
     await page.evaluate(CAPTION_JS, text)
+    if target is not None:
+        await point_to(page, target)
+    else:
+        await clear_pointer(page)
+
+
+async def point_to(page, target):
+    """(Re)draws the pointer arrow at target's current position, without
+    touching the caption text - used when a target only becomes available
+    partway through a caption's display (e.g. a Playbook/AI Summary section
+    that's still being fetched when the caption first appears). Silently
+    clears the arrow instead of drawing a wrong one if target isn't
+    currently resolvable (e.g. no Playbook/AI Summary baked in for this
+    rule/environment) - a missing arrow is fine, a stale one pointing at
+    nothing is not."""
+    try:
+        box = await target.bounding_box()
+    except Exception:
+        box = None
+    if box is None:
+        await clear_pointer(page)
+        return
+    await page.evaluate(DRAW_ARROW_JS, box)
+
+
+async def clear_pointer(page):
+    await page.evaluate(REMOVE_ARROW_JS)
 
 
 async def main(base_url):
@@ -145,18 +261,24 @@ async def main(base_url):
         # Welcome screen
         await page.goto(base_url, wait_until="networkidle")
         await page.wait_for_selector('#helpModal.active .modal-content', timeout=10000)
-        await caption(page, welcome_caption)  # reposition now that the real header exists
-        await page.wait_for_timeout(4300)
+        welcome_modal = page.locator('#helpModal.active .modal-content')
+        await caption(page, welcome_caption, welcome_modal)  # reposition now that the real header exists
+        await page.wait_for_timeout(7000)  # two full sentences - the longest caption in the recording
         await page.evaluate("closeHelpModal()")
+        # No target - the modal that was just closed is gone, and the
+        # caption describes the main screen generally, not one widget on it.
         await caption(page, "When you dismiss the welcome window, you will see the main screen "
                             "where you can upload a new file or re-open a previous analysis")
-        await page.wait_for_timeout(3800)
+        await page.wait_for_timeout(5800)
 
         # Select the sample pcap file
-        await caption(page, "Selecting the built-in sample pcap file")
+        sample_card = page.locator(".sample-card:has-text('Sample pcap file')")
+        await caption(page, "Selecting the built-in sample pcap file", sample_card)
         await page.wait_for_timeout(2200)
-        await page.click(".sample-card:has-text('Sample pcap file')")
+        await sample_card.click()
         await page.wait_for_selector('#statsGrid .stat-card', timeout=60000)
+        # No single target - "Analysis complete" is a general status, not a
+        # reference to one specific element.
         await caption(page, "Analysis complete")
         await page.wait_for_timeout(2500)
 
@@ -168,7 +290,7 @@ async def main(base_url):
             if label == 'ALL EVENTS':
                 continue
             await card.click()
-            await caption(page, f"Viewing {label}")
+            await caption(page, f"Viewing {label}", card)
             await page.wait_for_timeout(3200)
 
             # Drill into a real Suricata alert to show the Playbook section -
@@ -177,15 +299,42 @@ async def main(base_url):
             # playbook-section-placeholder in static/socrates.js).
             if label == 'NETWORK ALERTS':
                 alert_row_selector = '.section:not(.section-hidden):not(.agg-section) table tbody tr:not(.detail-row)'
-                alert_row = page.locator(alert_row_selector).first
+                # Prefer the ET MALWARE AgentTesla Exfil via FTP alert
+                # specifically (sid:2029927) - its playbook has unusually
+                # good, specific investigation questions to show off,
+                # rather than whichever alert happens to sort first. Falls
+                # back to the first alert row if this one isn't present
+                # (e.g. a different/updated ruleset).
+                targeted_alert_row = page.locator(
+                    f"{alert_row_selector}:has-text('AgentTesla Exfil via FTP')"
+                ).first
+                alert_row = (
+                    targeted_alert_row if await targeted_alert_row.count() > 0
+                    else page.locator(alert_row_selector).first
+                )
                 if await alert_row.count() > 0:
                     await alert_row.scroll_into_view_if_needed()
-                    await caption(page, "Drilling into a Suricata alert")
+                    await caption(page, "Drilling into a Suricata alert", alert_row)
                     await page.wait_for_timeout(2200)
-                    # Click the timestamp cell specifically, not the row's
-                    # default click point - clicking anywhere else in the
-                    # row opens the pivot menu instead of expanding it.
-                    await alert_row.locator('.timestamp').click()
+                    # Click a value cell (not the timestamp) first, to show
+                    # the pivot menu (Include/Exclude/Only/Hunt/...) that
+                    # opens for any other cell in the row - see
+                    # handleRowCellClick in static/socrates.js.
+                    value_cell = alert_row.locator('.mono-fixed').first
+                    await caption(page, "Clicking on a value opens the pivot menu.\n\n"
+                                        "You can also click the timestamp to expand the row directly.", value_cell)
+                    await page.wait_for_timeout(4200)
+                    await value_cell.click()
+                    await page.wait_for_timeout(700)
+                    # "Expand Row" is the pivot menu's own entry point back
+                    # to the same expand/collapse behavior a timestamp click
+                    # triggers directly - see showPivotMenu's expandRowHtml.
+                    # The menu is already open at this point (clicked above),
+                    # so this locator resolves to a real, visible button.
+                    expand_row_btn = page.locator('[data-pivot-action="expand-row"]')
+                    await caption(page, 'Choosing "Expand Row" from the pivot menu', expand_row_btn)
+                    await page.wait_for_timeout(2400)
+                    await expand_row_btn.click()
                     await page.wait_for_timeout(600)
                     await alert_row.evaluate(
                         "(row) => { "
@@ -195,12 +344,32 @@ async def main(base_url):
                         "window.scrollBy(0, rect.top - headerHeight - 8); }"
                     )
                     await page.wait_for_timeout(600)
+
+                    # AI Summary is fetched and inserted the moment the row
+                    # expands (loadAiSummaryPlaceholders, triggered by the
+                    # expand-row click above), same as Playbook below - no
+                    # extra wait needed before the caption itself, but the
+                    # arrow still waits for the row to confirm visible before
+                    # pointing, same defensive shape as the Playbook arrow.
+                    await caption(page, "SO-CRATES also shows an AI-generated summary "
+                                        "of what this rule detects")
+                    ai_summary_label = page.locator(
+                        '.detail-row.visible .detail-label', has_text='AI Summary'
+                    ).first
+                    try:
+                        await ai_summary_label.wait_for(state='visible', timeout=4000)
+                        await point_to(page, ai_summary_label)
+                    except Exception:
+                        pass  # no AI summary baked in for this rule/environment - caption still makes sense
+                    await page.wait_for_timeout(4200)
+
                     await caption(page, "SO-CRATES shows a Playbook with guidance to help "
                                         "investigate this alert")
                     playbook_toggle = page.locator('.detail-row.visible .playbook-questions-toggle').first
                     try:
                         await playbook_toggle.wait_for(state='visible', timeout=6000)
                         await playbook_toggle.scroll_into_view_if_needed()
+                        await point_to(page, playbook_toggle)
                     except Exception:
                         pass  # no playbook baked in for this rule/environment - caption still makes sense
                     await page.wait_for_timeout(5200)  # linger on the expanded section
@@ -208,26 +377,29 @@ async def main(base_url):
                     # state (and the ASCII-transcript fetch that toggleDetailRow
                     # kicks off for any alert row with a flow tuple) doesn't
                     # linger into later steps.
+                    await clear_pointer(page)
                     await alert_row.locator('.timestamp').click()
                     await page.wait_for_timeout(400)
 
         # All Events
-        await page.locator(".stat-card:has-text('All Events')").first.click()
-        await caption(page, "Switching to the merged All Events view")
+        all_events_card = page.locator(".stat-card:has-text('All Events')").first
+        await all_events_card.click()
+        await caption(page, "Switching to the merged All Events view", all_events_card)
         await page.wait_for_timeout(2800)
 
         # Collapse the Sankey Diagram so the Aggregation Tables and Data
         # Table have room to show, now that we're ready to expand them.
         sankey_toggle = page.locator('.section-toggle-bar', has_text='Sankey Diagram').first
         if await sankey_toggle.count() > 0:
-            await caption(page, "Collapsing the Sankey Diagram to make room to see the Data Table")
-            await page.wait_for_timeout(2600)
+            await caption(page, "Collapsing the Sankey Diagram to make room to see the Data Table", sankey_toggle)
+            await page.wait_for_timeout(3800)
             await sankey_toggle.click()
             await page.wait_for_timeout(1400)
 
         # Expand Aggregation Tables
-        await page.locator('.section-toggle-bar', has_text='Aggregation Tables').first.click()
-        await caption(page, "Expanding Aggregation Tables")
+        agg_toggle = page.locator('.section-toggle-bar', has_text='Aggregation Tables').first
+        await agg_toggle.click()
+        await caption(page, "Expanding Aggregation Tables", agg_toggle)
         await page.wait_for_timeout(2800)
 
         # Clicking an aggregation value now opens the pivot menu (Include/
@@ -235,13 +407,13 @@ async def main(base_url):
         # "Only" is the one that matches "filter down to a single matching
         # event" (a fresh search scoped to just this value), so click that
         # from the menu rather than the row itself.
-        target = page.locator(
+        detail_value_row = page.locator(
             ".agg-row:has-text('STOR PW_tyler-DESKTOP-W7F98GR_2026_02_03_16_13_59.html')"
         ).first
-        await target.scroll_into_view_if_needed()
-        await caption(page, "Clicking a Detail value to filter down to a single matching event")
-        await page.wait_for_timeout(3200)
-        await target.click()
+        await detail_value_row.scroll_into_view_if_needed()
+        await caption(page, "Clicking a Detail value to filter down to a single matching event", detail_value_row)
+        await page.wait_for_timeout(4200)
+        await detail_value_row.click()
         await page.wait_for_timeout(400)
         await page.locator('[data-pivot-action="only"]').click()
         await page.wait_for_timeout(2600)
@@ -256,9 +428,11 @@ async def main(base_url):
         row_selector = '.section:not(.section-hidden):not(.agg-section) table tbody tr:not(.detail-row)'
         data_row = page.locator(row_selector).first
         await data_row.scroll_into_view_if_needed()
-        await caption(page, "Drilling into the single filtered row")
-        await page.wait_for_timeout(2400)
-        await data_row.locator('.timestamp').click()
+        timestamp_cell = data_row.locator('.timestamp')
+        await caption(page, "Clicking directly on the timestamp immediately "
+                            "expands the row, skipping the pivot menu", timestamp_cell)
+        await page.wait_for_timeout(4400)
+        await timestamp_cell.click()
         await page.wait_for_timeout(800)
 
         # Anchor the summary row just below the fixed header - the ASCII
@@ -277,21 +451,27 @@ async def main(base_url):
 
         # Show the ASCII Transcript (default view on expand)
         stream_payload = page.locator('.detail-row.visible .stream-payload').first
-        await caption(page, "Viewing the ASCII Transcript of the stream")
+        ascii_tab = stream_payload.locator("button.view-tab:has-text('ASCII Transcript')")
+        await caption(page, "Viewing the ASCII Transcript of the stream", ascii_tab)
         await page.wait_for_timeout(4000)  # let the transcript fetch finish + reading time
 
         # Click Hexdump
-        await stream_payload.locator("button.view-tab:has-text('Hexdump')").click()
-        await caption(page, "Switching to the Hexdump view")
+        hexdump_tab = stream_payload.locator("button.view-tab:has-text('Hexdump')")
+        await hexdump_tab.click()
+        await caption(page, "Switching to the Hexdump view", hexdump_tab)
         await page.wait_for_timeout(3200)
 
         # Click Expand All
         expand_all_btn = stream_payload.locator("button:has-text('Expand All')")
         await expand_all_btn.click()
-        await caption(page, "Expanding all packets in the hexdump")
+        await caption(page, "Expanding all packets in the hexdump", expand_all_btn)
         await page.wait_for_timeout(2200)
 
-        # Scroll down to reveal more of the expanded hexdump
+        # Scroll down to reveal more of the expanded hexdump - the arrow is
+        # cleared first since expand_all_btn scrolls out of view immediately
+        # and a fixed-position arrow can't track a target that's moving
+        # under continuous mouse-wheel scrolling.
+        await clear_pointer(page)
         for _ in range(5):
             await page.mouse.wheel(0, 350)
             await page.wait_for_timeout(750)
@@ -318,9 +498,18 @@ async def main(base_url):
         )
         print('POSTER_SAVED_AT:', POSTER_OUTPUT)
 
+        # crf 18 (not the more typical 23) plus preset slow - the source is
+        # a screen recording dominated by large flat/near-black regions
+        # (welcome screen, dark theme background), and crf 23's coarser
+        # quantization on those regions was visible as banding (shade
+        # shifting in what should be a single flat black) rather than the
+        # blocking/blur crf differences usually show on natural video. This
+        # is UI content with crisp text, not natural video, so a deband
+        # filter was deliberately not used instead - it would soften the
+        # exact text edges crf 18 already keeps sharp.
         subprocess.run(
             [ffmpeg_path, '-y', '-i', raw_webm_path,
-             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'medium', '-crf', '23',
+             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'slow', '-crf', '18',
              '-movflags', '+faststart', MP4_OUTPUT],
             check=True, capture_output=True,
         )

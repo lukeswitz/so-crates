@@ -34,21 +34,22 @@ RUN git clone --depth 1 --branch v3.7.1 \
     /usr/local/lib/zircolite/pytest.ini /usr/local/lib/zircolite/requirements.txt
 
 
-FROM debian:13-slim AS playbooks-builder
+FROM debian:13-slim AS resources-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Build-only stage: converts Security Onion's Playbooks repo (~125MB of
-# per-rule YAML, most of it Elasticsearch/Sigma-syntax query blocks
-# SO-CRATES doesn't use - see playbook_lookup.py) into two small
-# gzip-compressed JSON indexes, one per detection type, holding only the
-# plain-English investigation guidance. python3-yaml and the raw YAML
-# tree never need to exist in the final runtime image.
+# Build-only stage: converts two of Security Onion's resource repos (raw
+# per-rule YAML, most of it either Elasticsearch/Sigma-syntax query blocks
+# SO-CRATES doesn't use, or verbose metadata alongside the one field SO-CRATES
+# actually reads) into small gzip-compressed JSON indexes holding only the
+# plain-English content - see playbook_lookup.py and ai_summary_lookup.py.
+# python3-yaml and the raw YAML trees never need to exist in the final
+# runtime image.
 #
 # ca-certificates is required explicitly, not assumed from the base image -
 # debian:13-slim (trixie) is still an actively-updated release, and a base
 # image refresh with a leaner minbase can silently drop it, breaking this
-# stage's git clone with "Problem with the SSL CA cert (path? access
+# stage's git clones with "Problem with the SSL CA cert (path? access
 # rights?)" (git/libcurl's message for a missing CA bundle file entirely,
 # not an expired/invalid cert - this happened for real in CI).
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -127,6 +128,57 @@ for detection_type, engine_file in (('nids', 'engine_nids.yaml'), ('sigma', 'eng
     print(f'Baked {len(index)} {detection_type} playbook entries -> {out_path}')
 PY
 
+# AI-generated one-paragraph rule summaries - a different, much plainer kind
+# of guidance than Playbooks above (one sentence of "what this rule detects"
+# vs. a multi-question investigation checklist), from a different upstream
+# repo/branch entirely. Rendered as a new field inline in the Alert Details
+# section rather than its own collapsible section - see ai_summary_lookup.py
+# and static/socrates.js's loadAiSummaryPlaceholders. Covers all three
+# detection engines (nids/sigma/yara), unlike Playbooks which only covers
+# nids/sigma upstream.
+RUN git clone --depth 1 --branch generated-summaries-published --single-branch \
+    https://github.com/Security-Onion-Solutions/securityonion-resources.git \
+    /tmp/ai-summaries-src
+
+# Each of the three source files is one big YAML dict keyed by rule
+# ID/UUID/name, not one-file-per-rule like Playbooks above, so this needs no
+# per-file directory walk - just slim each entry down to its Summary text
+# (dropping Created-Date/Custom-Edited/Rule-Body-Hash/Ruleset/Updated-Date,
+# unused here) and gzip the result. Entries are skipped if Reviewed is falsy
+# or Summary is empty - defensive filtering for if upstream ever publishes an
+# unreviewed row, though every entry is Reviewed:true today. Unlike
+# Playbooks, there's no engine-wide "_default" fallback entry - an AI summary
+# for the wrong rule would be actively misleading, and upstream doesn't
+# publish one anyway.
+RUN mkdir -p /tmp/ai-summaries-out && python3 - <<'PY'
+import gzip
+import json
+import os
+import yaml
+
+SRC = '/tmp/ai-summaries-src/detections-ai'
+OUT = '/tmp/ai-summaries-out'
+
+YamlLoader = getattr(yaml, 'CSafeLoader', yaml.SafeLoader)
+
+for detection_type, filename in (
+    ('nids', 'suricata_summaries.yaml'),
+    ('sigma', 'sigma_summaries.yaml'),
+    ('yara', 'yara_summaries.yaml'),
+):
+    with open(os.path.join(SRC, filename)) as f:
+        data = yaml.load(f, Loader=YamlLoader)
+    index = {
+        rule_id: entry.get('Summary', '').strip()
+        for rule_id, entry in data.items()
+        if entry.get('Reviewed') and (entry.get('Summary') or '').strip()
+    }
+    out_path = os.path.join(OUT, f'{detection_type}.json.gz')
+    with gzip.open(out_path, 'wt', encoding='utf-8') as f:
+        json.dump(index, f)
+    print(f'Baked {len(index)} {detection_type} AI summary entries -> {out_path}')
+PY
+
 
 FROM debian:13-slim
 
@@ -168,7 +220,7 @@ ENV PORT=8000
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
-COPY config.py db.py models.py validators.py suricata_analyzer.py suricata_sid_ranges.py yara_analyzer.py sigma_analyzer.py file_analyzer.py exif_analyzer.py ohmydebn_colors.py playbook_lookup.py socrates.py socrates.html ./
+COPY config.py db.py models.py validators.py suricata_analyzer.py suricata_sid_ranges.py yara_analyzer.py sigma_analyzer.py file_analyzer.py exif_analyzer.py ohmydebn_colors.py playbook_lookup.py ai_summary_lookup.py socrates.py socrates.html ./
 COPY static/ static/
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
@@ -298,10 +350,14 @@ RUN mkdir -p /usr/share/sigma-rules && \
     rm -f /tmp/windows.json /tmp/linux.json
 
 # Bake Security Onion Playbooks (investigation guidance) into image for
-# air-gapped deployments - see the playbooks-builder stage above for how
+# air-gapped deployments - see the resources-builder stage above for how
 # the raw ~125MB upstream YAML repo becomes these two small
 # gzip-compressed indexes, and playbook_lookup.py for how they're read.
-COPY --from=playbooks-builder /tmp/playbooks-out/ /usr/share/playbooks/
+COPY --from=resources-builder /tmp/playbooks-out/ /usr/share/playbooks/
+
+# Bake AI-generated rule summaries into the image the same way - see the
+# resources-builder stage above and ai_summary_lookup.py.
+COPY --from=resources-builder /tmp/ai-summaries-out/ /usr/share/ai-summaries/
 
 RUN mkdir -p /data && chown -R 1000:1000 /data
 

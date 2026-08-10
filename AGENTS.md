@@ -40,6 +40,7 @@ SO-CRATES's backend is split into domain modules. Do not add new logic directly 
 | `exif_analyzer.py` | EXIF metadata extraction for image/media files. |
 | `ohmydebn_colors.py` | Deriving a full theme (CSS custom properties) from an OhMyDebn/Aether color palette (`colors.toml`/`alacritty.toml`) for the Themes modal's OhMyDebn sync toggle. Pure functions, no I/O. |
 | `playbook_lookup.py` | Security Onion Playbooks lookup - reading the baked-in gzip-compressed indexes (`BAKED_IN_PLAYBOOKS_DIR`/`PLAYBOOKS_DIR`), exact-rule/engine-fallback resolution, in-process caching. No fetch/refresh logic - see "Detection Rule Freshness" below for why. |
+| `ai_summary_lookup.py` | AI-generated per-rule summary lookup - same baked-in gzip-compressed-index/in-process-caching shape as `playbook_lookup.py` (`AI_SUMMARIES_DIR`), but exact-match only, no engine-wide fallback, and covers `nids`/`sigma`/`yara` (one more type than Playbooks). No fetch/refresh logic - see "Detection Rule Freshness" below. |
 | `db.py` | SQLite schema changes, new query functions, index optimization, bulk loading logic. |
 | `models.py` | New Suricata event field extraction helpers (parsing JSON fields into typed values). |
 | `config.py` | Application-wide constants: size limits, timeouts, thresholds. Adjust here for different deployments. |
@@ -99,13 +100,23 @@ mechanism at all** - unlike Suricata/YARA/Sigma above, there is no
 `setup_playbooks()`, no `network_allowed`/`force` parameters, and no Rules
 modal entry for them. `playbook_lookup.py`'s `get_playbook()` only ever
 reads the two `.json.gz` indexes baked into the image by the Dockerfile's
-`playbooks-builder` stage. This is deliberate, not an oversight: playbook
+`resources-builder` stage. This is deliberate, not an oversight: playbook
 guidance text (plain-English "questions to ask" per detection rule)
 changes far less often than daily-cadence threat rulesets, so the
 staleness/consent machinery this section exists to describe isn't worth
 building for it yet. If that changes, it should follow the same
 `network_allowed=False`-at-startup / explicit-click-to-refresh shape
 described here, not a new pattern.
+
+**AI-generated rule summaries follow the identical baked-in-only shape, for
+the same reason** - `ai_summary_lookup.py`'s `get_ai_summary()` only ever
+reads the `.json.gz` indexes the same `resources-builder` stage bakes from a
+different upstream repo/branch (`securityonion-resources`'s
+`generated-summaries-published` branch) into `/usr/share/ai-summaries`. No
+`setup_ai_summaries()`, no refresh path, no Rules modal entry - same
+rationale as Playbooks above, and any future staleness/consent machinery
+should follow the same pattern already described here rather than inventing
+a third one.
 
 `config.RULES_MAX_AGE_HOURS` (currently 2 days, `2 * 24` - tuned toward Sigma's/Suricata's roughly-daily release cadence rather than YARA Forge's slower weekly one, since a single shared threshold can't match all three) is the server-side default for "how old is too old" - see its comment in `config.py` for the full breakdown, including that its original job (gating an actual auto-refresh inside `setup_yara_rules()`/`setup_sigma_rules()`) is presently dead code given every current caller passes `force=True` or `network_allowed=False`. It's exposed to the frontend via `/api/rules-info`'s `staleThresholdHours` field, but the *effective* threshold actually used everywhere in the frontend goes through one more step: `_resolveStaleThresholdHours(serverHours)` returns the user's per-browser override (`getUserStaleThresholdDays()`, from the `socrates_staleThresholdDays` localStorage key and the number input next to the Rules modal's checkbox - same `localStorage`-preference-over-a-server-default pattern as `getUserQueryLimit()`/`getUserMaxUploadSizeMB()` in Settings, except there's no client-side fallback constant here, so an unset/invalid override resolves to `null` and falls through to the server value) if one is set, otherwise the server's `staleThresholdHours` unchanged. Both real consumers go through this same resolver, so they can't independently drift the way they did before being unified:
 

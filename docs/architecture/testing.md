@@ -13,7 +13,7 @@ python3 -m unittest discover -v
 
 ## Test Coverage
 
-Thirteen test files serve as executable specifications:
+Fourteen test files serve as executable specifications:
 
 - **test_socrates_server.py** - Server-side: validation, security, API endpoints, SQLite, Suricata config
 - **test_socrates_ui.py** - UI-side: HTML structure, CSS, JS functions, syntax, filtering, accessibility, performance
@@ -28,5 +28,6 @@ Thirteen test files serve as executable specifications:
 - **test_suricata_rule_sources.py** - Multi-ruleset Suricata source support: per-source fetch/enable/disable, baked-in library seeding
 - **test_suricata_sid_ranges.py** - SID-range-to-ruleset classification, and its consistency with `SURICATA_RULE_SOURCES`
 - **test_playbook_lookup.py** - Security Onion Playbooks lookup: exact-rule/engine-fallback resolution, index caching
+- **test_ai_summary_lookup.py** - AI-generated rule summary lookup: exact-match resolution (no fallback), index caching
 
 Tests are static analysis (string matching in source files), live server integration tests, and JSDOM-based behavioral tests (`tests/jsdom_helper.py`) for JS functions that need real execution rather than source inspection. No Selenium/Playwright-style full-browser tests.
