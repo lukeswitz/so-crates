@@ -35,6 +35,7 @@ FILE_COMMAND_TIMEOUT = 10
 RULES_DOWNLOAD_TIMEOUT = 60
 YARA_SCAN_TIMEOUT = 300
 SURICATA_UPDATE_TIMEOUT = 60
+SURICATA_SOURCE_RECONCILE_TIMEOUT = 30      # per enable-source/disable-source subprocess call
 SURICATA_RUN_TIMEOUT = 300                 # 5 minutes max for a single PCAP
 SIGMA_RUN_TIMEOUT = 300                    # 5 minutes max for Zircolite log analysis
 
@@ -43,11 +44,33 @@ ZIRCOLITE_VERSION = '3.7.1'
 SIGMA_RULES_SUBDIR = 'sigma-rules'
 
 # Rules freshness
-# YARA Forge ships weekly and Zircolite-Rules-v2 ships daily, so this is a
-# deliberately conservative shared ceiling rather than matching either
-# cadence exactly - it just bounds how far a cached copy can drift before
-# the next server startup tries to refresh it.
-RULES_MAX_AGE_HOURS = 24
+# Zircolite-Rules-v2 and Emerging Threats Open both ship (roughly) daily;
+# YARA Forge ships weekly. A single shared threshold can't match all
+# three cadences at once, and this is tuned toward catching the two daily
+# feeds falling behind promptly rather than toward YARA Forge's slower
+# one - this was 7 days (a "wait for a whole missed YARA Forge release"
+# ceiling) until reconsidered, since that let Sigma/Suricata coverage
+# silently drift for most of a week (6+ missed daily releases) before
+# anyone was told, which was judged worse than occasionally flagging
+# YARA a few days before its own release cadence would strictly warrant.
+# It's the single source of truth for "how old is too old", read by:
+#   - get_suricata_rules_info()/get_yara_rules_info()/get_sigma_rules_info()
+#     ('stale' field), which drives both static/socrates.js's opt-in
+#     checkForStaleRules() notification and the Rules modal's own
+#     amber-date warning (isRulesetStale()/formatDateSpan(), which read it
+#     via /api/rules-info's staleThresholdHours rather than hardcoding
+#     their own separate threshold - the two used to disagree, 24h vs a
+#     30-day frontend-only constant, until they were unified here).
+# Note: is_file_stale(rules_file, RULES_MAX_AGE_HOURS) is also still
+# computed inside setup_yara_rules()/setup_sigma_rules() to decide whether
+# to attempt an actual network refresh, but as of the network-consent
+# changes described in AGENTS.md's "Detection Rule Freshness" section,
+# every current caller passes either force=True (the value doesn't matter,
+# force short-circuits it) or network_allowed=False (the download branch
+# is unreachable either way) - so that particular check is presently dead
+# code, kept only because a future caller with network_allowed=True,
+# force=False could reactivate it.
+RULES_MAX_AGE_HOURS = 2 * 24  # 2 days
 
 # Uploads
 UPLOAD_TMP_SUBDIR = 'upload-tmp'
@@ -56,6 +79,7 @@ UPLOAD_TMP_SUBDIR = 'upload-tmp'
 MAX_SEARCH_TERM_LENGTH = 200               # characters
 MAX_DISPLAY_NAME_LENGTH = 255               # characters - user-renamed analysis display name
 MAX_NOTES_LENGTH = 10000                    # characters - user-entered analysis notes
+MAX_ROW_NOTE_LENGTH = 500                   # characters - row-scoped counterpart to MAX_NOTES_LENGTH, a short annotation not a second full notes field
 HASH_CHUNK_SIZE = 65536                    # bytes for incremental hashing
 MAX_STRINGS_READ_SIZE = 2 * 1024 * 1024    # 2 MB cap for string extraction
 MAX_ENTROPY_READ_SIZE = 10 * 1024 * 1024   # 10 MB cap for entropy calculation

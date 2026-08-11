@@ -7,6 +7,7 @@ on first run if internet is available.
 """
 
 import config
+import gzip
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -24,7 +26,10 @@ YARA_FORGE_URL = (
     'https://github.com/YARAHQ/yara-forge/releases/latest/download/'
     'yara-forge-rules-full.zip'
 )
-BAKED_IN_YARA_FILE = '/usr/share/yara-rules/yara-rules-full.yar'
+# Baked in gzip-compressed (~19MB -> 3MB - see the Dockerfile's YARA Forge
+# bake step) and decompressed here into the plain .yar file every other
+# reader in this module already expects.
+BAKED_IN_YARA_FILE = '/usr/share/yara-rules/yara-rules-full.yar.gz'
 YARA_RULES_SUBDIR = 'yara-rules'
 YARA_FORGE_FILENAME = 'yara-rules-full.yar'
 
@@ -35,24 +40,32 @@ def check_yara_executable():
 
 
 def get_yara_rules_info(data_dir=None):
-    """Return {'count': int|None, 'updated': epoch|None} for the current
-    YARA Forge ruleset. Rules are declared as 'rule <name> ...' at the start
-    of a line (verified against the real file). Never raises - returns None
-    fields if the rules file doesn't exist yet."""
+    """Return {'count': int|None, 'updated': epoch|None, 'stale': bool|None}
+    for the current YARA Forge ruleset. Rules are declared as 'rule <name>
+    ...' at the start of a line (verified against the real file). 'stale'
+    is True once the rules file is older than config.RULES_MAX_AGE_HOURS -
+    purely a local mtime check, no network access, safe to call
+    unconditionally (see static/socrates.js's checkForStaleRules(), which
+    is opt-in). Never raises - returns None fields if the rules file
+    doesn't exist yet."""
     if data_dir is None:
         data_dir = os.path.expanduser('~/socrates-data')
     rules_file = os.path.join(data_dir, YARA_RULES_SUBDIR, YARA_FORGE_FILENAME)
     if not os.path.isfile(rules_file):
-        return {'count': None, 'updated': None}
+        return {'count': None, 'updated': None, 'stale': None}
     try:
         count = 0
         with open(rules_file, 'r', errors='ignore') as f:
             for line in f:
                 if re.match(r'^\s*rule\s+', line):
                     count += 1
-        return {'count': count, 'updated': os.path.getmtime(rules_file)}
+        return {
+            'count': count,
+            'updated': os.path.getmtime(rules_file),
+            'stale': is_file_stale(rules_file, config.RULES_MAX_AGE_HOURS),
+        }
     except OSError:
-        return {'count': None, 'updated': None}
+        return {'count': None, 'updated': None, 'stale': None}
 
 
 def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, force=False):
@@ -80,7 +93,12 @@ def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, for
     where staying silent just because the 24h cache window hasn't expired
     would defeat the point of the user explicitly asking for a check right
     now. Has no effect if there's no cached copy to begin with (that path
-    always checks/downloads already) or if network_allowed is False.
+    always checks/downloads already). When network_allowed is False, force
+    also controls whether a "using cached" message is emitted: a plain
+    staleness check (server startup, per-file background scans) stays
+    silent since nothing changed, while an explicit forced check that
+    happens to run offline still reports the cached-copy outcome so the
+    action doesn't look like it did nothing.
 
     Returns the rules file path or None if no rules are available.
     """
@@ -101,7 +119,7 @@ def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, for
                     on_progress(f'Warning: could not refresh YARA Forge rules, using cached copy: {e}')
             elif network_allowed:
                 on_progress('No internet access detected — using cached YARA Forge rules')
-            else:
+            elif force:
                 on_progress('Using cached YARA Forge rules')
         elif network_allowed:
             on_progress('YARA Forge rules already present — using cached rules')
@@ -111,7 +129,8 @@ def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, for
     if os.path.isfile(BAKED_IN_YARA_FILE):
         os.makedirs(os.path.dirname(rules_file), exist_ok=True)
         try:
-            shutil.copy2(BAKED_IN_YARA_FILE, rules_file)
+            with gzip.open(BAKED_IN_YARA_FILE, 'rb') as f_in, open(rules_file, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
             return rules_file
         except OSError as e:
             on_progress(f'Warning: could not copy baked-in rules: {e}')
@@ -285,7 +304,19 @@ def _parse_yara_output(output, filestore_dir=None, known_paths=None):
     (e.g. a user-uploaded "My Invoice.pdf"), which matters here since rule
     names never contain whitespace but arbitrary uploaded filenames do.
     """
-    sorted_known_paths = sorted(set(known_paths or ()), key=len, reverse=True)
+    known_paths_set = set(known_paths or ())
+    sorted_known_paths = sorted(known_paths_set, key=len, reverse=True)
+    # A last-whitespace-token match is only trustworthy on its own when no
+    # longer known path also ends with it - otherwise that longer path is
+    # the correct (and original algorithm's) answer, e.g. known paths "a
+    # b.txt" and "b.txt" both present: the naive last token for "a b.txt"
+    # is "b.txt", which is itself a distinct known path and must not
+    # shadow the real, longer match. Computed once per run (O(known_paths^2)
+    # worst case) rather than doing the full suffix scan on every line.
+    ambiguous_last_tokens = {
+        p for p in known_paths_set
+        if any(len(other) > len(p) and other.endswith(p) for other in known_paths_set)
+    }
     matches = []
     for line in output.strip().split('\n'):
         line = line.strip()
@@ -296,7 +327,16 @@ def _parse_yara_output(output, filestore_dir=None, known_paths=None):
         if len(parts) < 2:
             continue
 
-        file_path = next((p for p in sorted_known_paths if line.endswith(p)), None) or parts[-1]
+        # Fast path: the overwhelming majority of filenames contain no
+        # whitespace, so the last token is already the exact path - an O(1)
+        # set lookup confirms that without scanning every known path. Only
+        # a whitespace-containing filename (split across multiple tokens),
+        # or one whose last token collides with a shorter known path, needs
+        # the O(known_paths) suffix scan below.
+        if parts[-1] in known_paths_set and parts[-1] not in ambiguous_last_tokens:
+            file_path = parts[-1]
+        else:
+            file_path = next((p for p in sorted_known_paths if line.endswith(p)), None) or parts[-1]
         if filestore_dir:
             # Use commonpath to prevent directory traversal via path manipulation
             try:

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for yara_analyzer.py."""
 
+import gzip
 import os
 import sys
 import tempfile
@@ -12,6 +13,31 @@ import zipfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 import yara_analyzer
+
+
+class TestSetupYaraRulesBakedInGzip(unittest.TestCase):
+    """The real Docker image bakes BAKED_IN_YARA_FILE gzip-compressed (see
+    the Dockerfile's YARA Forge bake step) - must be decompressed into the
+    plain .yar file setup_yara_rules() promises its caller."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.baked_in_dir = tempfile.mkdtemp()
+        self.baked_in_gz = os.path.join(self.baked_in_dir, 'yara-rules-full.yar.gz')
+        self.rule_content = b'rule dummy { condition: true }'
+        with gzip.open(self.baked_in_gz, 'wb') as f:
+            f.write(self.rule_content)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        shutil.rmtree(self.baked_in_dir, ignore_errors=True)
+
+    def test_decompresses_baked_in_gzip_file(self):
+        with unittest.mock.patch('yara_analyzer.BAKED_IN_YARA_FILE', self.baked_in_gz):
+            rules_file = yara_analyzer.setup_yara_rules(self.tmpdir, network_allowed=False)
+        self.assertTrue(os.path.isfile(rules_file))
+        with open(rules_file, 'rb') as f:
+            self.assertEqual(f.read(), self.rule_content)
 
 
 class TestSetupYaraRulesForceNoNetwork(unittest.TestCase):
@@ -121,6 +147,31 @@ class TestNetworkAllowedFalseDoesNotClaimNoInternet(unittest.TestCase):
             yara_analyzer.setup_yara_rules(
                 self.tmpdir, on_progress=messages.append, network_allowed=True)
         self.assertTrue(any('no internet' in m.lower() for m in messages), messages)
+
+
+class TestGetYaraRulesInfoStaleness(unittest.TestCase):
+    """'stale' must be False for a just-written file and True once its
+    mtime is older than config.RULES_MAX_AGE_HOURS - purely a local
+    os.path.getmtime() comparison via validators.is_file_stale(), no
+    network access."""
+
+    def test_stale_field_reflects_file_age(self):
+        import config
+        import time
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, yara_analyzer.YARA_RULES_SUBDIR)
+            os.makedirs(rules_dir, exist_ok=True)
+            rules_file = os.path.join(rules_dir, yara_analyzer.YARA_FORGE_FILENAME)
+            with open(rules_file, 'w') as f:
+                f.write('rule test_rule { condition: true }')
+
+            fresh = yara_analyzer.get_yara_rules_info(data_dir=tmpdir)
+            self.assertFalse(fresh['stale'], 'a just-written rules file must not be stale')
+
+            old_time = time.time() - (config.RULES_MAX_AGE_HOURS + 1) * 3600
+            os.utime(rules_file, (old_time, old_time))
+            stale = yara_analyzer.get_yara_rules_info(data_dir=tmpdir)
+            self.assertTrue(stale['stale'], 'a rules file older than RULES_MAX_AGE_HOURS must be stale')
 
 
 if __name__ == '__main__':

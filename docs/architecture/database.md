@@ -13,7 +13,7 @@ CREATE TABLE events (
     dest_port INTEGER,
     protocol TEXT,
     app_proto TEXT,
-    json_data TEXT          # Full original eve.json line
+    json_data TEXT          -- Full original eve.json line
 );
 CREATE INDEX idx_event_type ON events(event_type);
 CREATE INDEX idx_timestamp ON events(timestamp);
@@ -84,5 +84,5 @@ Unfiltered (no search query) results from both functions are cached in-memory in
 
 ### Known Limitations / Future Work
 
-- **Arbitrary JSON-blob field filter/sort/aggregation scaling.** Fast server-side sort/filter only has real indexed-column support for `event_type`, `timestamp`, IP, port, and severity. Every other field (e.g. `alert.category`, `dns.rrname`, `http.url`) lives inside the shared `json_data` blob column and is only reachable via `json_extract()` at query time, which doesn't scale the way an index does as row counts grow. A per-field fix (generated/indexed columns added one at a time) compounds in migration complexity with each field added; the architecturally correct fix is splitting `events` into separate, properly-typed tables per event type, but that's a real migration touching ingestion (`suricata_analyzer.py`, `sigma_analyzer.py`, `db.py`), every query function, and every event type's column mapping — a multi-week project in its own right, not undertaken without a concrete use case driving it.
+- **Arbitrary JSON-blob field filter/sort/aggregation scaling.** Fast server-side sort/filter only has real indexed-column support for `event_type`, `timestamp`, IP, port, and severity. Every other field (e.g. `alert.category`, `dns.rrname`, `http.url`) lives inside the shared `json_data` blob column and is only reachable via `json_extract()` at query time, which doesn't scale the way an index does as row counts grow. A per-field fix (generated/indexed columns added one at a time) compounds in migration complexity with each field added; the architecturally correct fix is splitting `events` into separate, properly-typed tables per event type, but that's a real migration touching ingestion (`suricata_analyzer.py`, `sigma_analyzer.py`, `db.py`), every query function, and every event type's column mapping - a multi-week project in its own right, not undertaken without a concrete use case driving it.
 - **JSON-column sort tiebreaker on near-single-valued fields.** Sorting by a field with very low value diversity (e.g. `flow.state`, which is almost always the same handful of values) stays slow even after `PRAGMA optimize`, because the secondary `timestamp` tiebreaker still forces SQLite to sort the tied rows directly rather than use an index. This showed up against synthetic test data (1M rows, `State` column); it's unconfirmed whether real Suricata captures have enough value diversity in these fields for it to matter in practice. Not worth addressing without real-data evidence that it does.

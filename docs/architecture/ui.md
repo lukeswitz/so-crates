@@ -65,12 +65,12 @@ Each event type has its own column set. The "All Events" view uses a unified col
 
 **Shared columns (all types):** Time, Protocol, Source IP, Source Port, Dest IP, Dest Port
 
-**Per-type columns:** e.g. Alert/Category/Severity (alerts), Query/Type (DNS), Method/Host/URL/Status (HTTP). Every event type on the [Event Types](event-types.md) page has its own set — 30+ types by now — defined in `getColumnsForType()` (`static/socrates.js`), which is the source of truth; this doc intentionally doesn't enumerate all of them; a full list here would just drift out of sync with every new protocol added (the same problem already found and fixed once in `filtering.md`'s old "Column Overlap" table).
+**Per-type columns:** e.g. Alert/Category/Severity (alerts), Query/Type (DNS), Method/Host/URL/Status (HTTP). Every event type on the [Event Types](event-types.md) page has its own set - 30+ types by now - defined in `getColumnsForType()` (`static/socrates.js`), which is the source of truth; this doc intentionally doesn't enumerate all of them; a full list here would just drift out of sync with every new protocol added (the same problem already found and fixed once in `filtering.md`'s old "Column Overlap" table).
 
 **All-events columns:** Type (event type), Detail (type-specific summary)
 
 ## Filtering Design
 
-Filters are **global** — `currentFilters` is a flat `{columnName: value}` object. When switching tabs, filters for columns that don't exist in the new view are silently skipped (the column lookup returns `-1` and the filter is ignored).
+Filters are **global** - `currentFilters` is a flat `{columnName: value}` object. When switching tabs, filters for columns that don't exist in the new view are silently skipped (the column lookup returns `-1` and the filter is ignored).
 
 See [filtering.md](../filtering.md) for full details.

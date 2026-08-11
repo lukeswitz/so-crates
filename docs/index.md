@@ -26,14 +26,18 @@ After analysis, you can view network alerts, file alerts, network metadata, and 
 
 ![Analysis screen](images/so-crates-analysis.png)
 
-When you find something interesting, you can drill into the row in the data table at the bottom. This will allow you to see the ASCII transcript:
+Drilling into a Suricata, Sigma, or YARA alert shows an AI-generated summary of what the rule detects, plus a Playbook with plain-English investigation guidance for that specific detection:
 
-![transcript](images/so-crates-transcript.png)
+![Playbook](images/so-crates-playbook.png)
+
+You can optionally collapse the Playbook questions. You can also scroll to the bottom to see the ASCII transcript:
+
+![ASCII transcript view](images/so-crates-transcript.png)
 
 You can also select the hexdump view:
 
-![hexdump](images/so-crates-hexdump.png)
+![Hexdump view](images/so-crates-hexdump.png)
 
 To slice and dice your data, expand the Aggregation Tables section and click on values that you want to filter for:
 
-![aggregation-filtering](images/so-crates-aggregation-filtering.png)
+![Aggregation table filtering](images/so-crates-aggregation-filtering.png)

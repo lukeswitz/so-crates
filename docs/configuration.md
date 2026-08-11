@@ -47,7 +47,8 @@ All analyzed files are stored in `~/socrates-data/`. Each analysis gets a subdir
 | `DISK_SPACE_SAFETY_MARGIN` | `100 MB` | Free-space buffer required (on top of the upload size) before an upload is accepted |
 | `MAX_DISPLAY_NAME_LENGTH` | `255 chars` | Maximum length of a user-renamed analysis display name |
 | `MAX_NOTES_LENGTH` | `10,000 chars` | Maximum length of a per-analysis Notes field |
+| `MAX_ROW_NOTE_LENGTH` | `500 chars` | Maximum length of a per-row note (a short annotation on a single table row) |
 
 Suricata config is auto-generated from `/etc/suricata/` on first run. Rules are downloaded via `suricata-update` when internet access is available; otherwise, the app uses baked-in rules (Docker/Podman) or warns and continues without rules (source).
 
-See [Manual Installation](installation/manual.md#environment-variables) for the environment variables that override these defaults at startup.
+See [Development Setup](development-setup.md#environment-variables) for the environment variables that override these defaults at startup.

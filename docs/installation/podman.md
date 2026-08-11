@@ -2,7 +2,7 @@
 
 ## podman run
 
-If you prefer to use `podman run`, then here are the steps you can use on Debian 13 or compatible distros:
+If you prefer to use `podman run`, here are the steps you can use on Debian 13 or compatible distros:
 ```bash
 # Install podman
 sudo apt update && sudo apt -y install podman
@@ -16,7 +16,7 @@ podman run --userns=keep-id --user $(id -u):$(id -g) \
 
 ## podman compose
 
-If you prefer to use `podman compose`, then here are the steps you can use on Debian 13 or compatible distros:
+If you prefer to use `podman compose`, here are the steps you can use on Debian 13 or compatible distros:
 ```bash
 # Install and configure podman and podman-compose
 sudo apt update && sudo apt -y install podman podman-compose

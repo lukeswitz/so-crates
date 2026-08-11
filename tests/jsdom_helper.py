@@ -20,6 +20,13 @@ D3_PATH = os.path.join(PROJECT_ROOT, 'static', 'd3.min.js')
 D3_SANKEY_PATH = os.path.join(PROJECT_ROOT, 'static', 'd3-sankey.min.js')
 NODE_MODULES = os.path.join(PROJECT_ROOT, 'node_modules')
 
+# JSDOM's page origin for every test - deliberately NOT the app's real,
+# documented dev-server port (8000, see docker-compose's "8000:8000" mapping
+# and README) so a developer running `python3 socrates.py` while the suite
+# is also running can't collide with it. See the 'usable' resources loader
+# comment below for what that collision used to cause.
+JSDOM_TEST_ORIGIN = 'http://localhost:19999'
+
 
 def load_files():
     """Load HTML, JS, and CSS content."""
@@ -80,7 +87,7 @@ const cssContent = {json.dumps(css)};
 // anything that triggers a real subresource fetch (e.g. an iframe
 // navigating via srcdoc with a <link rel=stylesheet href="static/...">,
 // as the theme preview iframe does) hangs the whole node process forever:
-// nothing is listening on the http://localhost:8000 base URL in this
+// nothing is listening on the {JSDOM_TEST_ORIGIN} base URL in this
 // offline test environment, so the pending request keeps the event loop
 // alive indefinitely and the script never exits on its own.
 const staticFileInterceptor = requestInterceptor(async (request) => {{
@@ -101,7 +108,7 @@ const staticFileInterceptor = requestInterceptor(async (request) => {{
 
 const dom = new JSDOM(htmlContent, {{
     runScripts: 'dangerously',
-    url: 'http://localhost:8000',
+    url: {json.dumps(JSDOM_TEST_ORIGIN)},
     pretendToBeVisual: true,
     resources: 'usable',
     interceptors: [staticFileInterceptor]
@@ -156,7 +163,7 @@ window.eval(jsContent);
     // Node's event loop to drain naturally. jsdom's "resources: usable"
     // subresource loader (e.g. the theme preview iframe navigating via
     // srcdoc with a real <link rel=stylesheet>) can leave a pending
-    // request in flight against http://localhost:8000 - nothing is
+    // request in flight against {JSDOM_TEST_ORIGIN} - nothing is
     // listening there in this offline test environment, so without a
     // forced exit the process hangs indefinitely even though the test
     // itself already finished and produced its result above.

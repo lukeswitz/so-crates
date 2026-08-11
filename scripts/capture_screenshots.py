@@ -29,6 +29,7 @@ THEMES = [
     'retro-82', 'ethereal', 'lumon', 'catppuccin', 'ohmydebn', 'catppuccin-latte', 'flexoki-light',
     'everforest', 'gruvbox', 'hackerman', 'kanagawa', 'miasma', 'nord',
     'osaka-jade', 'ristretto', 'rose-pine', 'vantablack', 'white', 'luna-blue', 'amber', 'dos-blue',
+    'dracula', 'solarized-dark', 'monokai',
 ]
 
 DEFAULT_VIEWPORT = {'width': 1600, 'height': 1000}
@@ -98,18 +99,60 @@ async def main(base_url):
         await page.screenshot(path=os.path.join(IMAGES_DIR, 'so-crates-analysis.png'))
         print('captured analysis')
 
-        # 6/7. Expand a specific alert -> ASCII Transcript, then Hexdump. Prefer the
-        # AgentTesla FTP exfil alert (rich Alert Details section, real FTP session in
-        # the transcript); fall back to the first row / Flows tab if the sample data
-        # ever changes and that specific alert isn't present.
+        # 6/7/8. Expand a specific alert -> Playbook, then ASCII Transcript,
+        # then Hexdump. Prefer the AgentTesla FTP exfil alert (rich Alert
+        # Details section, real FTP session in the transcript); fall back to
+        # the first row / Flows tab if the sample data ever changes and that
+        # specific alert isn't present.
         row_selector = '.section:not(.section-hidden):not(.agg-section) table tbody tr:not(.detail-row)'
         target_row = page.locator(
             f"{row_selector}:has-text('ET MALWARE AgentTesla Exfil via FTP')"
         ).first
         if await target_row.count() == 0:
             target_row = page.locator(row_selector).first
-        await target_row.click()
+        # Click the timestamp cell specifically, not the row's default
+        # (center-of-bounding-box) click point - the pivot menu now opens
+        # on a click anywhere else in the row (see static/socrates.js's
+        # handleRowCellClick), so a plain .click() on the row locator can
+        # land on a pivot-enabled cell and open that menu instead of
+        # expanding the row, same as a real user now has to target the
+        # timestamp column specifically to expand (or use the pivot menu's
+        # own "Expand Row" entry).
+        await target_row.locator('.timestamp').click()
         await page.wait_for_timeout(300)
+
+        # Taller viewport for every capture in this block - the full detail
+        # section (Timestamp through Rule, plus Playbook/Payload) runs well
+        # past the default 1000px-tall viewport.
+        await page.set_viewport_size({'width': DEFAULT_VIEWPORT['width'], 'height': 1800})
+        await page.wait_for_timeout(300)
+
+        def _scroll_row_below_header():
+            return target_row.evaluate(
+                "(row) => { "
+                "const header = document.querySelector('.app-header'); "
+                "const headerHeight = header ? header.getBoundingClientRect().height : 0; "
+                "const rect = row.getBoundingClientRect(); "
+                "window.scrollBy(0, rect.top - headerHeight - 8); }"
+            )
+
+        # Playbook section - only present on this alert row (has a
+        # signature_id), not on the Flows-tab fallback row below.
+        playbook_toggle = page.locator('.detail-row.visible .playbook-questions-toggle').first
+        try:
+            await playbook_toggle.wait_for(state='visible', timeout=6000)
+            await _scroll_row_below_header()
+            await page.wait_for_timeout(300)
+            await page.screenshot(path=os.path.join(IMAGES_DIR, 'so-crates-playbook.png'))
+            print('captured playbook')
+            # Collapse the questions list back down so the Playbook section
+            # doesn't push the Payload/transcript out of the next captures.
+            await playbook_toggle.click()
+            await page.wait_for_timeout(300)
+        except Exception:
+            print('WARNING: no playbook available on the target alert (nothing baked in?) - '
+                  'so-crates-playbook.png not updated', file=sys.stderr)
+
         stream_payload = page.locator('.detail-row.visible .stream-payload').first
         if await stream_payload.count() == 0:
             flows_card = page.locator(".stat-card:has-text('Flows')")
@@ -117,7 +160,7 @@ async def main(base_url):
                 await flows_card.first.click()
                 await page.wait_for_timeout(800)
                 target_row = page.locator(row_selector).first
-                await target_row.click()
+                await target_row.locator('.timestamp').click()
                 await page.wait_for_timeout(300)
                 stream_payload = page.locator('.detail-row.visible .stream-payload').first
 
@@ -128,20 +171,8 @@ async def main(base_url):
             # header, then take a plain viewport screenshot - matches what a
             # user actually sees when they drill in: header, summary row, and
             # the full detail (Connection info, Alert Details, and
-            # Payload/ASCII Transcript) together, for context. The full detail
-            # section alone (Timestamp through Rule) runs ~700px, so the
-            # default 1000px-tall viewport leaves almost no room to actually
-            # see the transcript/hexdump below it - grow the viewport for
-            # these two captures specifically.
-            await page.set_viewport_size({'width': DEFAULT_VIEWPORT['width'], 'height': 1800})
-            await page.wait_for_timeout(300)
-            await target_row.evaluate(
-                "(row) => { "
-                "const header = document.querySelector('.app-header'); "
-                "const headerHeight = header ? header.getBoundingClientRect().height : 0; "
-                "const rect = row.getBoundingClientRect(); "
-                "window.scrollBy(0, rect.top - headerHeight - 8); }"
-            )
+            # Payload/ASCII Transcript) together, for context.
+            await _scroll_row_below_header()
             await page.wait_for_timeout(300)
             await page.screenshot(path=os.path.join(IMAGES_DIR, 'so-crates-transcript.png'))
             print('captured transcript')
@@ -154,14 +185,17 @@ async def main(base_url):
                 await page.wait_for_timeout(500)
             await page.screenshot(path=os.path.join(IMAGES_DIR, 'so-crates-hexdump.png'))
             print('captured hexdump')
-
-            await page.set_viewport_size(DEFAULT_VIEWPORT)
-            await page.wait_for_timeout(300)
         else:
             print('WARNING: no stream-payload found on either alert or flow rows - '
                   'so-crates-transcript.png / so-crates-hexdump.png not updated', file=sys.stderr)
 
-        # 8. Aggregation Tables, expanded and actually filtered - click Source IP
+        # Reset regardless of which captures above actually ran - the
+        # viewport was already enlarged for the Playbook capture even if
+        # stream_payload was never found.
+        await page.set_viewport_size(DEFAULT_VIEWPORT)
+        await page.wait_for_timeout(300)
+
+        # 9. Aggregation Tables, expanded and actually filtered - click Source IP
         # and Dest Port values from the AgentTesla alert to demonstrate the
         # click-to-filter workflow, not just show the tables passively.
         agg_toggle = page.locator('.section-toggle-bar', has_text='Aggregation Tables').first
@@ -169,11 +203,19 @@ async def main(base_url):
             await agg_toggle.click()
             await page.wait_for_timeout(800)
 
+            # Clicking an agg-row now opens the pivot menu rather than
+            # applying a filter directly - "Only" for the first value
+            # (clean start, replaces any existing filters) then "Include"
+            # for the second (ANDs a second column's filter in on top,
+            # rather than "Only"'s clear-and-replace, which would wipe out
+            # the first one).
             source_ip_row = page.locator(
                 ".agg-table:has(.agg-header:has-text('Source IP')) .agg-row:has-text('10.2.3.101')"
             ).first
             if await source_ip_row.count() > 0:
                 await source_ip_row.click()
+                await page.wait_for_timeout(300)
+                await page.locator('[data-pivot-action="only"]').click()
                 await page.wait_for_timeout(800)
 
             dest_port_row = page.locator(
@@ -181,13 +223,18 @@ async def main(base_url):
             ).first
             if await dest_port_row.count() > 0:
                 await dest_port_row.click()
+                await page.wait_for_timeout(300)
+                await page.locator('[data-pivot-action="include"]').click()
                 await page.wait_for_timeout(800)
 
             # Filtering rebuilds the data table, so re-expand the (now single,
             # filtered) row to show its detail below, same as the reference.
+            # Click the timestamp cell specifically - see the transcript/
+            # hexdump capture above for why a plain row click can open the
+            # pivot menu instead of expanding.
             filtered_row = page.locator(row_selector).first
             if await filtered_row.count() > 0:
-                await filtered_row.click()
+                await filtered_row.locator('.timestamp').click()
                 await page.wait_for_timeout(500)
 
             # Collapse the Sankey Diagram (expanded by default) to leave room

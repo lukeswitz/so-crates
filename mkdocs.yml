@@ -31,22 +31,22 @@ nav:
     - Docker: installation/docker.md
     - Podman: installation/podman.md
     - OhMyDebn: installation/ohmydebn.md
-    - Manual Installation: installation/manual.md
   - Usage: usage.md
   - Themes: themes.md
   - Configuration: configuration.md
   - Security: security.md
-  - Architecture:
-    - Architecture Overview: architecture/index.md
-    - Data Storage: architecture/data-storage.md
-    - Database: architecture/database.md
-    - Event Types: architecture/event-types.md
-    - UI: architecture/ui.md
-    - Security Model: architecture/security-model.md
-    - Test Coverage: architecture/testing.md
-  - API Reference: api.md
-  - Filtering: filtering.md
-  - Testing: testing.md
+  - Development:
+    - Development Setup: development-setup.md
+    - Architecture:
+      - Architecture Overview: architecture/index.md
+      - Data Storage: architecture/data-storage.md
+      - Database: architecture/database.md
+      - Event Types: architecture/event-types.md
+      - UI: architecture/ui.md
+      - Security Model: architecture/security-model.md
+    - API Reference: api.md
+    - Filtering: filtering.md
+    - Testing: architecture/testing.md
   - Credits: credits.md
   - Release Notes: release-notes.md
   - License: license.md
