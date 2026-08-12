@@ -113,6 +113,109 @@ class TestDefensiveParsing(unittest.TestCase):
         self.assertIsNone(mapper.convert_record(record))
 
 
+class TestForensicFields(unittest.TestCase):
+    """Extended process-level forensic fields lifted straight from es_process_t.
+
+    Every field is optional in Apple's headers and every eslogger record
+    won't carry every field; missing values must be omitted, not defaulted.
+    """
+
+    def test_process_context_extracts_full_forensic_set(self):
+        record = {
+            'time': '1', 'event': {'create': {
+                'destination': {'existing_file': {'path': '/tmp/x'}},
+            }},
+            'process': {
+                'executable': {'path': '/usr/bin/curl'},
+                'signing_id': 'com.apple.curl', 'team_id': 'APPLE',
+                'cdhash': 'deadbeef' * 5,
+                'is_platform_binary': True, 'is_es_client': False,
+                'codesigning_flags': 570491391,
+                'cs_validation_category': 4,
+                'session_id': 100, 'group_id': 42,
+                'original_ppid': 1,
+                'audit_token': {'pid': 555, 'euid': 501},
+                'parent_audit_token': {'pid': 100, 'euid': 501},
+                'responsible_audit_token': {'pid': 300, 'euid': 501},
+            },
+        }
+        out = mapper.convert_record(record)
+        self.assertEqual(out['TeamId'], 'APPLE')
+        self.assertEqual(out['CdHash'], 'deadbeef' * 5)
+        self.assertEqual(out['IsPlatformBinary'], True)
+        self.assertEqual(out['IsEsClient'], False)
+        self.assertEqual(out['CodesigningFlags'], 570491391)
+        self.assertEqual(out['CsValidationCategory'], 4)
+        self.assertEqual(out['SessionId'], 100)
+        self.assertEqual(out['GroupId'], 42)
+        self.assertEqual(out['ParentProcessId'], 100)
+        self.assertEqual(out['OriginalParentProcessId'], 1)
+        self.assertEqual(out['ResponsibleProcessId'], 300)
+
+    def test_responsible_pid_omitted_when_equal_to_pid(self):
+        """The responsible-pid concept is about cross-process ownership;
+        emitting it when it equals the actor's own pid is noise."""
+        out = mapper.convert_record({
+            'time': '1', 'event': {'create': {
+                'destination': {'existing_file': {'path': '/tmp/x'}},
+            }},
+            'process': {
+                'executable': {'path': '/usr/bin/curl'},
+                'audit_token': {'pid': 555, 'euid': 501},
+                'responsible_audit_token': {'pid': 555, 'euid': 501},
+            },
+        })
+        self.assertNotIn('ResponsibleProcessId', out)
+        self.assertEqual(out['ProcessId'], 555)
+
+    def test_missing_optional_fields_are_omitted(self):
+        """A minimal process record must not fabricate placeholder values."""
+        out = mapper.convert_record({
+            'time': '1', 'event': {'create': {
+                'destination': {'existing_file': {'path': '/tmp/x'}},
+            }},
+            'process': {
+                'executable': {'path': '/usr/bin/curl'},
+                'audit_token': {'pid': 555, 'euid': 501},
+            },
+        })
+        for absent in ('TeamId', 'CdHash', 'IsPlatformBinary', 'IsEsClient',
+                       'CodesigningFlags', 'SessionId', 'GroupId',
+                       'ParentProcessId', 'OriginalParentProcessId',
+                       'ResponsibleProcessId'):
+            self.assertNotIn(absent, out, f'{absent} must be absent when missing')
+
+    def test_exec_signing_fields_come_from_target_not_parent(self):
+        """A signed shell running an unsigned payload has different signing
+        state on the two processes; the target's is what matters."""
+        out = mapper.convert_record({
+            'time': '1', 'event': {'exec': {
+                'target': {
+                    'executable': {'path': '/tmp/payload'},
+                    'signing_id': 'ad-hoc', 'team_id': None,
+                    'cdhash': 'c0ffee' * 6,
+                    'is_platform_binary': False,
+                    'codesigning_flags': 0,
+                    'audit_token': {'pid': 999, 'euid': 501},
+                },
+                'args': ['payload', 'run'],
+            }},
+            'process': {
+                'executable': {'path': '/bin/zsh'},
+                'signing_id': 'com.apple.zsh', 'team_id': 'APPLE',
+                'cdhash': 'apple123' * 5,
+                'is_platform_binary': True,
+                'audit_token': {'pid': 100, 'euid': 501},
+            },
+        })
+        self.assertEqual(out['Image'], '/tmp/payload')
+        self.assertEqual(out['SigningId'], 'ad-hoc')
+        self.assertEqual(out['CdHash'], 'c0ffee' * 6)
+        self.assertEqual(out['IsPlatformBinary'], False)
+        self.assertEqual(out['CodesigningFlags'], 0)
+        self.assertNotIn('TeamId', out)
+
+
 class TestSetuidHandler(unittest.TestCase):
     def test_setuid_records_target_uid(self):
         out = mapper.convert_record({

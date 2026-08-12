@@ -51,7 +51,12 @@ def _actor_process(record, event_body):
 
 
 def _process_fields(process):
-    """Image / SigningId / ProcessId / User from an es_process_t dict."""
+    """Actor process fields: identity + audit token + code-signing forensics.
+
+    All fields come from es_process_t members eslogger serializes verbatim.
+    Every field is optional (Apple's docs mark most as such); missing hops
+    just omit the field rather than crashing the run.
+    """
     out = {}
     if not isinstance(process, dict):
         return out
@@ -60,12 +65,35 @@ def _process_fields(process):
         out['Image'] = image
     if isinstance(process.get('signing_id'), str):
         out['SigningId'] = process['signing_id']
+    if isinstance(process.get('team_id'), str) and process['team_id']:
+        out['TeamId'] = process['team_id']
+    if isinstance(process.get('cdhash'), str) and process['cdhash']:
+        out['CdHash'] = process['cdhash']
+    if isinstance(process.get('is_platform_binary'), bool):
+        out['IsPlatformBinary'] = process['is_platform_binary']
+    if isinstance(process.get('is_es_client'), bool):
+        out['IsEsClient'] = process['is_es_client']
+    for src, dst in (('codesigning_flags', 'CodesigningFlags'),
+                     ('cs_validation_category', 'CsValidationCategory'),
+                     ('session_id', 'SessionId'),
+                     ('group_id', 'GroupId')):
+        value = process.get(src)
+        if isinstance(value, int):
+            out[dst] = value
     pid = _dig(process, 'audit_token', 'pid')
     if isinstance(pid, int):
         out['ProcessId'] = pid
     uid = _dig(process, 'audit_token', 'euid')
     if isinstance(uid, int):
         out['User'] = str(uid)
+    ppid = _dig(process, 'parent_audit_token', 'pid')
+    if isinstance(ppid, int):
+        out['ParentProcessId'] = ppid
+    if isinstance(process.get('original_ppid'), int):
+        out['OriginalParentProcessId'] = process['original_ppid']
+    resp_pid = _dig(process, 'responsible_audit_token', 'pid')
+    if isinstance(resp_pid, int) and resp_pid != pid:
+        out['ResponsibleProcessId'] = resp_pid
     return out
 
 
@@ -87,7 +115,13 @@ def _command_line(exec_body):
 
 
 def _handle_exec(body, record):
-    """es_event_exec_t: target.executable.path + args + parent from `process`."""
+    """es_event_exec_t: target.executable.path + args + parent from `process`.
+
+    Signing forensics come from event.exec.target, not from record.process,
+    because the target is the newly-executed binary whose integrity matters -
+    a signed shell running an unsigned payload has different signing state
+    on the two processes.
+    """
     out = {}
     image = _dig(body, 'target', 'executable', 'path')
     if isinstance(image, str):
@@ -105,6 +139,23 @@ def _handle_exec(body, record):
     tty = _dig(body, 'target', 'tty', 'path')
     if isinstance(tty, str):
         out['Tty'] = tty
+    target = body.get('target') if isinstance(body, dict) else None
+    if isinstance(target, dict):
+        if isinstance(target.get('signing_id'), str) and target['signing_id']:
+            out['SigningId'] = target['signing_id']
+        if isinstance(target.get('team_id'), str) and target['team_id']:
+            out['TeamId'] = target['team_id']
+        if isinstance(target.get('cdhash'), str) and target['cdhash']:
+            out['CdHash'] = target['cdhash']
+        if isinstance(target.get('is_platform_binary'), bool):
+            out['IsPlatformBinary'] = target['is_platform_binary']
+        if isinstance(target.get('is_es_client'), bool):
+            out['IsEsClient'] = target['is_es_client']
+        for src, dst in (('codesigning_flags', 'CodesigningFlags'),
+                         ('cs_validation_category', 'CsValidationCategory')):
+            value = target.get(src)
+            if isinstance(value, int):
+                out[dst] = value
     return out
 
 
@@ -546,7 +597,12 @@ def convert_record(record):
     out.update(handler(body, record))
 
     if name in ('exec', 'remote_thread_create'):
+        # Signing state is per-binary; leaking parent's would misattribute.
+        signing_fields = {'SigningId', 'TeamId', 'CdHash', 'IsPlatformBinary',
+                          'IsEsClient', 'CodesigningFlags', 'CsValidationCategory'}
         for key, value in actor_fields.items():
+            if key in signing_fields:
+                continue
             out.setdefault(key, value)
         if name == 'exec' and 'ParentImage' not in out and 'Image' in actor_fields:
             out['ParentImage'] = actor_fields['Image']
