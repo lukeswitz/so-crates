@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Tests for DB sigma alert functions."""
 
-import json
 import os
 import sys
 import tempfile

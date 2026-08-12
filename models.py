@@ -2,10 +2,6 @@
 """Event extraction helpers for Suricata eve.json data."""
 
 
-def get_event_type(event):
-    return event.get('event_type', '')
-
-
 def get_timestamp(event):
     return event.get('timestamp', '')
 
@@ -32,7 +28,3 @@ def get_protocol(event):
 
 def get_app_proto(event):
     return event.get('app_proto', '')
-
-
-def get_fileinfo_sha256(event):
-    return event.get('fileinfo', {}).get('sha256', '')

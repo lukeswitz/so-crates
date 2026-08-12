@@ -5,11 +5,95 @@
 
         function escapeJsString(str) {
             if (str == null) return '';
-            return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            // Every call site embeds the result inside a single-quoted JS
+            // string literal within a double-quoted HTML onclick="..."
+            // attribute. Escaping only backslash/quote protects the JS
+            // string boundary but leaves the attribute boundary open (a
+            // raw '"' or '<'/'>' would still break out of the attribute),
+            // so also HTML-escape after JS-escaping.
+            const jsEscaped = String(str)
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\n/g, '\\n')
+                .replace(/\r/g, '\\r');
+            return escapeHtml(jsEscaped);
+        }
+
+        // Shared by loadAnalysis() (the analysis header) and showWelcome()
+        // (the Previous Analyses list) so both render a sample's own event
+        // date range identically. Returns '' if neither bound is known
+        // (e.g. an analysis still mid-processing, with no events.db yet).
+        function formatDateRange(dateRange) {
+            const min = dateRange && dateRange.min;
+            const max = dateRange && dateRange.max;
+            if (!min && !max) return '';
+            return min && min === max
+                ? min.slice(0, 19)
+                : `${min?.slice(0, 19) || ''} to ${max?.slice(0, 19) || ''}`;
+        }
+
+        function safeStorageGet(storage, key) {
+            try { return storage.getItem(key); } catch (e) { return null; }
+        }
+        function safeStorageSet(storage, key, value) {
+            try { storage.setItem(key, value); } catch (e) { /* ignore */ }
+        }
+        function safeStorageRemove(storage, key) {
+            try { storage.removeItem(key); } catch (e) { /* ignore */ }
+        }
+
+        // Reads and validates the user's persisted max-query-limit preference.
+        // Re-validates on every call (not just at write time) since a
+        // devtools-edited localStorage value bypasses saveSettings() entirely;
+        // the server independently clamps this again regardless (defense in depth).
+        function getUserQueryLimit() {
+            const raw = safeStorageGet(localStorage, 'socrates_maxQueryLimit');
+            const n = parseInt(raw, 10);
+            if (isNaN(n) || n < 1000 || n > 500000) return CONFIG.DEFAULT_QUERY_LIMIT;
+            return n;
+        }
+
+        function getUserMaxUploadSizeMB() {
+            const raw = safeStorageGet(localStorage, 'socrates_maxUploadSizeMB');
+            const n = parseInt(raw, 10);
+            if (isNaN(n) || n < 100 || n > 20000) return CONFIG.DEFAULT_UPLOAD_SIZE_MB;
+            return n;
+        }
+
+        // Unlike getUserQueryLimit()/getUserMaxUploadSizeMB(), there's no
+        // client-side default constant to fall back to here - the real
+        // default is the server's config.RULES_MAX_AGE_HOURS, fetched
+        // dynamically via /api/rules-info's staleThresholdHours. Returns
+        // null (not a fallback number) when unset/invalid, so callers can
+        // tell "no override, use the server's value" apart from "override
+        // to N days" - see _resolveStaleThresholdHours().
+        function getUserStaleThresholdDays() {
+            const raw = safeStorageGet(localStorage, 'socrates_staleThresholdDays');
+            const n = parseInt(raw, 10);
+            if (isNaN(n) || n < 1 || n > 365) return null;
+            return n;
+        }
+
+        // Single place both isRulesetStale() consumers (the Rules modal's
+        // date-color warning and checkForStaleRules()'s notification) go
+        // through to resolve "how old is too old" - keeps them agreeing
+        // the same way unifying on staleThresholdHours did originally (see
+        // AGENTS.md's Detection Rule Freshness section), now that either
+        // one can also be overridden by the user's per-browser preference.
+        function _resolveStaleThresholdHours(serverHours) {
+            const days = getUserStaleThresholdDays();
+            return days !== null ? days * 24 : serverHours;
         }
 
         function sortEventTypes(types) {
-            const order = { alert: 0, sigmaalert: 1, filealerts: 2, log: 3 };
+            // Network Alerts, File Alerts, Decoder Alerts, Anomalies (in
+            // that order) take priority over everything else, which then
+            // falls back to alphabetical below. sigmaalert/log never
+            // coexist with alert/filealerts/protocol_decode/anomaly (log
+            // mode vs pcap mode are mutually exclusive), so their relative
+            // priority to each other is preserved from before without
+            // affecting the pcap-mode ordering above.
+            const order = { alert: 0, filealerts: 1, protocol_decode: 2, anomaly: 3, sigmaalert: 4, log: 5 };
             return [...types].sort((a, b) => {
                 const ai = order[a] ?? 99;
                 const bi = order[b] ?? 99;
@@ -18,17 +102,818 @@
             });
         }
 
+        const THEMES = {
+            dark: { label: 'Midnight', group: 'dark' },
+            light: { label: 'Daylight', group: 'light' },
+            sguil: { label: 'Sguil', group: 'fun' },
+            hacker: { label: 'Hacker', group: 'fun' },
+            cga: { label: 'CGA', group: 'fun' },
+            'breadbin-blue': { label: 'Breadbin Blue', group: 'fun' },
+            vaporwave: { label: 'Vaporwave', group: 'fun' },
+            'digital-frontier': { label: 'Digital Frontier', group: 'fun' },
+            'retro-handheld': { label: 'Retro Handheld', group: 'fun' },
+            'matte-black': { label: 'Matte Black', group: 'dark' },
+            'tokyo-night': { label: 'Tokyo Night', group: 'dark' },
+            'retro-82': { label: 'Retro 82', group: 'dark' },
+            'ethereal': { label: 'Ethereal', group: 'dark' },
+            'lumon': { label: 'Lumon', group: 'dark' },
+            'catppuccin': { label: 'Catppuccin', group: 'dark' },
+            'ohmydebn': { label: 'OhMyDebn', group: 'dark' },
+            'catppuccin-latte': { label: 'Catppuccin Latte', group: 'light' },
+            'flexoki-light': { label: 'Flexoki Light', group: 'light' },
+            'everforest': { label: 'Everforest', group: 'dark' },
+            'gruvbox': { label: 'Gruvbox', group: 'dark' },
+            'hackerman': { label: 'Hackerman', group: 'dark' },
+            'kanagawa': { label: 'Kanagawa', group: 'dark' },
+            'miasma': { label: 'Miasma', group: 'dark' },
+            'nord': { label: 'Nord', group: 'dark' },
+            'osaka-jade': { label: 'Osaka Jade', group: 'dark' },
+            'ristretto': { label: 'Ristretto', group: 'dark' },
+            'rose-pine': { label: 'Rose Pine', group: 'light' },
+            'vantablack': { label: 'Vantablack', group: 'dark' },
+            'white': { label: 'White', group: 'light' },
+            'luna-blue': { label: 'Luna Blue', group: 'fun' },
+            'amber': { label: 'Amber CRT', group: 'fun' },
+            'dos-blue': { label: 'DOS Blue', group: 'fun' },
+            'dracula': { label: 'Dracula', group: 'dark' },
+            'solarized-dark': { label: 'Solarized Dark', group: 'dark' },
+            'monokai': { label: 'Monokai', group: 'dark' },
+        };
+
+        // Mirrors the keydown easter-egg checks below (kept separate rather
+        // than driving both from one loop, since the keydown handler is
+        // already tested against its literal source text) - used only to
+        // display each Fun theme's code while hovering it in the themes
+        // modal, not to detect the codes themselves.
+        const THEME_CHEAT_CODES = {
+            hacker: '31337',
+            sguil: 'sguil',
+            cga: 'cga',
+            'breadbin-blue': 'bread',
+            vaporwave: 'vapor',
+            'luna-blue': 'luna',
+            amber: 'amber',
+            'dos-blue': 'dos',
+            'digital-frontier': 'digit',
+            'retro-handheld': 'retro',
+        };
+
+        const THEME_GROUP_LABELS = { dark: 'Dark Themes', fun: 'Fun Themes', light: 'Light Themes' };
+        const THEME_GROUP_ORDER = ['dark', 'light', 'fun'];
+
+        // Menu/hotkey cycle order: group by section (Dark, Light, Fun),
+        // alphabetical by label within each section.
+        const THEME_MENU_ORDER = THEME_GROUP_ORDER.flatMap(group =>
+            Object.keys(THEMES)
+                .filter(k => THEMES[k].group === group)
+                .sort((a, b) => THEMES[a].label.localeCompare(THEMES[b].label))
+        );
+
+        function getCurrentTheme() {
+            return document.documentElement.getAttribute('data-theme') || 'dark';
+        }
+
+        let menuBaseTheme = null;
+
+        // data-theme marker for a theme synthesized at runtime from an
+        // OhMyDebn/Aether palette (see applyCustomTheme()) rather than one
+        // of THEMES's hand-built CSS blocks. Not itself a THEMES key - never
+        // manually selectable, only ever reached via OhMyDebn sync.
+        const OHMYDEBN_CUSTOM_THEME = 'ohmydebn-custom';
+
+        // Full set of CSS custom properties a synthesized theme sets inline
+        // via applyCustomTheme() - kept in one place so setTheme() can clear
+        // them all when switching back to a real, CSS-block-backed theme.
+        const CUSTOM_THEME_CSS_VARS = [
+            '--accent', '--help-icon-color', '--accent-hover',
+            '--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-hover', '--bg-hover-light',
+            '--border-color', '--bg-drop-active', '--badge-bg-neutral',
+            '--text-primary', '--text-bright', '--text-muted',
+            '--tag-gray-text', '--tag-red-text', '--badge-danger-text',
+            '--tag-green-text', '--badge-success-text', '--badge-warning-text',
+            '--tag-blue-text', '--tag-purple-text', '--tag-orange-text',
+            '--danger-bg', '--modal-backdrop',
+        ];
+
+        function setTheme(themeName) {
+            const valid = Object.prototype.hasOwnProperty.call(THEMES, themeName);
+            if (!valid) return;
+            const html = document.documentElement;
+            // Clear any inline properties left over from a previously
+            // synthesized OhMyDebn custom theme, so they don't linger on
+            // top of this real theme's CSS block.
+            CUSTOM_THEME_CSS_VARS.forEach(function(name) { html.style.removeProperty(name); });
+            if (themeName === 'dark') {
+                html.removeAttribute('data-theme');
+            } else {
+                html.setAttribute('data-theme', themeName);
+            }
+            safeStorageSet(localStorage, 'socrates-theme', themeName);
+            updateThemeMenu();
+            updateCodeRain();
+            updateFavicon();
+            // If the themes modal is open, treat this as the new baseline so
+            // a later close/revert does not undo the change, and keep the
+            // preview iframe in sync - otherwise changing the theme some
+            // other way while the modal is open (the 't' hotkey, a cheat
+            // code) would leave the preview showing a stale theme while the
+            // real page and the grid's checkmark have already moved on.
+            const themesModal = document.getElementById('themesModal');
+            if (themesModal && themesModal.classList.contains('active')) {
+                menuBaseTheme = themeName;
+                previewTheme(themeName);
+            }
+        }
+
+        // Applies a theme synthesized server-side from an OhMyDebn/Aether
+        // palette (see /api/theme's customColors, derived by
+        // ohmydebn_colors.py) for a theme THEMES has no CSS block for.
+        // Deliberately does not persist to localStorage['socrates-theme']:
+        // the inline properties this sets only exist in this page's live
+        // DOM, so restoring the marker on next load with no colors behind
+        // it yet (before the sync poll's first tick resolves) would be
+        // worse than the brief default-theme flash of just not persisting
+        // it at all - only ever reachable via sync anyway, never manually.
+        function applyCustomTheme(colors) {
+            const html = document.documentElement;
+            html.setAttribute('data-theme', OHMYDEBN_CUSTOM_THEME);
+            Object.keys(colors).forEach(function(name) {
+                html.style.setProperty(name, colors[name]);
+            });
+            updateThemeMenu();
+            updateCodeRain();
+            updateFavicon();
+        }
+
+        // Real app markup/classes (.app-header, .stats-grid, .stat-card)
+        // reusing the real stylesheet, rendered in an isolated iframe
+        // document so previewing a theme never touches the real page's
+        // document.documentElement. Loaded once via srcdoc (relative URLs
+        // in srcdoc resolve against the parent document's URL, so
+        // static/socrates.css resolves the same way it does for the real
+        // page) and then just has its data-theme attribute toggled per
+        // hover - cheap, and avoids booting a second full copy of the app
+        // (which loading the real socrates.html in an iframe would mean:
+        // re-running init(), restarting the OhMyDebn theme-sync poll, etc.
+        // just for a hover preview).
+        const THEME_PREVIEW_SRCDOC = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="static/socrates.css">
+<style>
+  html, body { overflow: hidden; }
+  .app-header { position: static; border-bottom: none; }
+  .preview-container { padding: 12px 14px; }
+  .preview-stats-grid { grid-template-columns: repeat(3, 1fr); margin-bottom: 0; }
+</style>
+</head>
+<body>
+  <div class="app-header">
+    <div class="app-header-left">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <span class="app-logo-text" style="color: var(--text-bright); font-weight: 700;">SO-CRATES</span>
+      <span class="app-header-filename">sample.pcap</span>
+    </div>
+  </div>
+  <div class="preview-container">
+    <div class="stats-grid preview-stats-grid">
+      <div class="stat-card tab-active">
+        <div class="stat-number">128</div>
+        <div class="stat-label">Alerts</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">4,502</div>
+        <div class="stat-label">Flows</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">37</div>
+        <div class="stat-label">DNS</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+        let themePreviewFrameReady = false;
+
+        // Only ever touches the isolated preview iframe's own document,
+        // never the real page's document.documentElement. Hovering across a
+        // packed grid of ~26 tiles with no debounce would otherwise mean a
+        // full-page, high-contrast recolor on every mouseenter - exactly
+        // the large-area rapid-flash pattern WCAG 2.3.1 (Three Flashes or
+        // Below Threshold) exists to prevent. Scoping the change to this
+        // small, separate document keeps it well under that "large area"
+        // threshold regardless of how fast the cursor moves. commitTheme()
+        // (click) is the only path that still changes the real theme.
+        function previewTheme(themeName) {
+            const valid = Object.prototype.hasOwnProperty.call(THEMES, themeName);
+            if (!valid) return;
+            const frame = document.getElementById('themePreviewFrame');
+            const frameDoc = frame && frame.contentDocument;
+            if (frameDoc && frameDoc.documentElement) {
+                frameDoc.documentElement.setAttribute('data-theme', themeName);
+            }
+            updateThemeCheatCodeHint(themeName);
+        }
+
+        // "Previewing <name>" always shows, confirming what the preview
+        // panel currently displays (hover target, or the resting/baseline
+        // theme once nothing is hovered). The trailing "- Cheat code: X"
+        // part only applies to Fun themes, so its own space is reserved via
+        // visibility (not display) rather than the whole line, so the
+        // modal doesn't jump as that part appears/disappears while hovering
+        // across Fun vs. other themes.
+        function updateThemeCheatCodeHint(themeName) {
+            const label = document.getElementById('themePreviewingLabel');
+            const codePart = document.getElementById('themeCheatCodePart');
+            if (!label || !codePart) return;
+            label.textContent = THEMES[themeName].label;
+            const code = THEME_CHEAT_CODES[themeName];
+            if (code) {
+                codePart.querySelector('code').textContent = code;
+                codePart.style.visibility = 'visible';
+            } else {
+                codePart.style.visibility = 'hidden';
+            }
+        }
+
+        function revertTheme() {
+            if (menuBaseTheme !== null) {
+                previewTheme(menuBaseTheme);
+            }
+        }
+
+        // Applies the theme for real (unlike previewTheme(), which only
+        // touches the isolated preview iframe) but deliberately does not
+        // close the themes modal - lets someone click through several
+        // themes in a row, actually seeing the real app repaint each time,
+        // without reopening the picker. Each click is still a single,
+        // deliberate user-initiated action (not a rapid/incidental trigger
+        // like hover), so this doesn't reintroduce the flash-risk pattern
+        // previewTheme() was built to avoid. Escape/the close button/
+        // backdrop click remain the ways to actually close the modal.
+        function commitTheme(themeName) {
+            setTheme(themeName);
+        }
+
+        // Polls /api/theme (populated from OHMYDEBN_THEME_DIR server-side,
+        // e.g. when launched via ohmydebn-socrates-run) and, if the user
+        // has opted in, applies
+        // whatever theme OhMyDebn last switched to. Off by default so a
+        // background desktop-theme change never repaints an open analysis
+        // session without the user asking for it. The server only loosely
+        // validates the theme name, so setTheme() -- which rejects anything
+        // not in THEMES -- remains the real gate for that path; customColors
+        // (see applyCustomTheme()) is validated server-side instead.
+        let themeSyncInterval = null;
+
+        // Track what was last actually applied via sync, independently of
+        // each other and of the DOM's data-theme attribute. A synthesized
+        // custom theme always stamps the same OHMYDEBN_CUSTOM_THEME marker
+        // regardless of which palette is behind it, so comparing against
+        // getCurrentTheme() can't tell "same colors, don't reapply" from
+        // "different colors, need reapply" - only a fingerprint of the
+        // colors themselves can. The two files driving these (theme name
+        // vs. colors.toml) are independent and not guaranteed to change in
+        // lockstep, so the customColors branch below is checked on its own
+        // and never gated on data.theme being present/valid.
+        let lastSyncedThemeName = null;
+        let lastSyncedColorsFingerprint = null;
+
+        async function pollOhmydebnTheme() {
+            if (document.hidden) return;
+            if (safeStorageGet(localStorage, 'socrates_syncThemeWithOS') !== 'true') return;
+            try {
+                const resp = await fetch('/api/theme');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const knownTheme = data.theme && Object.prototype.hasOwnProperty.call(THEMES, data.theme);
+                if (knownTheme) {
+                    if (data.theme !== lastSyncedThemeName) {
+                        setTheme(data.theme);
+                        showToast('Changed SO-CRATES theme to ' + THEMES[data.theme].label + ' to match OhMyDebn');
+                        lastSyncedThemeName = data.theme;
+                        lastSyncedColorsFingerprint = null;
+                    }
+                } else if (data.customColors) {
+                    const fingerprint = JSON.stringify(data.customColors);
+                    if (fingerprint !== lastSyncedColorsFingerprint) {
+                        applyCustomTheme(data.customColors);
+                        showToast(data.theme
+                            ? 'Generated color palette from OhMyDebn theme ' + data.theme
+                            : 'Generated a color palette from OhMyDebn');
+                        lastSyncedColorsFingerprint = fingerprint;
+                        lastSyncedThemeName = null;
+                    }
+                } else if (data.theme && data.theme !== lastSyncedThemeName) {
+                    // A theme name was reported, but it's neither a known
+                    // THEMES key nor backed by a usable palette. Leaving
+                    // sync on would just repeat this same no-op every poll
+                    // with no visible sign anything is wrong, so turn sync
+                    // off and fall back to Midnight instead of silently
+                    // ignoring it forever.
+                    safeStorageSet(localStorage, 'socrates_syncThemeWithOS', 'false');
+                    const syncCheckbox = document.getElementById('syncThemeWithOS');
+                    if (syncCheckbox) syncCheckbox.checked = false;
+                    updateThemePickerVisibility();
+                    setTheme('dark');
+                    showToast('OhMyDebn reported an unknown theme - sync disabled and reverted to Midnight.', {
+                        sticky: true,
+                        actionLabel: 'Open Themes',
+                        onAction: function() { showThemesModal(); }
+                    });
+                    lastSyncedThemeName = data.theme;
+                }
+            } catch (e) {
+                // Ignore -- next poll will retry.
+            }
+        }
+
+        function startThemeSync() {
+            if (themeSyncInterval) return;
+            pollOhmydebnTheme();
+            themeSyncInterval = setInterval(pollOhmydebnTheme, 1000);
+        }
+
+        function toggleTheme() {
+            const order = THEME_MENU_ORDER;
+            const current = getCurrentTheme();
+            const nextIndex = (order.indexOf(current) + 1) % order.length;
+            const nextTheme = order[nextIndex];
+            setTheme(nextTheme);
+            showToast('Switched to ' + THEMES[nextTheme].label + ' theme');
+        }
+
+        function updateThemeMenu() {
+            // Mark the menu item for the currently applied theme. Tracks
+            // hover previews too (setTheme/previewTheme both call this), so
+            // the checkmark always matches what is on screen.
+            const current = getCurrentTheme();
+            const items = document.querySelectorAll('[data-theme-option]');
+            items.forEach(function(item) {
+                const isActive = item.getAttribute('data-theme-option') === current;
+                item.classList.toggle('theme-active', isActive);
+                if (isActive) {
+                    item.setAttribute('aria-current', 'true');
+                } else {
+                    item.removeAttribute('aria-current');
+                }
+            });
+        }
+
+        const GEAR_ICON_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
+
+        function renderGearMenu() {
+            return `
+                <div class="app-header-menu">
+                    <button class="app-header-menu-btn" onclick="toggleMenu()" title="Menu" id="appHeaderMenuBtn">
+                        ${GEAR_ICON_SVG}
+                    </button>
+                    <div class="app-header-menu-dropdown" id="appHeaderMenuDropdown">
+                        <button class="app-header-menu-item" onclick="showHelpModal(); closeMenu();">
+                            <span><svg class="theme-icon-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+                            <span>Help</span>
+                        </button>
+                        <button class="app-header-menu-item" onclick="showSettingsModal(); closeMenu();">
+                            <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></span>
+                            <span>Settings</span>
+                        </button>
+                        <button class="app-header-menu-item" onclick="showThemesModal(); closeMenu();">
+                            <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg></span>
+                            <span>Themes</span>
+                        </button>
+                        <button class="app-header-menu-item" onclick="showRulesModal(); closeMenu();">
+                            <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></span>
+                            <span>Rules</span>
+                        </button>
+                        <button class="app-header-menu-item" onclick="showAboutModal(); closeMenu();">
+                            <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                            <span>About</span>
+                        </button>
+                    </div>
+                </div>`;
+        }
+
+        function renderThemesModalGrid() {
+            let html = '';
+            for (const group of THEME_GROUP_ORDER) {
+                html += `<div class="app-header-menu-header">${THEME_GROUP_LABELS[group]}</div><div class="theme-tile-grid">`;
+                for (const key of THEME_MENU_ORDER.filter(k => THEMES[k].group === group)) {
+                    html += `
+                        <button class="theme-tile" data-theme-option="${key}"
+                                onmouseenter="previewTheme('${key}')"
+                                onmouseleave="revertTheme()"
+                                onclick="commitTheme('${key}')">
+                            <span>${THEMES[key].label}</span>
+                        </button>`;
+                }
+                html += `</div>`;
+            }
+            return html;
+        }
+
+        // Subtle code-rain background for Hacker theme.
+        let codeRainCtx = null;
+        let codeRainCols = [];
+        let codeRainFontSize = 14;
+        let codeRainAnimationId = null;
+        let codeRainLastDraw = 0;
+        const codeRainChars = '0123456789ABCDEFｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ';
+
+        function resizeCodeRain() {
+            const canvas = document.getElementById('codeRain');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            codeRainCtx = ctx;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            codeRainCtx.scale(dpr, dpr);
+            codeRainFontSize = Math.max(12, Math.min(16, Math.floor(window.innerWidth / 120)));
+            codeRainCtx.font = codeRainFontSize + 'px monospace';
+            const colCount = Math.ceil(window.innerWidth / (codeRainFontSize * 1.6));
+            codeRainCols = [];
+            for (let i = 0; i < colCount; i++) {
+                codeRainCols.push(Math.random() * -window.innerHeight);
+            }
+        }
+
+        function drawCodeRain(timestamp) {
+            const canvas = document.getElementById('codeRain');
+            if (!canvas || getCurrentTheme() !== 'hacker') return;
+            if (!codeRainCtx) resizeCodeRain();
+            if (!codeRainCtx) return;
+
+            const dt = timestamp - codeRainLastDraw;
+            if (dt < 50) {
+                codeRainAnimationId = requestAnimationFrame(drawCodeRain);
+                return;
+            }
+            codeRainLastDraw = timestamp;
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            codeRainCtx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+            codeRainCtx.fillRect(0, 0, width, height);
+
+            for (let i = 0; i < codeRainCols.length; i++) {
+                const char = codeRainChars[Math.floor(Math.random() * codeRainChars.length)];
+                const x = i * codeRainFontSize * 1.6;
+                const y = codeRainCols[i];
+                if (y > 0 && y < height + codeRainFontSize) {
+                    const fade = Math.min(1, y / height + 0.3);
+                    codeRainCtx.fillStyle = 'rgba(0, 255, 65, ' + (0.35 + fade * 0.65) + ')';
+                    codeRainCtx.fillText(char, x, y);
+                }
+                codeRainCols[i] += codeRainFontSize * 0.6;
+                if (y > height && Math.random() > 0.975) {
+                    codeRainCols[i] = Math.random() * -codeRainFontSize * 10;
+                }
+            }
+
+            codeRainAnimationId = requestAnimationFrame(drawCodeRain);
+        }
+
+        function startCodeRain() {
+            if (codeRainAnimationId) return;
+            resizeCodeRain();
+            if (!codeRainCtx) return;
+            codeRainLastDraw = performance.now();
+            codeRainAnimationId = requestAnimationFrame(drawCodeRain);
+        }
+
+        function stopCodeRain() {
+            if (codeRainAnimationId) {
+                cancelAnimationFrame(codeRainAnimationId);
+                codeRainAnimationId = null;
+            }
+            const canvas = document.getElementById('codeRain');
+            if (canvas && codeRainCtx) {
+                codeRainCtx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function updateCodeRain() {
+            if (getCurrentTheme() === 'hacker') {
+                startCodeRain();
+            } else {
+                stopCodeRain();
+            }
+        }
+
+        function updateFavicon() {
+            const link = document.getElementById('faviconLink');
+            if (!link) return;
+            const theme = getCurrentTheme();
+            // Every theme except dark/light has a matching
+            // static/favicon-<theme>.svg; dark and light use the plain one.
+            // The synthesized OhMyDebn custom theme has no favicon of its
+            // own (colors vary per palette) - reuse the hand-built
+            // "OhMyDebn" theme's favicon as the closest branding match.
+            if (theme === OHMYDEBN_CUSTOM_THEME) {
+                link.href = 'static/favicon-ohmydebn.svg';
+                return;
+            }
+            link.href = (theme === 'dark' || theme === 'light')
+                ? 'static/favicon.svg'
+                : `static/favicon-${theme}.svg`;
+        }
+
+        window.addEventListener('resize', resizeCodeRain);
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopCodeRain();
+            } else {
+                updateCodeRain();
+            }
+        });
+
+        function toggleMenu() {
+            const dropdown = document.getElementById('appHeaderMenuDropdown');
+            if (!dropdown) return;
+            dropdown.classList.toggle('active');
+        }
+
+        function closeMenu() {
+            const dropdown = document.getElementById('appHeaderMenuDropdown');
+            if (dropdown) dropdown.classList.remove('active');
+        }
+
+        function showThemesModal() {
+            closeOtherMenuModals('themesModal');
+            document.getElementById('themesModalBody').innerHTML = renderThemesModalGrid();
+            updateThemeMenu();
+            // getCurrentTheme() can be the synthesized OHMYDEBN_CUSTOM_THEME
+            // marker (reachable if sync was on, applied a custom palette,
+            // then got turned off - the picker becomes visible again while
+            // that marker is still the applied theme). previewTheme()/
+            // revertTheme() both gate on the theme being a real THEMES key,
+            // so a marker baseline would silently no-op every hover/revert
+            // in this modal - fall back to 'dark' instead.
+            const currentTheme = getCurrentTheme();
+            menuBaseTheme = Object.prototype.hasOwnProperty.call(THEMES, currentTheme) ? currentTheme : 'dark';
+            document.getElementById('syncThemeWithOS').checked = safeStorageGet(localStorage, 'socrates_syncThemeWithOS') === 'true';
+            // Hidden by default - only shown if OHMYDEBN_THEME_DIR is set
+            // server-side AND its theme.name is currently readable, so this never shows a
+            // control that can't do anything (e.g. not launched via
+            // ohmydebn-socrates-run). Never blocks the modal on this check
+            // (mirrors showSettingsModal()'s /api/limits fetch) - defaults
+            // to hidden on any fetch failure too, since "can't confirm it
+            // works" should fail closed, not show a maybe-broken toggle.
+            const syncContainer = document.getElementById('syncThemeWithOSContainer');
+            syncContainer.style.display = 'none';
+            updateThemePickerVisibility();
+            fetch('/api/theme-sync-available').then(r => r.json()).then(data => {
+                syncContainer.style.display = data.available ? 'block' : 'none';
+                updateThemePickerVisibility();
+            }).catch(() => {});
+            const frame = document.getElementById('themePreviewFrame');
+            if (!themePreviewFrameReady) {
+                frame.addEventListener('load', function() {
+                    themePreviewFrameReady = true;
+                    previewTheme(menuBaseTheme);
+                }, { once: true });
+                frame.srcdoc = THEME_PREVIEW_SRCDOC;
+            } else {
+                previewTheme(menuBaseTheme);
+            }
+            document.getElementById('themesModal').classList.add('active');
+        }
+
+        function closeThemesModal() {
+            document.getElementById('themesModal').classList.remove('active');
+            revertTheme();
+            menuBaseTheme = null;
+        }
+
+        // Shared by every modal whose backdrop <div> has onclick="handleModalBackdropClick(event, closeXModal)" -
+        // event.currentTarget is always that backdrop div itself (where the
+        // listener is attached), so a click lands on the backdrop (not a
+        // child element) exactly when target === currentTarget.
+        function handleModalBackdropClick(event, closeFn) {
+            if (event.target === event.currentTarget) closeFn();
+        }
+
+        // Applies immediately on toggle, unlike the numeric Settings
+        // fields which need a "Save" click - the themes modal has no save
+        // step for anything else (theme clicks apply instantly too), so a
+        // deferred-until-Save toggle here would be an inconsistent trap
+        // (easy to check the box, forget to save, and have it silently not
+        // take effect).
+        function handleSyncThemeWithOSChange(checkbox) {
+            safeStorageSet(localStorage, 'socrates_syncThemeWithOS', String(checkbox.checked));
+            if (checkbox.checked) {
+                // Re-enabling sync must reassert OhMyDebn's theme even if it
+                // hasn't changed since sync was last on - otherwise a theme
+                // picked manually while sync was off (now possible again
+                // since the picker is visible when sync is disabled) would
+                // stay applied indefinitely, since pollOhmydebnTheme()'s
+                // dedup check would see the same theme/colors as last time
+                // and treat it as "nothing to do."
+                lastSyncedThemeName = null;
+                lastSyncedColorsFingerprint = null;
+                pollOhmydebnTheme();
+            }
+            updateThemePickerVisibility();
+        }
+
+        // While sync is on, OhMyDebn owns the theme - any tile the user
+        // clicks here would just get stomped by the next poll (at most a
+        // second later), so the picker is hidden rather than left clickable
+        // and quietly ineffective. Gated on syncContainer's own visibility
+        // (not just the checkbox) so a stale "checked" value from
+        // localStorage can't hide the picker on a machine where the sync
+        // feature isn't even available server-side.
+        function updateThemePickerVisibility() {
+            const syncContainer = document.getElementById('syncThemeWithOSContainer');
+            const syncAvailable = syncContainer.style.display !== 'none';
+            const enabled = syncAvailable && document.getElementById('syncThemeWithOS').checked;
+            document.getElementById('themePickerControls').style.display = enabled ? 'none' : '';
+            document.getElementById('themeSyncActiveNotice').style.display = enabled ? 'block' : 'none';
+        }
+
+        // Shared by the opt-in automatic check (silent) and the manual
+        // "Check Now" button (which reports the result via toast) - hits
+        // /api/version-check and flips on the footer badge if an update is
+        // available. Returns the parsed {currentVersion, latestVersion,
+        // updateAvailable} on success, or null on any failure (network
+        // error, non-2xx, bad JSON) - the endpoint itself can't distinguish
+        // "checked, no update" from "the check failed", so neither can this.
+        async function _fetchAndApplyVersionCheck() {
+            try {
+                const resp = await fetch('/api/version-check');
+                if (!resp.ok) return null;
+                const data = await resp.json();
+                const badge = document.getElementById('footerUpdateBadge');
+                if (badge && data.updateAvailable) {
+                    badge.style.display = 'inline';
+                }
+                return data;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // Opt-in only (checked before ever fetching, same as
+        // pollOhmydebnTheme()) - a stale app version doesn't silently
+        // degrade the correctness of the current analysis, so there's no
+        // harm in requiring explicit consent rather than checking
+        // automatically. One-shot per page load (called once from init()),
+        // not polled - the running app version can't change while the tab
+        // is open. (Detection rule freshness is a different story - see
+        // checkForStaleRules() below, which used to be unconditional for
+        // exactly that "silently degrades correctness" reason, until
+        // network-without-consent was judged the worse tradeoff.)
+        async function checkForAppUpdate() {
+            if (safeStorageGet(localStorage, 'socrates_checkForUpdates') !== 'true') return;
+            await _fetchAndApplyVersionCheck();
+        }
+
+        // Manual "Check Now" button in the About modal - bypasses the
+        // opt-in gate (an explicit click IS the consent) and, unlike the
+        // silent automatic check, always reports the result via toast so
+        // clicking the button visibly does something even when there's
+        // nothing new.
+        async function checkForAppUpdateNow() {
+            const data = await _fetchAndApplyVersionCheck();
+            if (!data) {
+                showToast('Could not check for updates - try again later');
+            } else if (data.updateAvailable) {
+                showToast('Update available: v' + data.latestVersion);
+            } else {
+                showToast("You're on the latest version");
+            }
+        }
+
+        function handleCheckForUpdatesChange(checkbox) {
+            safeStorageSet(localStorage, 'socrates_checkForUpdates', String(checkbox.checked));
+            if (checkbox.checked) checkForAppUpdate();
+        }
+
+        function _joinWithAnd(items) {
+            if (items.length <= 2) return items.join(' and ');
+            return items.slice(0, -1).join(', ') + ', and ' + items[items.length - 1];
+        }
+
+        // Maps /api/rules-info's shape ({suricata: {...}, yara: {...},
+        // sigma: {windows: {...}, linux: {...}}}) to the ruleset family
+        // labels that are currently stale, matching the Rules modal's own
+        // three update buttons (Suricata/YARA/Sigma - "update Sigma"
+        // refreshes both its windows and linux rulesets together, so
+        // either being stale counts as "Sigma" is stale here). Computes
+        // staleness itself via isRulesetStale(updated, thresholdHours) -
+        // the same function/threshold the Rules modal's date-color warning
+        // uses - rather than trusting the server's precomputed 'stale'
+        // field, since thresholdHours may be the user's per-browser
+        // override (_resolveStaleThresholdHours()), which the server has
+        // no way to have already applied. A ruleset with no 'updated' at
+        // all (never downloaded, not merely old) is deliberately not
+        // included - that's checkForMissingRules()'s job (unconditional,
+        // fires when every ruleset is null), not this one's. The two stay
+        // mutually exclusive by construction: a ruleset only reaches
+        // isRulesetStale() here once 'updated' is non-null, so they never
+        // compete to show a toast for the same ruleset at the same time.
+        function _staleRulesetLabels(rulesInfo, thresholdHours) {
+            const isStale = (entry) => !!(entry && entry.updated && isRulesetStale(entry.updated, thresholdHours));
+            const stale = [];
+            if (isStale(rulesInfo.suricata)) stale.push('Suricata');
+            if (isStale(rulesInfo.yara)) stale.push('YARA');
+            const sigma = rulesInfo.sigma || {};
+            if (isStale(sigma.windows) || isStale(sigma.linux)) stale.push('Sigma');
+            return stale;
+        }
+
+        // Opt-in only, same mechanics as checkForAppUpdate() - but for a
+        // different reason. Analyzing with stale detection rules DOES
+        // silently degrade the correctness of the results (missed
+        // detections), which used to be the argument for refreshing
+        // YARA/Sigma rules over the network automatically, no consent
+        // asked, whenever a file was analyzed (see setup_yara_rules()/
+        // setup_sigma_rules()'s network_allowed=False call sites in
+        // socrates.py/sigma_analyzer.py, and AGENTS.md). That traded one
+        // problem for a worse one for a security-focused tool: unprompted
+        // outbound connections. This notification is the replacement -
+        // opt-in, and purely a local file-age check (stat'ing rules files
+        // via /api/rules-info, no outbound network access regardless of
+        // the opt-in setting - that setting is for notification-noise
+        // consent, not network consent), fired once per welcome-screen
+        // view (called from showWelcomeUI()) to catch the analyst before
+        // they start an analysis rather than interrupt one already
+        // running. No separate manual "check now" trigger - the Rules
+        // modal already shows the same staleness live via its own
+        // amber-date warning (isRulesetStale()/formatDateSpan()), so a
+        // second, redundant on-demand check added nothing.
+        async function checkForStaleRules() {
+            if (safeStorageGet(localStorage, 'socrates_checkForStaleRules') !== 'true') return;
+            let stale;
+            try {
+                const resp = await fetch('/api/rules-info');
+                if (!resp.ok) return;
+                const info = await resp.json();
+                stale = _staleRulesetLabels(info, _resolveStaleThresholdHours(info.staleThresholdHours));
+            } catch (e) {
+                return;
+            }
+            if (stale.length) {
+                showToast(
+                    _joinWithAnd(stale) + ' rules are stale. Update via the Rules menu before analyzing.',
+                    { sticky: true, actionLabel: 'Open Rules', onAction: showRulesModal }
+                );
+            }
+        }
+
+        function handleCheckForStaleRulesChange(checkbox) {
+            safeStorageSet(localStorage, 'socrates_checkForStaleRules', String(checkbox.checked));
+            if (checkbox.checked) checkForStaleRules();
+        }
+
+        // Applies immediately on change (unlike Settings modal's numeric
+        // fields, which batch behind an explicit Save) - matches the
+        // checkbox right next to it, which also applies on change. An
+        // empty/invalid/out-of-range value clears the override (falls
+        // back to the server's default) rather than clamping to the
+        // nearest boundary, so deleting the number is how a user resets
+        // to default. Re-renders #rulesModalBody immediately from the
+        // cached lastRulesInfo/lastRulesStatus (same pattern as
+        // toggleRuleLog()) so the amber-date warnings above reflect the
+        // new threshold right away, not just on the next 2s poll tick.
+        function handleStaleThresholdDaysChange(input) {
+            const n = parseInt(input.value, 10);
+            if (isNaN(n) || n < 1 || n > 365) {
+                safeStorageRemove(localStorage, 'socrates_staleThresholdDays');
+            } else {
+                safeStorageSet(localStorage, 'socrates_staleThresholdDays', String(n));
+            }
+            reRenderRulesModalFromCache();
+        }
+
+        document.addEventListener('click', function(e) {
+            const menu = document.querySelector('.app-header-menu');
+            if (menu && !menu.contains(e.target)) {
+                closeMenu();
+            }
+        });
+
         const COLORS = {
             EVENT: {
                 alert: '#ff6b6b',
                 anomaly: '#ff9800',
                 dns: '#66bb6a',
+                dnp3: '#26c6da',
                 filealerts: '#e91e63',
                 fileinfo: '#9c27b0',
                 flow: '#bc8cff',
                 ftp: '#00bcd4',
                 http: '#ffa726',
                 log: '#b0b0b0',
+                modbus: '#ab47bc',
+                pgsql: '#ff7043',
+                protocol_decode: '#ff9800',
                 sigmaalert: '#ff6b6b',
                 stats: '#9e9e9e',
                 tls: '#58a6ff',
@@ -41,89 +926,311 @@
                 4: '#66bb6a',
                 default: '#8b949e',
             },
-            FILE_ALERT: {
-                bg: '#e91e6322',
-                text: '#ff8a8a',
+        };
+
+        // Value->color maps for the dot indicator used on categorical table columns
+        // (Protocol, HTTP Method, DNS Type, TLS Version). Falls back to --text-muted
+        // for values not explicitly mapped, so new/unusual values still render sanely.
+        const DOT_COLORS = {
+            // Chosen to avoid the Type column's colors (TLS/Flow/HTTP already
+            // use blue/purple/orange) so the two columns never show identical
+            // dots in the same row - see the widest gaps in Type's hue wheel.
+            PROTO: { TCP: '#a8d94f', UDP: '#4fd9a0', ICMP: '#4f52d9' },
+            HTTP_METHOD: {
+                GET: '#58a6ff', POST: '#66bb6a', PUT: '#ffa726', DELETE: '#ff6b6b',
+                PATCH: '#bc8cff', HEAD: '#8b949e', OPTIONS: '#8b949e', CONNECT: '#8b949e',
+            },
+            DNS_TYPE: {
+                A: '#58a6ff', AAAA: '#58a6ff', CNAME: '#26c6da', MX: '#ffa726',
+                NS: '#bc8cff', TXT: '#66bb6a', PTR: '#ff79c6', SOA: '#ab47bc', SRV: '#00bcd4',
+            },
+            SIGMA_SEVERITY: {
+                critical: 'var(--badge-danger-text)',
+                high: '#ff7043',
+                medium: 'var(--badge-warning-text)',
+                low: '#ffca28',
+                informational: 'var(--accent)',
             },
         };
+
+        function valueDotSpan(color) {
+            return `<span class="value-dot" style="background:${color || 'var(--text-muted)'}"></span>`;
+        }
+
+        function tlsVersionColor(version) {
+            if (!version) return null;
+            if (version.includes('1.3')) return '#66bb6a';
+            if (version.includes('1.2')) return '#58a6ff';
+            if (version.includes('1.1')) return '#ffa726';
+            if (version.includes('1.0')) return '#ff6b6b';
+            if (version.toUpperCase().includes('SSL')) return '#ff6b6b';
+            return null;
+        }
         const CONFIG = {
-            MAX_QUERY_LIMIT: 10000,
-            MAX_TYPE_QUERY_LIMIT: 5000,
+            DEFAULT_QUERY_LIMIT: 75000,
+            DEFAULT_UPLOAD_SIZE_MB: 1000,
             MAX_POLLING_ATTEMPTS: 120,
             POLLING_INTERVAL_MS: 1000,
             TLS_ISSUER_MAX_LENGTH: 30,
+            TLS_SUBJECT_MAX_LENGTH: 40,
+            USER_AGENT_MAX_LENGTH: 50,
             AGGREGATION_TOP_N: 10,
             SEARCH_DEBOUNCE_MS: 300,
             SANKEY_BOTTOM_MARGIN: 60,
+            SANKEY_MAX_NODES_PER_COLUMN: 50,
+            TABLE_PAGE_SIZE: 100,
         };
         const DEFAULT_SAMPLE_URL = 'https://www.malware-traffic-analysis.net/2026/02/03/2026-02-03-GuLoader-for-AgentTesla-style-infection-with-FTP-data-exfil.pcap.zip';
-        const WELCOME_HELP_CONTENT = `
-            <p style="color: #8b949e; font-size: 0.95rem;">
-                💡 Maximum file size is 1000MB.
+        const SAMPLE_LOG_URL = 'https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES/raw/refs/heads/master/Defense%20Evasion/apt10_jjs_sideloading_prochollowing_persist_as_service_sysmon_1_7_8_13.evtx';
+        const SAMPLE_BINARY_URL = 'https://secure.eicar.org/eicar.com';
+
+        // Named constants above (not inline string literals in the sample
+        // cards below) so the tooltip's domain is always derived from the
+        // same URL the click actually fetches, rather than a second,
+        // separately-typed copy that could silently drift from it.
+        function _sampleCardTitle(url) {
+            try {
+                return 'Downloads from ' + new URL(url).hostname;
+            } catch (e) {
+                return '';
+            }
+        }
+        const FILE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+        const REFRESH_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>';
+        const DELETE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+        const FOLDER_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
+        const FOLDER_OPEN_ICON_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="2 13 6 9 10 13"></polyline></svg>';
+        const DOWN_ARROW_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>';
+        const CHECKMARK_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        const X_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+        const LIGHTBULB_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-7 7c0 2.5 1.5 4.5 3 6h8c1.5-1.5 3-3.5 3-6a7 7 0 0 0-7-7z"/></svg>';
+        const SEARCH_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+        const COPY_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        const PLUS_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>';
+        const CALENDAR_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>';
+        const NOTES_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M14 3v4a1 1 0 0 0 1 1h4"></path><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"></path><line x1="9" y1="9" x2="10" y2="9"></line><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>';
+        const EXPAND_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>';
+        const NOTES_MAX_LENGTH = 10000;
+        const ROW_NOTE_MAX_LENGTH = 500; // mirrors config.MAX_ROW_NOTE_LENGTH
+        function getWelcomeHelpContent() { return `
+            <p style="color: var(--text-muted); font-size: 0.95rem;">
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is ${getUserMaxUploadSizeMB().toLocaleString()} MB (adjustable in <a href="#" onclick="event.preventDefault(); showSettingsModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Settings</a>).
             </p>
-            <p style="color: #8b949e; font-size: 0.95rem; margin-top: 15px;">
-                💡 Processing may take a minute or two depending on the size of the file.
+            <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Processing may take a minute or two depending on the size of the file.
             </p>
-            <p style="color: #8b949e; font-size: 0.95rem; margin-top: 15px;">
-                💡 File types supported:
+            <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> File types supported:
             </p>
-            <table style="width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; color: #c9d1d9;">
+            <table style="width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; color: var(--text-primary);">
                 <thead>
-                    <tr style="border-bottom: 1px solid #30363d;">
-                        <th style="text-align: left; padding: 8px 12px; color: #8b949e; font-weight: 600; width: 18%;">File Type</th>
-                        <th style="text-align: left; padding: 8px 12px; color: #8b949e; font-weight: 600; width: 40%;">File Extensions</th>
-                        <th style="text-align: left; padding: 8px 12px; color: #8b949e; font-weight: 600; width: 18%;">Engine</th>
-                        <th style="text-align: left; padding: 8px 12px; color: #8b949e; font-weight: 600; width: 24%;">Ruleset</th>
+                    <tr style="border-bottom: 1px solid var(--border-color);">
+                        <th style="text-align: left; padding: 8px 12px; color: var(--text-muted); font-weight: 600; width: 18%;">File Type</th>
+                        <th style="text-align: left; padding: 8px 12px; color: var(--text-muted); font-weight: 600; width: 40%;">File Extensions</th>
+                        <th style="text-align: left; padding: 8px 12px; color: var(--text-muted); font-weight: 600; width: 18%;">Engine</th>
+                        <th style="text-align: left; padding: 8px 12px; color: var(--text-muted); font-weight: 600; width: 24%;">Ruleset</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr style="border-bottom: 1px solid #21262d; background: rgba(255, 107, 107, 0.05);">
-                        <td style="padding: 8px 12px;"><strong style="color: #ff6b6b;">Packet Capture</strong></td>
+                    <tr style="border-bottom: 1px solid var(--bg-tertiary);">
+                        <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Packet Capture</strong></td>
                         <td style="padding: 8px 12px;">.pcap, .pcapng, .cap, .trace</td>
                         <td style="padding: 8px 12px;">Suricata</td>
-                        <td style="padding: 8px 12px;">Emerging Threats Open</td>
+                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal(true);" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Multiple Rulesets</a></td>
                     </tr>
-                    <tr style="border-bottom: 1px solid #21262d; background: rgba(255, 167, 38, 0.05);">
-                        <td style="padding: 8px 12px;"><strong style="color: #ffa726;">Logs</strong></td>
+                    <tr style="border-bottom: 1px solid var(--bg-tertiary);">
+                        <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Logs</strong></td>
                         <td style="padding: 8px 12px;">.evtx, .json, .jsonl, .csv, .xml, .log</td>
                         <td style="padding: 8px 12px;">Zircolite</td>
-                        <td style="padding: 8px 12px;">SigmaHQ</td>
+                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">SigmaHQ</a></td>
                     </tr>
-                    <tr style="background: rgba(255, 202, 40, 0.05);">
-                        <td style="padding: 8px 12px;"><strong style="color: #ffca28;">Binary / Other</strong></td>
+                    <tr>
+                        <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Binary / Other</strong></td>
                         <td style="padding: 8px 12px;">.exe, .dll, .elf, .pdf, etc.</td>
                         <td style="padding: 8px 12px;">YARA</td>
-                        <td style="padding: 8px 12px;">YARA Forge</td>
+                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">YARA Forge</a></td>
                     </tr>
                 </tbody>
             </table>
-            <p style="color: #8b949e; font-size: 0.85rem; margin-top: 8px; margin-bottom: 0;">
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 8px; margin-bottom: 0;">
                 Any of the above file types can be uploaded inside a .zip archive to automatically extract and analyze the first supported file found.
             </p>
+            <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Want more fun? Try one of our fun <a href="#" onclick="event.preventDefault(); showThemesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">themes</a>!
+            </p>
+        `; }
+        // Full feature comparison, opened via showSecurityOnionModal() -
+        // the footer's own teaser (#footerCenterTeaser, set in
+        // showWelcomeUI()) only links to this rather than showing it
+        // directly, so it doesn't push a long table onto every visit to
+        // the welcome screen.
+        const SECURITY_ONION_COMPARISON_HTML = `
+                <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 10px; text-align: center;">SO-CRATES provides basic analysis of imported files. Need more advanced functionality?<br>Take a look at the full <a href="https://securityonion.net/software" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion</a> platform available in a free Community Edition!<br>If you need enterprise features, consider upgrading to <a href="https://securityonion.com/pro" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 600;">Security Onion Pro</a>!</div>
+                <table class="feature-table" style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <th style="text-align: left; padding: 10px; color: var(--text-muted); font-size: 0.8rem; text-transform: none; cursor: default;">Feature</th>
+                            <th style="text-align: center; padding: 10px; color: var(--text-bright); font-size: 0.8rem; text-transform: none; cursor: default;">SO-CRATES</th>
+                            <th style="text-align: center; padding: 10px; color: var(--text-bright); font-size: 0.8rem; text-transform: none; cursor: default;">Security Onion</th>
+                            <th style="text-align: center; padding: 10px; color: var(--text-bright); font-size: 0.8rem; text-transform: none; cursor: default;">Security Onion Pro</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Import Files</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Investigate Alerts and Metadata</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Airgap / Offline Deployment</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Analyze Live Traffic</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Production Deployments</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Distributed Deployments</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Endpoint Visibility</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Log Management</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Case Management</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Guided Analysis</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Onion AI Assistant</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Open ID Connect (OIDC)</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">FIPS</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">STIG Compliance for the OS</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Connect API</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">External Notifications</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">Manager of Managers (MoM)</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 10px; color: var(--text-primary); font-size: 0.85rem;">MCP Server</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--bg-hover-light);">-</td>
+                            <td style="text-align: center; padding: 8px 10px; color: var(--badge-success-text);">${CHECKMARK_ICON_SVG}</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div style="margin-top: 15px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; font-size: 0.85rem;">
+                    <a href="https://securityonion.net/software" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">Security Onion</a>
+                    <span style="color: var(--bg-hover);">|</span>
+                    <a href="http://securityonion.net/docs/about" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">Security Onion Documentation</a>
+                    <span style="color: var(--bg-hover);">|</span>
+                    <a href="https://securityonion.com/pro" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">Security Onion Pro</a>
+                    <span style="color: var(--bg-hover);">|</span>
+                    <a href="http://securityonion.net/docs/security-onion-pro" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">Security Onion Pro Documentation</a>
+                </div>
         `;
         let lastSampleUrl = DEFAULT_SAMPLE_URL;
         function yaraTagBadgeHtml(tag) {
             const t = (tag || '').toUpperCase();
-            let bg, text;
+            let color;
             if (['RANSOMWARE','TROJAN','BACKDOOR','MALWARE','BOTNET'].includes(t)) {
-                bg = '#ff6b6b22'; text = '#ff6b6b';
+                color = 'var(--tag-red-text)';
             } else if (['STORMBAMBOO','CHARMINGKITTEN','TURLA','LAZARUS','PLATINUM','HATMAN','CHARMINGCYPRESS','INKYPINE','INKYSQUID','EVILBAMBOO','TRANSPARENTJASMINE','UTA0040','WHEELEDASH'].includes(t)) {
-                bg = '#ba68c822'; text = '#ba68c8';
+                color = 'var(--tag-purple-text)';
             } else if (t.startsWith('CVE_')) {
-                bg = '#ffa72622'; text = '#ffa726';
+                color = 'var(--tag-orange-text)';
             } else if (['FILE','MEMORY','SCRIPT','LOG'].includes(t)) {
-                bg = '#42a5f522'; text = '#42a5f5';
+                color = 'var(--tag-blue-text)';
             } else if (['INFO','UTILITY','HIGHVOL'].includes(t)) {
-                bg = '#9e9e9e22'; text = '#9e9e9e';
+                color = 'var(--tag-gray-text)';
             } else {
-                bg = '#66bb6a22'; text = '#66bb6a';
+                color = 'var(--tag-green-text)';
             }
-            return `<span class="badge" style="background:${bg};color:${text};margin-right:4px;">${escapeHtml(tag)}</span>`;
+            return `<span style="margin-right:12px;white-space:nowrap;display:inline-block;">${valueDotSpan(color)}${escapeHtml(tag)}</span>`;
         }
 
         function buildStreamUrl(endpoint, src, sport, dst, dport) {
             const md5Param = currentMd5 ? `&md5=${encodeURIComponent(currentMd5)}` : '';
             return `/api/${endpoint}?src=${encodeURIComponent(src)}&sport=${encodeURIComponent(sport)}&dst=${encodeURIComponent(dst)}&dport=${encodeURIComponent(dport)}${md5Param}`;
+        }
+
+        // Serialized currentSearch terms for API query strings ('&q=a&q=b'), or ''.
+        function buildSearchQuery() {
+            return currentSearch.length > 0 ? currentSearch.map(t => '&q=' + encodeURIComponent(t)).join('') : '';
+        }
+
+        // Classify a filename as 'pcap', 'log', or 'binary' by extension.
+        function detectFileType(name) {
+            if (name && /\.(pcap|pcapng|cap|trace)$/i.test(name)) return 'pcap';
+            if (name && /\.(evtx|json|jsonl|csv|xml|log)$/i.test(name)) return 'log';
+            return 'binary';
         }
 
         function showTab(sectionId, el) {
@@ -139,10 +1246,10 @@
         let tabDataCache = {};
         
         async function loadTabData(eventType, activeCard) {
+            resetPagination();
             const sectionId = `section-${eventType}`;
             const sectionEl = document.getElementById(sectionId);
-            const qParam = currentSearch.length > 0 ? currentSearch.map(t => '&q=' + encodeURIComponent(t)).join('') : '';
-            
+
             if (activeCard) {
                 activeCard.classList.add('tab-active');
             } else {
@@ -158,22 +1265,31 @@
             }
             
             if (eventType === 'all') {
-                if (allEvents.length === 0) {
-                    try {
-                        const resp = await fetch(`/api/events?md5=${currentMd5}&limit=${CONFIG.MAX_TYPE_QUERY_LIMIT}${qParam}&t=${Date.now()}`);
-                        allEvents = await resp.json();
-                    } catch(e) {
-                        console.error('Failed to load all events:', e);
-                    }
+                if (canUseScalableFetch()) {
+                    if (needsFullBatch('all')) await ensureCappedBatch('all');
+                    if (sectionEl) await buildAllEvents();
+                    if (sectionEl && advancedMode) await buildAggregationsSectionAll();
+                    updateFilterBarVisibility();
+                    await updateSankeyDiagram();
+                    return;
+                }
+                try {
+                    await ensureCappedBatch('all');
+                } catch(e) {
+                    console.error('Failed to load all events:', e);
                 }
                 if (sectionEl) buildAllEvents();
-                if (sectionEl && advancedMode) buildAggregationsSectionAll();
+                if (sectionEl && advancedMode) await buildAggregationsSectionAll();
                 updateFilterBarVisibility();
-                updateSankeyDiagram();
+                await updateSankeyDiagram();
                 return;
             }
 
             if (isLogAnalysisMode && eventType === 'log') {
+                // Lazily hydrate tabDataCache['log'] on first visit to this
+                // tab - no-op if already cached (same helper every other
+                // eventType uses).
+                await ensureCappedBatch('log');
                 const events = tabDataCache['log'] || [];
                 const filtered = getFilteredLogEvents(events);
                 if (sectionEl) buildLogSectionContent(sectionId, filtered);
@@ -183,16 +1299,19 @@
             }
 
             if (isLogAnalysisMode && eventType === 'sigmaalert') {
-                let alerts = tabDataCache['sigmaalert'] || [];
-                if (!tabDataCache['sigmaalert']) {
-                    try {
-                        const resp = await fetch(`/api/sigma-alerts?md5=${currentMd5}&limit=5000${qParam}&t=${Date.now()}`);
-                        alerts = await resp.json();
-                        tabDataCache['sigmaalert'] = alerts;
-                    } catch(e) {
-                        console.error('Failed to load sigma alerts:', e);
-                    }
+                if (canUseScalableFetch()) {
+                    if (advancedMode) await ensureCappedBatch('sigmaalert');
+                    if (sectionEl) await buildSigmaAlertSectionContent(sectionId, null);
+                    if (advancedMode) buildSigmaAlertAggregations(getFilteredSigmaAlerts(tabDataCache['sigmaalert'] || []), sectionId);
+                    updateFilterBarVisibility();
+                    return;
                 }
+                try {
+                    await ensureCappedBatch('sigmaalert');
+                } catch(e) {
+                    console.error('Failed to load sigma alerts:', e);
+                }
+                const alerts = tabDataCache['sigmaalert'] || [];
                 const filtered = getFilteredSigmaAlerts(alerts);
                 if (sectionEl) buildSigmaAlertSectionContent(sectionId, filtered);
                 if (advancedMode) buildSigmaAlertAggregations(filtered, sectionId);
@@ -200,71 +1319,466 @@
                 return;
             }
 
+            if (canUseScalableFetch()) {
+                if (needsFullBatch(eventType)) await ensureCappedBatch(eventType);
+                if (sectionEl) await buildSection(eventType, tabDataCache[eventType] || []);
+                if (advancedMode) await buildAggregationsSection(eventType, getFilteredEvents(sectionId, tabDataCache[eventType] || [], eventType));
+                updateFilterBarVisibility();
+                await updateSankeyDiagram();
+                return;
+            }
+
             if (tabDataCache[eventType]) {
-                sections[eventType] = tabDataCache[eventType];
                 const filtered = getFilteredEvents(sectionId, tabDataCache[eventType], eventType);
                 if (advancedMode && sectionEl) {
-                    buildAggregationsSection(eventType, filtered);
+                    await buildAggregationsSection(eventType, filtered);
                     buildSection(eventType, tabDataCache[eventType]);
                 } else if (sectionEl) {
                     buildSection(eventType, tabDataCache[eventType]);
                 }
                 updateFilterBarVisibility();
-                updateSankeyDiagram();
+                await updateSankeyDiagram();
                 return;
             }
             
             try {
-                const resp = await fetch(`/api/events?md5=${currentMd5}&type=${eventType}&limit=${CONFIG.MAX_QUERY_LIMIT}${qParam}&t=${Date.now()}`);
-                const events = await resp.json();
-                tabDataCache[eventType] = events;
-                
-                sections[eventType] = events;
+                await ensureCappedBatch(eventType);
+                const events = tabDataCache[eventType] || [];
+
                 const filtered = getFilteredEvents(sectionId, events, eventType);
                 if (advancedMode) {
                     if (sectionEl) {
-                        buildAggregationsSection(eventType, filtered);
+                        await buildAggregationsSection(eventType, filtered);
                     }
                 }
                 if (sectionEl) buildSection(eventType, events);
                 updateFilterBarVisibility();
-                updateSankeyDiagram();
+                await updateSankeyDiagram();
             } catch(e) {
                 console.error('Failed to load tab data:', e);
                 if (sectionEl) {
-                    sectionEl.innerHTML = `<div class="section-header">${typeLabels[eventType] || eventType.toUpperCase()}</div><div class="loading">Error loading data</div>`;
+                    sectionEl.innerHTML = `<div class="section-header">${escapeHtml(typeLabels[eventType] || eventType.toUpperCase())}</div><div class="loading">Error loading data</div>`;
                 }
             }
         }
         
-        function toggleRow(tr) {
+        // Row-cell pivot menu entry point, called first by toggleRow/
+        // toggleLogRow/toggleSigmaRow so a click on a pivotable cell opens
+        // Include/Exclude/Only instead of expanding the row. Returns true
+        // if it opened the menu (caller must return without also
+        // expanding), false if the click should fall through to the
+        // normal expand/collapse behavior - clicked outside any <td>,
+        // clicked a <td> from a different row (e.g. a bubbled click from
+        // the detail-row below), or this cell has no pivot data (the
+        // excluded Time column, or an empty value - see
+        // pivotDataAttrsHtml). The note-icon <td> never reaches here at
+        // all: its own onclick already calls stopPropagation (see
+        // rowNoteIconHtml). Passes tr through to showPivotMenu so its
+        // "Expand Row" entry (see there) has a way back to the
+        // expand/collapse behavior this click just bypassed.
+        function handleRowCellClick(tr, event) {
+            if (!event) return false;
+            const td = event.target.closest('td');
+            if (!td || td.parentElement !== tr) return false;
+            let pairs;
+            try {
+                pairs = JSON.parse(decodeURIComponent(tr.dataset.pivot || '[]'));
+            } catch (e) {
+                return false;
+            }
+            const cellIndex = Array.from(tr.children).indexOf(td);
+            const pair = pairs[cellIndex];
+            if (!pair) return false;
+            // Must not reach the document-level outside-click listener
+            // showPivotMenu()'s menu relies on to close itself - that
+            // listener would otherwise see this same click as "outside"
+            // the menu that was just created (the menu isn't a DOM
+            // ancestor of the row/cell that was clicked) and immediately
+            // remove it again before the user ever sees it.
+            event.stopPropagation();
+            showPivotMenu(event, 'section-' + tr.dataset.eventType, pair[0], pair[1], false, tr);
+            return true;
+        }
+
+        // Tracks the single currently-open pivot menu (at most one at a
+        // time, same as every other dropdown/modal in this app) so the
+        // outside-click/Escape listeners below know what to close.
+        let activePivotMenuEl = null;
+
+        function closePivotMenu() {
+            if (activePivotMenuEl) {
+                activePivotMenuEl.remove();
+                activePivotMenuEl = null;
+            }
+        }
+
+        // Same always-registered-once, contains()-check pattern as the
+        // gear menu's own outside-click listener above - the pivot menu is
+        // append/remove'd from document.body per open rather than
+        // toggling a persistent element's 'active' class, since unlike the
+        // gear menu it has no fixed home in the DOM (it can open from any
+        // row, in any table).
+        document.addEventListener('click', function(e) {
+            if (activePivotMenuEl && !activePivotMenuEl.contains(e.target)) {
+                closePivotMenu();
+            }
+        });
+
+        // Arrow function, not a plain function(e) expression - this file's
+        // hacker-mode easter egg listener elsewhere is located by tests via
+        // a regex matching addEventListener('keydown', ...) followed by a
+        // plain function(e) expression, which would otherwise wrongly
+        // match whichever of the two listeners appears first in the file.
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && activePivotMenuEl) closePivotMenu();
+        });
+
+        // The columns list a detail-panel field's label is checked against
+        // (see handleDetailValueClick) to decide whether it gets the full
+        // Include/Exclude/Only/Hunt menu or the trimmed Hunt-only one -
+        // mirrors pivotDataAttrsHtml's own per-eventType column source, but
+        // as a standalone lookup (a detail value has no ready-made columns
+        // array the way a table row's own render call does).
+        function detailColumnsForEventType(eventType) {
+            if (!eventType) return [];
+            if (eventType === 'all') return ALL_EVENTS_COLUMNS;
+            if (eventType === 'binary') return BINARY_YARA_COLUMNS;
+            return getColumnsForType(eventType);
+        }
+
+        // Delegated (not a per-value onclick) since htmlRowText returns a
+        // plain HTML string, not a DOM node addEventListener could attach
+        // to directly - same reasoning as showPivotMenu's own closures
+        // over onclick-string embedding. Detail-panel fields have no
+        // ready-made column context of their own (unlike a table row,
+        // which already carries data-event-type - see pivotDataAttrsHtml),
+        // so this resolves it from the detail-row's own preceding
+        // collapsed row instead: every detail-row is rendered as the very
+        // next sibling of the row it expands from (see e.g.
+        // buildRowForEvent's own row + detail-row pairing).
+        document.addEventListener('click', function(event) {
+            const pivotEl = event.target.closest('[data-detail-pivot]');
+            if (!pivotEl) return;
+            let pair;
+            try {
+                pair = JSON.parse(decodeURIComponent(pivotEl.dataset.detailPivot));
+            } catch (e) {
+                return;
+            }
+            const [label, value] = pair;
+            const detailRow = pivotEl.closest('tr.detail-row');
+            const collapsedRow = detailRow ? detailRow.previousElementSibling : null;
+            const eventType = collapsedRow ? collapsedRow.dataset.eventType : null;
+            const columns = detailColumnsForEventType(eventType);
+            const trimmed = !eventType || !columns.includes(label);
+            event.stopPropagation();
+            showPivotMenu(event, eventType ? 'section-' + eventType : null, label, value, trimmed);
+        });
+
+        // Aggregation-table rows (see _renderAggTablesHtml) always carry a
+        // real column - they're literally grouped by it - so this always
+        // opens the full menu, unlike the detail-panel listener above.
+        // Delegated for the same reason: _renderAggTablesHtml returns a
+        // plain HTML string, and val is arbitrary field content.
+        document.addEventListener('click', function(event) {
+            const row = event.target.closest('tr.agg-row[data-agg-pivot]');
+            if (!row) return;
+            let triple;
+            try {
+                triple = JSON.parse(decodeURIComponent(row.dataset.aggPivot));
+            } catch (e) {
+                return;
+            }
+            const [sectionId, col, value] = triple;
+            event.stopPropagation();
+            showPivotMenu(event, sectionId, col, value, false);
+        });
+
+        // Include/Exclude/Only for one row-cell's value (see
+        // handleRowCellClick). Built via direct DOM APIs and
+        // addEventListener closures over the real col/value, not an
+        // onclick="..." attribute string - col/value can be arbitrary
+        // attacker-influenced content (a log field, an HTTP header, ...),
+        // and closures sidestep the whole class of onclick-string escaping
+        // bugs (JSON.stringify-vs-double-quotes, unescaped single quotes)
+        // this codebase otherwise has to guard against explicitly for
+        // every dynamic onclick elsewhere - see TestFilterOnclickQuoting.
+        // Only the visible label text goes through escapeHtml, same as
+        // any other rendered value.
+        // trimmed: true omits Include/Exclude/Only - for a value that has
+        // no real filterable column behind it (most detail-panel fields,
+        // see handleDetailValueClick), Include/Exclude/Only would have
+        // nothing valid to filter on. Hunt/Copy/the lookup sites need no
+        // column at all (just the raw value), so they're offered either way.
+        // expandRowEl: the <tr> the click originated from (see
+        // handleRowCellClick), or omitted for the aggregation-table and
+        // detail-panel-value call sites - neither has a row of its own to
+        // expand (an aggregation row has no detail-row sibling at all, and
+        // a detail-panel value's row is already expanded, since that's the
+        // only way its panel could be visible to click in). "Expand Row"
+        // is only offered when expandRowEl actually has a collapsible
+        // detail-row sibling.
+        function showPivotMenu(event, sectionId, col, value, trimmed, expandRowEl) {
+            closePivotMenu();
+            const menu = document.createElement('div');
+            menu.className = 'pivot-menu';
+            menu.style.left = event.clientX + 'px';
+            menu.style.top = event.clientY + 'px';
+            const fullLabel = `${col}: ${value}`;
+            const valueLabel = String(value).length > 60 ? String(value).slice(0, 60) + '…' : String(value);
+            const expandDetailRow = expandRowEl ? expandRowEl.nextElementSibling : null;
+            const canExpandRow = !!(expandDetailRow && expandDetailRow.classList.contains('detail-row'));
+            // toggleDetailRow (wired below) always toggles either
+            // direction - the label/tooltip just need to describe whatever
+            // it's about to do next, based on the row's state right now.
+            const rowIsExpanded = canExpandRow && expandDetailRow.classList.contains('visible');
+            const expandRowLabel = rowIsExpanded ? 'Collapse Row' : 'Expand Row';
+            const expandRowTitle = rowIsExpanded ? 'Hide full details for this row' : 'View full details for this row';
+            const expandRowHtml = canExpandRow
+                ? `<button type="button" class="pivot-menu-item" data-pivot-action="expand-row" title="${escapeHtml(expandRowTitle)}"><span class="pivot-menu-icon">${EXPAND_ICON_SVG}</span>${expandRowLabel}</button><div class="pivot-menu-divider"></div>`
+                : '';
+            // Only the magnifying glass icon is color-coded (via its own
+            // wrapping span, not the button itself) - the button's own text
+            // stays the normal menu-item color. Icon colors reuse the same
+            // tag-red/green/blue trio already used for YARA tag badges
+            // elsewhere, rather than adding new theme variables, and are
+            // defined in every theme already so Include/Exclude/Only stay
+            // distinguishable regardless of which theme is active. Hunt
+            // gets no special tint - it's a different kind of action
+            // (whole-analysis free-text search, not a field-scoped filter)
+            // and Include/Exclude/Only's colors are deliberately not
+            // implied to apply to it.
+            // Lookup-site buttons are built from PIVOT_LOOKUP_SITES
+            // (built-in) concatenated with getCustomLookupSites()
+            // (user-added, see the Settings modal's own section) rather
+            // than hand-written one per site, so adding another site is a
+            // one-line data change, not another copy-pasted button +
+            // listener pair. The combined array is also what the click
+            // handler below indexes into, so a site's position here and
+            // its data-pivot-lookup-index always agree.
+            const allLookupSites = PIVOT_LOOKUP_SITES.concat(getCustomLookupSites());
+            const lookupSitesHtml = allLookupSites.map((site, i) =>
+                `<button type="button" class="pivot-menu-item" data-pivot-lookup-index="${i}"><span class="pivot-menu-icon">${SEARCH_ICON_SVG}</span>${escapeHtml(site.label)}</button>`
+            ).join('');
+            // Deliberately says "search" for all four, not "filter" for
+            // Include/Exclude/Only and "search" only for Hunt - the two
+            // mechanisms (currentFilters vs currentSearch) are an
+            // implementation detail an analyst reading a tooltip has no
+            // reason to care about; both narrow down what's shown, which
+            // is the only thing worth explaining here.
+            const includeTitle = `Include ${col}: ${value} in current search`;
+            const excludeTitle = `Exclude ${col}: ${value} from current search results`;
+            const onlyTitle = `Start a new search for ${col}: ${value}`;
+            const huntTitle = `Start a new search for ${value} across all fields`;
+            const filterButtonsHtml = trimmed ? '' : `
+                <button type="button" class="pivot-menu-item" data-pivot-action="include" title="${escapeHtml(includeTitle)}"><span class="pivot-menu-icon pivot-menu-icon-include">${SEARCH_ICON_SVG}</span>Include</button>
+                <button type="button" class="pivot-menu-item" data-pivot-action="exclude" title="${escapeHtml(excludeTitle)}"><span class="pivot-menu-icon pivot-menu-icon-exclude">${SEARCH_ICON_SVG}</span>Exclude</button>
+                <button type="button" class="pivot-menu-item" data-pivot-action="only" title="${escapeHtml(onlyTitle)}"><span class="pivot-menu-icon pivot-menu-icon-only">${SEARCH_ICON_SVG}</span>Only</button>`;
+            menu.innerHTML = `
+                <div class="pivot-menu-label" title="${escapeHtml(fullLabel)}">${escapeHtml(col)}: ${escapeHtml(valueLabel)}</div>
+                ${expandRowHtml}
+                ${filterButtonsHtml}
+                <button type="button" class="pivot-menu-item" data-pivot-action="hunt" title="${escapeHtml(huntTitle)}"><span class="pivot-menu-icon">${SEARCH_ICON_SVG}</span>Hunt</button>
+                <div class="pivot-menu-divider"></div>
+                <button type="button" class="pivot-menu-item" data-pivot-action="copy"><span class="pivot-menu-icon">${COPY_ICON_SVG}</span>Copy to Clipboard</button>
+                ${lookupSitesHtml}
+                <button type="button" class="pivot-menu-item" data-pivot-action="add-custom-lookup"><span class="pivot-menu-icon">${PLUS_ICON_SVG}</span>Add Custom Lookup...</button>
+            `;
+            if (canExpandRow) {
+                menu.querySelector('[data-pivot-action="expand-row"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    toggleDetailRow(expandRowEl);
+                });
+            }
+            if (!trimmed) {
+                menu.querySelector('[data-pivot-action="include"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    includeFilterValue(sectionId, col, value);
+                });
+                menu.querySelector('[data-pivot-action="exclude"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    excludeFilterValue(sectionId, col, value);
+                });
+                menu.querySelector('[data-pivot-action="only"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    onlyFilterValue(sectionId, col, value);
+                });
+            }
+            menu.querySelector('[data-pivot-action="hunt"]').addEventListener('click', function() {
+                closePivotMenu();
+                huntFilterValue(value);
+            });
+            menu.querySelector('[data-pivot-action="copy"]').addEventListener('click', function() {
+                closePivotMenu();
+                copyValueToClipboard(value);
+            });
+            menu.querySelectorAll('[data-pivot-lookup-index]').forEach(function(btn) {
+                const site = allLookupSites[Number(btn.dataset.pivotLookupIndex)];
+                btn.addEventListener('click', function() {
+                    closePivotMenu();
+                    // PIVOT_LOOKUP_SITES' own entries carry a function
+                    // (CyberChef's own base64 encoding, for one, can't be
+                    // expressed as a plain string template); custom sites
+                    // from getCustomLookupSites() are plain {value}-template
+                    // strings instead (see applyCustomLookupUrlTemplate's
+                    // own comment for why).
+                    const url = typeof site.urlTemplate === 'function'
+                        ? site.urlTemplate(value)
+                        : applyCustomLookupUrlTemplate(site.urlTemplate, value);
+                    window.open(url, '_blank', 'noopener,noreferrer');
+                });
+            });
+            menu.querySelector('[data-pivot-action="add-custom-lookup"]').addEventListener('click', function() {
+                closePivotMenu();
+                showSettingsModal(true);
+            });
+            document.body.appendChild(menu);
+            activePivotMenuEl = menu;
+
+            // getBoundingClientRect() needs the menu already in the DOM to
+            // measure its real rendered size - re-clamped here rather than
+            // guessed up front, so it can't render off the right/bottom
+            // edge of the viewport regardless of label length.
+            const rect = menu.getBoundingClientRect();
+            let left = event.clientX;
+            let top = event.clientY;
+            if (left + rect.width > window.innerWidth) left = Math.max(0, window.innerWidth - rect.width - 8);
+            if (top + rect.height > window.innerHeight) top = Math.max(0, window.innerHeight - rect.height - 8);
+            menu.style.left = left + 'px';
+            menu.style.top = top + 'px';
+        }
+
+        function toggleRow(tr, event) {
+            if (handleRowCellClick(tr, event)) return;
+            toggleDetailRow(tr);
+        }
+
+        // Extracted from toggleRow so the pivot menu's "Expand Row" entry
+        // (see showPivotMenu) can trigger the exact same expand/collapse
+        // behavior directly, without going back through handleRowCellClick
+        // - which would just reopen the pivot menu instead of expanding.
+        function toggleDetailRow(tr) {
             const detailRow = tr.nextElementSibling;
             if (detailRow && detailRow.classList.contains('detail-row')) {
                 const wasHidden = !detailRow.classList.contains('visible');
                 tr.classList.toggle('expanded-row');
                 detailRow.classList.toggle('visible');
-                
+
                 if (wasHidden) {
-                    const asciiDiv = detailRow.querySelector('[id^="ascii-"]');
+                    const asciiDiv = detailRow.querySelector('.stream-payload');
                     if (asciiDiv) {
-                        const id = asciiDiv.id;
-                        const parts = id.replace('ascii-', '').split('-');
-                        if (parts.length >= 4) {
-                            const srcIp = parts[0];
-                            const srcPort = parts[1];
-                            const dstIp = parts[2];
-                            const dstPort = parts[3];
-                            const pre = asciiDiv.querySelector('.ascii-transcript');
-                            if (pre && !pre.innerHTML) {
-                                pre.innerHTML = '<div style="color:#8b949e;padding:10px 0;display:flex;align-items:center;gap:8px;"><span class="ascii-loading"></span>Loading ASCII transcript...</div>';
-                                loadAsciiTranscript(srcIp, srcPort, dstIp, dstPort, pre);
-                            }
+                        const srcIp = asciiDiv.dataset.srcIp;
+                        const srcPort = asciiDiv.dataset.srcPort;
+                        const dstIp = asciiDiv.dataset.dstIp;
+                        const dstPort = asciiDiv.dataset.dstPort;
+                        const pre = asciiDiv.querySelector('.ascii-transcript');
+                        if (pre && !pre.innerHTML) {
+                            pre.innerHTML = '<div style="color:var(--text-muted);padding:10px 0;display:flex;align-items:center;gap:8px;"><span class="ascii-loading"></span>Loading ASCII transcript...</div>';
+                            loadAsciiTranscript(srcIp, srcPort, dstIp, dstPort, pre);
                         }
                     }
+                    loadPlaybookSectionIfPresent(detailRow);
+                    loadAiSummaryPlaceholders(detailRow);
                 }
             }
         }
-        
+
+        // playbook is {name, description, questions: [{question, context}]}.
+        // Reuses htmlSection/htmlRowText/htmlRow so the section fits the
+        // same label/value grid every other detail-panel section uses -
+        // Name/Description go through htmlRowText so they're pivot-menu
+        // clickable like any other detail value, same as everywhere else.
+        function renderPlaybookSectionHtml(playbook) {
+            let html = htmlSection('Playbook', 'var(--accent)');
+            html += htmlRowText('Name', playbook.name);
+            html += htmlRowText('Description', playbook.description);
+            const questionsHtml = (playbook.questions || []).map((q, i) => {
+                const contextHtml = q.context ? `<div class="playbook-question-context">${escapeHtml(q.context)}</div>` : '';
+                return htmlRow(`Q${i + 1}`, `<div class="playbook-question-text">${escapeHtml(q.question || '')}</div>${contextHtml}`);
+            }).join('');
+            // Full-width, not a label/value row - there's no natural short
+            // label for it. Doubles as the collapse/expand toggle for the
+            // questions below (see togglePlaybookQuestions) - Name/
+            // Description always stay visible either way, so an advanced
+            // user can collapse just the (sometimes long) questions list to
+            // reclaim vertical space between Alert Details/Rule and the
+            // Payload section further down, without losing the section
+            // entirely. Expanded by default - this is a "shrink it back
+            // down" control, not a "click to reveal" gate.
+            html += `<div class="playbook-questions-toggle" style="grid-column: 1 / -1; color: var(--text-muted); margin-top: 4px; cursor: pointer; user-select: none;" onclick="togglePlaybookQuestions(this)">▾ The following questions might help guide your investigation:</div>`;
+            html += `<div class="playbook-questions" style="display: contents;">${questionsHtml}</div>`;
+            return html;
+        }
+
+        // Purely local DOM state via the toggle element's own next sibling,
+        // not a global flag like toggleDiagram()/toggleAggregations() use -
+        // multiple rows can each have their own expanded Playbook section
+        // open at once, unlike the single-instance Sankey/Aggregations
+        // panels those two toggle. display:'contents' (not '') so the
+        // questions keep participating in the section's own grid layout
+        // when shown, matching how they were laid out before the toggle
+        // existed.
+        function togglePlaybookQuestions(toggleEl) {
+            const content = toggleEl.nextElementSibling;
+            const collapsed = content.style.display === 'none';
+            content.style.display = collapsed ? 'contents' : 'none';
+            toggleEl.textContent = (collapsed ? '▾' : '▸') + ' The following questions might help guide your investigation:';
+        }
+
+        // Fetches /api/playbook using the placeholder's own
+        // data-detection-type/data-rule-id (see renderAlertDetails/
+        // formatSigmaAlertDetail) and, if a playbook comes back, inserts a
+        // "Playbook" section directly before the placeholder - which
+        // itself stays display:none forever, so a null response (e.g. a
+        // manual install with nothing baked in) leaves no trace at all.
+        // Called from toggleDetailRow/toggleSigmaRow's own wasHidden
+        // branch, mirroring loadAsciiTranscript's lazy-on-first-expand
+        // shape. data-attempted guards against re-fetching on every
+        // collapse/re-expand - once tried (successfully or not), never
+        // tried again for this row.
+        async function loadPlaybookSectionIfPresent(detailRow) {
+            const placeholder = detailRow.querySelector('.playbook-section-placeholder');
+            if (!placeholder || placeholder.dataset.attempted) return;
+            placeholder.dataset.attempted = 'true';
+            const detectionType = placeholder.dataset.detectionType;
+            const ruleId = placeholder.dataset.ruleId;
+            try {
+                const resp = await fetch(`/api/playbook?type=${encodeURIComponent(detectionType)}&id=${encodeURIComponent(ruleId)}`);
+                const data = await resp.json();
+                if (data.playbook) {
+                    placeholder.insertAdjacentHTML('beforebegin', renderPlaybookSectionHtml(data.playbook));
+                }
+            } catch (e) {
+                // Quiet failure - no playbook shown is the correct outcome either way.
+            }
+        }
+
+        // Fetches /api/ai-summary for every not-yet-attempted
+        // .ai-summary-placeholder in detailRow and, for each one that comes
+        // back with a summary, inserts an "AI Summary" row directly before
+        // it - same lazy-on-first-expand shape as
+        // loadPlaybookSectionIfPresent above, except a single detail row can
+        // contain more than one placeholder (renderFileInfoDetails' File
+        // Alerts list renders one per YARA match), so this queries for all
+        // of them and fetches in parallel rather than assuming exactly one.
+        async function loadAiSummaryPlaceholders(detailRow) {
+            const placeholders = detailRow.querySelectorAll('.ai-summary-placeholder:not([data-attempted])');
+            await Promise.all(Array.from(placeholders).map(async (placeholder) => {
+                placeholder.dataset.attempted = 'true';
+                const detectionType = placeholder.dataset.detectionType;
+                const ruleId = placeholder.dataset.ruleId;
+                try {
+                    const resp = await fetch(`/api/ai-summary?type=${encodeURIComponent(detectionType)}&id=${encodeURIComponent(ruleId)}`);
+                    const data = await resp.json();
+                    if (data.summary) {
+                        placeholder.insertAdjacentHTML('beforebegin', htmlRowText('AI Summary', data.summary));
+                    }
+                } catch (e) {
+                    // Quiet failure - no summary shown is the correct outcome either way.
+                }
+            }));
+        }
+
         async function loadAsciiTranscript(src, sport, dst, dport, pre) {
             const url = buildStreamUrl('ascii-stream', src, sport, dst, dport);
             try {
@@ -295,7 +1809,7 @@
                         }
                         pre.innerHTML = html;
                         if (data.truncated) {
-                            pre.innerHTML += '<div style="margin-top:10px;color:#8b949e;font-style:italic;">[Truncated - stream too large. Use Download PCAP to view full capture.]</div>';
+                            pre.innerHTML += '<div style="margin-top:10px;color:var(--text-muted);font-style:italic;">[Truncated - stream too large. Use Download PCAP to view full capture.]</div>';
                         }
                         return;
                     }
@@ -311,7 +1825,7 @@
         }
         
         async function switchStreamView(view, src, sport, dst, dport, btn) {
-            const wrapper = btn.closest('div[id^="ascii-"]');
+            const wrapper = btn.closest('.stream-payload');
             const asciiEl = wrapper.querySelector('.ascii-transcript');
             const hexdumpEl = wrapper.querySelector('.hexdump-content');
             const tabs = wrapper.querySelectorAll('.view-tab');
@@ -323,7 +1837,7 @@
                 asciiEl.style.display = 'none';
                 hexdumpEl.style.display = '';
                 if (hexdumpEl.dataset.loaded !== 'true') {
-                    hexdumpEl.innerHTML = '<div style="color:#8b949e;padding:10px 0;"><span class="ascii-loading"></span>Loading hexdump...</div>';
+                    hexdumpEl.innerHTML = '<div style="color:var(--text-muted);padding:10px 0;"><span class="ascii-loading"></span>Loading hexdump...</div>';
                     await loadHexdumpData(src, sport, dst, dport, hexdumpEl);
                 }
             } else {
@@ -342,18 +1856,22 @@
                 if (data.packets && data.packets.length > 0) {
                     let html = '<div class="packet-controls"><button class="packet-control-btn" onclick="expandAllPackets(this.parentNode.parentNode)">Expand All</button><button class="packet-control-btn" onclick="collapseAllPackets(this.parentNode.parentNode)">Collapse All</button></div>';
                     
+                    // Packets always start collapsed - expandAllPackets()/
+                    // collapseAllPackets()/togglePacket() (bound above and
+                    // on each packet-header) are the only things that ever
+                    // change this, by toggling the 'hidden' class directly
+                    // on the DOM after render, not by re-rendering from
+                    // per-packet state.
                     data.packets.forEach((pkt) => {
-                        const isExpanded = false;
-                        const arrow = isExpanded ? '▾' : '▸';
                         const dirParts = pkt.header.split(' > ');
                         const isSrc = dirParts.length >= 2 ? dirParts[0].includes(src) : pkt.header.indexOf(src) < pkt.header.indexOf(dst);
                         const dirClass = isSrc ? 'src-dir' : 'dst-dir';
                         html += `
                             <div class="packet-block ${dirClass}">
                                 <div class="packet-header" onclick="togglePacket(this)">
-                                    <span>${arrow}</span><span>${escapeHtml(pkt.header)}</span>
+                                    <span>▸</span><span>${escapeHtml(pkt.header)}</span>
                                 </div>
-                                <div class="packet-content${isExpanded ? '' : ' hidden'}">
+                                <div class="packet-content hidden">
                                     <pre>${escapeHtml(pkt.lines.join('\n'))}</pre>
                                 </div>
                             </div>
@@ -361,13 +1879,13 @@
                     });
                     
                     if (data.truncated) {
-                        html += '<div style="margin-top:10px;color:#8b949e;font-style:italic;">[Truncated - stream too large. Use Download PCAP to view full capture.]</div>';
+                        html += '<div style="margin-top:10px;color:var(--text-muted);font-style:italic;">[Truncated - stream too large. Use Download PCAP to view full capture.]</div>';
                     }
                     
                     container.innerHTML = html;
                     container.dataset.loaded = 'true';
                 } else {
-                    container.innerHTML = '<div style="color:#8b949e;">No packets found</div>';
+                    container.innerHTML = '<div style="color:var(--text-muted);">No packets found</div>';
                     container.dataset.loaded = 'true';
                 }
             } catch(err) {
@@ -394,26 +1912,40 @@
         }
         
         function htmlRow(label, innerHtml, className, style) {
-            const cls = className ? ` class="${className}"` : '';
+            const valueCls = className ? `detail-value ${className}` : 'detail-value';
             const sty = style ? ` style="${style}"` : '';
-            return `<span style="color: #8b949e;">${escapeHtml(label)}</span><span${cls}${sty}>${innerHtml}</span>`;
+            return `<span class="detail-label">${escapeHtml(label)}</span><span class="${valueCls}"${sty}>${innerHtml}</span>`;
         }
         
+        // Wraps a non-empty value in its own clickable span (see
+        // handleDetailValueClick) so the ~120 call sites that go through
+        // this one shared helper all get the detail-panel pivot menu for
+        // free, without each needing its own change. data-detail-pivot
+        // carries [label, value] as percent-encoded JSON rather than an
+        // onclick="..." string - same reasoning as pivotDataAttrsHtml's
+        // own data-pivot attribute (a detail value can be arbitrary
+        // attacker-influenced content, e.g. a log field or HTTP header).
+        // An empty value has nothing meaningful to pivot on, so it's left
+        // as plain (unwrapped) text, matching pivotDataAttrsHtml's own
+        // choice to exclude empty values from the row-cell menu too.
         function htmlRowText(label, text, className, style) {
-            return htmlRow(label, escapeHtml(String(text || '')), className, style);
+            const value = String(text || '');
+            if (!value) return htmlRow(label, '', className, style);
+            const encoded = encodeURIComponent(JSON.stringify([label, value]));
+            return htmlRow(label, `<span class="detail-value-pivot" data-detail-pivot="${encoded}">${escapeHtml(value)}</span>`, className, style);
         }
 
         function maybeLinkifyValue(value) {
             const s = String(value || '').trim();
             const lower = s.toLowerCase();
             if (lower.startsWith('http://') || lower.startsWith('https://')) {
-                return `${escapeHtml(s)} <a href="${escapeHtml(s)}" target="_blank" rel="noopener noreferrer" style="color: #58a6ff; text-decoration: none; margin-left: 4px; font-size: 0.8em;">↗</a>`;
+                return `${escapeHtml(s)} <a href="${escapeHtml(s)}" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; margin-left: 4px; font-size: 0.8em;">↗</a>`;
             }
             return escapeHtml(s);
         }
 
         function htmlSection(title, color) {
-            return `<span style="color: #8b949e; margin-top: 10px; grid-column: 1 / -1; border-bottom: 1px solid #30363d; padding-bottom: 5px; color: ${color};">${escapeHtml(title)}</span>`;
+            return `<span style="color: var(--text-muted); margin-top: 10px; grid-column: 1 / -1; border-bottom: 1px solid var(--border-color); padding-bottom: 5px; color: ${color};">${escapeHtml(title)}</span>`;
         }
 
         function renderMetadataRows(meta) {
@@ -429,7 +1961,7 @@
             const ts = (e.timestamp || '').slice(0, 19);
             let html = `<div style="display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 8px; font-size: 0.85rem; min-width: 0;">`;
             html += htmlRowText('Timestamp', ts);
-            html += htmlRow('Event Type', `<span class="badge badge-info">${escapeHtml(e.event_type || '')}</span>`);
+            html += htmlRow('Event Type', `${valueDotSpan(COLORS.EVENT[e.event_type])}${escapeHtml(e.event_type || '')}`);
             if (e.proto) html += htmlRowText('Protocol', e.proto);
             if (e.flow_id) html += htmlRowText('Flow ID', e.flow_id);
             if (e.pcap_cnt) html += htmlRowText('PCAP Count', e.pcap_cnt);
@@ -447,26 +1979,83 @@
             if (!e.src_ip || !e.src_port || !e.dest_ip || !e.dest_port) return '';
             const srcIpJs = escapeJsString(e.src_ip);
             const dstIpJs = escapeJsString(e.dest_ip);
-            return `<div id="ascii-${e.src_ip}-${e.src_port}-${e.dest_ip}-${e.dest_port}" style="margin-top: 15px;"><div style="color: #8b949e; font-size: 0.85rem; border-bottom: 1px solid #30363d; padding-bottom: 5px; margin-bottom: 5px;">Payload</div><div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px;"><div class="view-tabs"><button class="view-tab active" onclick="switchStreamView('ascii','${srcIpJs}',${e.src_port},'${dstIpJs}',${e.dest_port},this)">ASCII Transcript</button><button class="view-tab" onclick="switchStreamView('hexdump','${srcIpJs}',${e.src_port},'${dstIpJs}',${e.dest_port},this)">Hexdump</button></div><button class="stream-btn" onclick="downloadPcap('${srcIpJs}','${e.src_port}','${dstIpJs}','${e.dest_port}')" style="margin-left: 12px;">Download PCAP</button></div><div class="stream-view-container" style="background: #0d1117; padding: 15px; border-radius: 8px; font-size: 0.8rem; margin: 0;"><div class="ascii-transcript" style="white-space: pre-wrap; overflow-wrap: break-word;"></div><div class="hexdump-content" style="display: none;"></div></div></div>`;
+            const srcIpHtml = escapeHtml(e.src_ip);
+            const dstIpHtml = escapeHtml(e.dest_ip);
+            // Ports are embedded unquoted in onclick handlers and raw in data
+            // attributes, so coerce to integers to guarantee they are numeric.
+            const srcPort = parseInt(e.src_port, 10) || 0;
+            const dstPort = parseInt(e.dest_port, 10) || 0;
+            return `<div class="stream-payload" data-src-ip="${srcIpHtml}" data-src-port="${srcPort}" data-dst-ip="${dstIpHtml}" data-dst-port="${dstPort}" style="margin-top: 15px;"><div style="color: var(--text-muted); font-size: 0.85rem; border-bottom: 1px solid var(--border-color); padding-bottom: 5px; margin-bottom: 5px;">Payload</div><div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px;"><div class="view-tabs"><button class="view-tab active" onclick="switchStreamView('ascii','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">ASCII Transcript</button><button class="view-tab" onclick="switchStreamView('hexdump','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">Hexdump</button></div><button class="stream-btn" onclick="downloadPcap('${srcIpJs}','${srcPort}','${dstIpJs}','${dstPort}')" style="margin-left: 12px;">Download PCAP</button></div><div class="stream-view-container" style="background: var(--bg-primary); padding: 15px; border-radius: 8px; font-size: 0.8rem; margin: 0;"><div class="ascii-transcript" style="white-space: pre-wrap; overflow-wrap: break-word;"></div><div class="hexdump-content" style="display: none;"></div></div></div>`;
         }
 
-        function renderAlertDetails(e) {
-            let html = htmlSection('Alert Details', COLORS.EVENT.alert);
-            html += htmlRowText('Signature', e.alert?.signature);
-            html += htmlRow('Category', `<span class="badge badge-danger">${escapeHtml(e.alert?.category || '')}</span>`);
+        // Hidden anchor for an AI Summary field - see
+        // loadAiSummaryPlaceholders. display:none means it takes no space
+        // and shows nothing if the fetch it triggers on first expand comes
+        // back with no summary (e.g. a manual install with nothing baked
+        // in) - there's never an empty "AI Summary" row shown, only ever a
+        // populated one or nothing at all. Unlike the single
+        // playbook-section-placeholder per row, a detail row can contain
+        // more than one of these (see renderFileInfoDetails' matches loop),
+        // so loadAiSummaryPlaceholders queries for all of them, not just one.
+        function aiSummaryPlaceholderHtml(detectionType, ruleId) {
+            return `<span class="ai-summary-placeholder" data-detection-type="${escapeHtml(detectionType)}" data-rule-id="${escapeHtml(String(ruleId || ''))}" style="display:none;"></span>`;
+        }
+
+        // includeAiSummary defaults true (renderAlertDetails' real-alert
+        // case) - renderProtocolDecodeDetails explicitly passes false, same
+        // reasoning as why it never gets a playbook-section-placeholder
+        // either: decoder-noise "alerts" aren't real detections, so neither
+        // Playbook guidance nor an AI summary of "what this rule detects"
+        // applies to them.
+        function renderAlertFields(e, includeAiSummary) {
+            let html = htmlRowText('Signature', e.alert?.signature);
+            if (includeAiSummary !== false) {
+                html += aiSummaryPlaceholderHtml('nids', e.alert?.signature_id);
+            }
+            html += htmlRowText('Category', e.alert?.category);
             html += htmlRowText('Severity', e.alert?.severity);
             html += htmlRowText('Action', e.alert?.action);
             html += htmlRowText('GID', e.alert?.gid);
             html += htmlRowText('SID', e.alert?.signature_id);
+            html += htmlRowText('Ruleset', classifyRuleset(e.alert?.signature_id));
             html += htmlRow('Rule', escapeHtml(e.alert?.rule || ''), 'mono', 'white-space: pre-wrap; overflow-wrap: break-word; min-width: 0;');
+            return html;
+        }
+
+        function renderAlertDetails(e) {
+            let html = htmlSection('Alert Details', COLORS.EVENT.alert);
+            html += renderAlertFields(e);
+            // Hidden anchor for the Playbook section - see
+            // loadPlaybookSectionIfPresent. display:none means it takes no
+            // space and shows nothing if the fetch it triggers on first
+            // expand comes back with no playbook (e.g. a manual install
+            // with nothing baked in) - there's never an empty "Playbook"
+            // heading shown, only ever a populated one or nothing at all.
+            html += `<span class="playbook-section-placeholder" data-detection-type="nids" data-rule-id="${escapeHtml(String(e.alert?.signature_id || ''))}" style="display:none;"></span>`;
+            return html;
+        }
+
+        function renderProtocolDecodeDetails(e) {
+            // Suricata's own built-in protocol-command-decode alerts are
+            // noise, not real detections (see create_sqlite_db's
+            // reclassification in db.py) - same fields as Alert Details,
+            // but deliberately no Playbook section and no AI summary
+            // placeholder, since there's no investigation guidance (or
+            // rule explanation) needed for "this isn't a threat."
+            let html = htmlSection('Decoder Alert Details', COLORS.EVENT.protocol_decode);
+            html += renderAlertFields(e, false);
             return html;
         }
 
         function renderDnsDetails(e) {
             let html = htmlSection('DNS Details', COLORS.EVENT.dns);
             html += htmlRowText('Type', e.dns?.type);
-            html += htmlRowText('Query Name', e.dns?.rrname, 'mono');
-            html += htmlRowText('Query Type', e.dns?.rrtype);
+            // Suricata 8's new V3 DNS logging format moved rrname/rrtype off
+            // the top level into queries[0] - see the 'Query'/'Type' cases
+            // in extractValue for details. e.dns.answers[].rdata already
+            // worked under both formats, unaffected.
+            html += htmlRowText('Query Name', e.dns?.rrname || e.dns?.queries?.[0]?.rrname, 'mono');
+            html += htmlRowText('Query Type', e.dns?.rrtype || e.dns?.queries?.[0]?.rrtype);
             if (e.dns?.answers) {
                 html += htmlRowText('Answers', e.dns.answers.map(a => a.rdata).join(', '), 'mono');
             }
@@ -475,7 +2064,7 @@
 
         function renderHttpDetails(e) {
             let html = htmlSection('HTTP Details', COLORS.EVENT.http);
-            html += htmlRow('Method', `<span class="badge badge-info">${escapeHtml(e.http?.http_method || '')}</span>`);
+            html += htmlRow('Method', `${valueDotSpan(DOT_COLORS.HTTP_METHOD[(e.http?.http_method || '').toUpperCase()])}${escapeHtml(e.http?.http_method || '')}`);
             html += htmlRowText('Host', e.http?.hostname, 'mono');
             html += htmlRowText('URL', e.http?.url, 'mono');
             html += htmlRowText('User Agent', e.http?.http_user_agent, '', 'word-break: break-all;');
@@ -487,7 +2076,7 @@
         function renderTlsDetails(e) {
             let html = htmlSection('TLS Details', COLORS.EVENT.tls);
             html += htmlRowText('SNI', e.tls?.sni, 'mono');
-            html += htmlRow('Version', `<span class="badge badge-info">${escapeHtml(e.tls?.version || '')}</span>`);
+            html += htmlRow('Version', `${valueDotSpan(tlsVersionColor(e.tls?.version))}${escapeHtml(e.tls?.version || '')}`);
             html += htmlRowText('Subject', e.tls?.subject, 'mono');
             html += htmlRowText('Issuer', e.tls?.issuerdn, 'mono');
             html += htmlRowText('Not Before', e.tls?.notbefore);
@@ -518,14 +2107,136 @@
 
         function renderAnomalyDetails(e) {
             let html = htmlSection('Anomaly Details', COLORS.EVENT.anomaly);
+            // BUGFIX: was e.anomaly?.message, a field that has never existed
+            // in Suricata's eve.json anomaly schema (real field is 'event',
+            // e.g. "APPLAYER_DETECT_PROTOCOL_ONLY_ONE_DIRECTION") - same
+            // root cause as the Detail-column fix elsewhere, missed here.
+            html += htmlRowText('Event', e.anomaly?.event);
             html += htmlRowText('Type', e.anomaly?.type);
-            html += htmlRowText('Message', e.anomaly?.message);
+            html += htmlRowText('Layer', e.anomaly?.layer);
+            html += htmlRowText('App Proto', e.anomaly?.app_proto);
+            return html;
+        }
+
+        function renderModbusDetails(e) {
+            const m = e.modbus || {};
+            const req = m.request || {};
+            const resp = m.response || {};
+            let html = htmlSection('Modbus Details', COLORS.EVENT.modbus);
+            html += htmlRowText('Transaction ID', m.id);
+
+            html += htmlSection('Request', COLORS.EVENT.modbus);
+            html += htmlRowText('Function', req.function_code);
+            html += htmlRowText('Unit ID', req.unit_id);
+            html += htmlRowText('Access Type', req.access_type);
+            html += htmlRowText('Category', req.category);
+            html += htmlRowText('Error Flags', req.error_flags);
+            if (req.read) {
+                html += htmlRowText('Read Address', req.read.address);
+                html += htmlRowText('Read Quantity', req.read.quantity);
+            }
+            if (req.write) {
+                html += htmlRowText('Write Address', req.write.address);
+                html += htmlRowText('Write Data', req.write.data);
+            }
+            if (req.diagnostic) {
+                html += htmlRowText('Diagnostic Code', req.diagnostic.code);
+                html += htmlRowText('Diagnostic Data', req.diagnostic.data);
+            }
+
+            html += htmlSection('Response', COLORS.EVENT.modbus);
+            html += htmlRowText('Function', resp.function_code);
+            html += htmlRowText('Unit ID', resp.unit_id);
+            html += htmlRowText('Access Type', resp.access_type);
+            html += htmlRowText('Category', resp.category);
+            html += htmlRowText('Error Flags', resp.error_flags);
+            if (resp.read) {
+                html += htmlRowText('Read Data', resp.read.data);
+            }
+            if (resp.diagnostic) {
+                html += htmlRowText('Diagnostic Code', resp.diagnostic.code);
+                html += htmlRowText('Diagnostic Data', resp.diagnostic.data);
+            }
+            if (resp.exception) {
+                html += htmlRowText('Exception Code', resp.exception.code);
+            }
+            return html;
+        }
+
+        function renderDnp3Details(e) {
+            const d = e.dnp3 || {};
+            let html = htmlSection('DNP3 Details', COLORS.EVENT.dnp3);
+            html += htmlRowText('Type', d.type);
+            html += htmlRowText('Source Address', d.src);
+            html += htmlRowText('Destination Address', d.dst);
+            if (d.application) {
+                html += htmlRowText('Application Function', d.application.function_code);
+                html += htmlRowText('Complete', d.application.complete ? 'Yes' : 'No');
+            }
+            if (d.control) {
+                html += htmlRowText('Control Function', d.control.function_code);
+            }
+            if (d.iin && d.iin.indicators && d.iin.indicators.length) {
+                html += htmlRowText('IIN Indicators', d.iin.indicators.join(', '));
+            }
+            ['request', 'response'].forEach(dir => {
+                const obj = d[dir];
+                if (!obj) return;
+                html += htmlSection(dir.charAt(0).toUpperCase() + dir.slice(1), COLORS.EVENT.dnp3);
+                html += htmlRowText('Type', obj.type);
+                html += htmlRowText('Source', obj.src);
+                html += htmlRowText('Destination', obj.dst);
+                if (obj.application) {
+                    html += htmlRowText('Function', obj.application.function_code);
+                    html += htmlRowText('Complete', obj.application.complete ? 'Yes' : 'No');
+                }
+            });
+            return html;
+        }
+
+        function renderPgsqlDetails(e) {
+            const p = e.pgsql || {};
+            const req = p.request || {};
+            const resp = p.response || {};
+            let html = htmlSection('PostgreSQL Details', COLORS.EVENT.pgsql);
+            html += htmlRowText('TX ID', p.tx_id);
+
+            if (req.simple_query || req.message || req.protocol_version || req.startup_parameters || req.process_id !== undefined || req.sasl_authentication_mechanism) {
+                html += htmlSection('Request', COLORS.EVENT.pgsql);
+                html += htmlRowText('Query', req.simple_query);
+                html += htmlRowText('Message', req.message);
+                html += htmlRowText('Protocol Version', req.protocol_version);
+                if (req.startup_parameters && req.startup_parameters.user) {
+                    html += htmlRowText('User', req.startup_parameters.user);
+                }
+                html += htmlRowText('Process ID', req.process_id);
+                html += htmlRowText('SASL Mechanism', req.sasl_authentication_mechanism);
+            }
+
+            if (resp.command_completed || resp.code || resp.message || resp.data_rows !== undefined || resp.ssl_accepted !== undefined) {
+                html += htmlSection('Response', COLORS.EVENT.pgsql);
+                html += htmlRowText('Command Completed', resp.command_completed);
+                html += htmlRowText('Response Code', resp.code);
+                html += htmlRowText('Response Message', resp.message);
+                html += htmlRowText('Severity', resp.severity_non_localizable);
+                html += htmlRowText('Data Rows', resp.data_rows);
+                html += htmlRowText('Data Size', resp.data_size);
+                if (resp.ssl_accepted !== undefined) {
+                    html += htmlRowText('SSL Accepted', resp.ssl_accepted ? 'Yes' : 'No');
+                }
+                if (resp.file) {
+                    html += htmlRowText('Error File', resp.file);
+                    html += htmlRowText('Error Line', resp.line);
+                    html += htmlRowText('Routine', resp.routine);
+                }
+            }
             return html;
         }
 
         function renderFileAlertDetails(e) {
             const fa = e.filealerts || {};
-            let html = htmlRow('Rule', `<span class="badge" style="background:${COLORS.FILE_ALERT.bg};color:${COLORS.FILE_ALERT.text}">${escapeHtml(fa.rule_name || '')}</span>`);
+            let html = htmlRowText('Rule', fa.rule_name);
+            html += aiSummaryPlaceholderHtml('yara', fa.rule_name);
             html += htmlRowText('SHA256', fa.sha256, 'mono');
             if (fa.author) {
                 html += htmlRowText('Author', fa.author);
@@ -560,7 +2271,7 @@
             if (meta.exif && Object.keys(meta.exif).length) {
                 html += htmlSection('Exif Metadata', COLORS.EVENT.fileinfo);
                 Object.entries(meta.exif).forEach(([k, v]) => {
-                    html += htmlRowText(escapeHtml(k), escapeHtml(v), '', 'word-break: break-all;');
+                    html += htmlRowText(k, v, '', 'word-break: break-all;');
                 });
             }
 
@@ -569,21 +2280,26 @@
             html += htmlSection('File Alerts', COLORS.EVENT.filealerts);
             if (matches.length > 0) {
                 matches.forEach(m => {
-                    html += htmlRow('Rule', `<span class="badge" style="background:${COLORS.FILE_ALERT.bg};color:${COLORS.FILE_ALERT.text}">${escapeHtml(m.filealerts?.rule_name || '')}</span>`);
+                    html += htmlRowText('Rule', m.filealerts?.rule_name);
+                    html += aiSummaryPlaceholderHtml('yara', m.filealerts?.rule_name);
                     if (m.filealerts?.tags && m.filealerts.tags.length) {
                         html += htmlRowText('Tags', m.filealerts.tags.join(', '));
                     }
                 });
             } else {
-                html += `<span style="color: #484f58; grid-column: 1 / -1;">No YARA matches</span>`;
+                html += `<span style="color: var(--bg-hover-light); grid-column: 1 / -1;">No YARA matches</span>`;
             }
             return html;
         }
 
         const EVENT_RENDERERS = {
             alert: renderAlertDetails,
+            protocol_decode: renderProtocolDecodeDetails,
             dns: renderDnsDetails,
+            dnp3: renderDnp3Details,
             http: renderHttpDetails,
+            modbus: renderModbusDetails,
+            pgsql: renderPgsqlDetails,
             tls: renderTlsDetails,
             flow: renderFlowDetails,
             ftp: renderFtpDetails,
@@ -598,6 +2314,7 @@
             if (renderer) {
                 html += renderer(e);
             }
+            html += rowNoteDetailHtml('events', e.id, e.row_note);
             html += `</div>`;
             html += _formatEventPayload(e);
             return html;
@@ -614,56 +2331,15 @@
         }
         
         
-        function sortTable(table, colIndex, th) {
-            const tbody = table.querySelector('tbody');
-            const rows = Array.from(tbody.querySelectorAll('tr')).filter(r => !r.classList.contains('detail-row'));
-            const asc = !th.classList.contains('sort-asc');
-            
-            table.querySelectorAll('th').forEach(h => {
-                h.classList.remove('sort-asc', 'sort-desc');
-                const arrow = h.querySelector('.sort-arrow');
-                if (arrow) arrow.textContent = '';
-            });
-            
-            th.classList.add(asc ? 'sort-asc' : 'sort-desc');
-            let arrow = th.querySelector('.sort-arrow');
-            if (!arrow) {
-                arrow = document.createElement('span');
-                arrow.className = 'sort-arrow';
-                th.appendChild(arrow);
-            }
-            arrow.textContent = asc ? '▲' : '▼';
-            
-            rows.sort((a, b) => {
-                let aVal = a.children[colIndex]?.textContent?.trim() || '';
-                let bVal = b.children[colIndex]?.textContent?.trim() || '';
-                
-                if (!isNaN(aVal) && !isNaN(bVal) && aVal !== '' && bVal !== '') {
-                    return asc ? parseFloat(aVal) - parseFloat(bVal) : parseFloat(bVal) - parseFloat(aVal);
-                }
-                return asc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-            });
-            
-            const fragment = document.createDocumentFragment();
-            rows.forEach(row => {
-                fragment.appendChild(row);
-                const detailRow = row.nextElementSibling;
-                if (detailRow && detailRow.classList.contains('detail-row')) {
-                    fragment.appendChild(detailRow);
-                }
-            });
-            tbody.appendChild(fragment);
-        }
-        
         document.addEventListener('click', function(e) {
             if (e.target.tagName === 'TH') {
                 const th = e.target;
                 // Skip if cursor is default (non-sortable table)
                 if (window.getComputedStyle(th).cursor === 'default') return;
-                const table = th.closest('table');
                 const thead = th.closest('thead');
+                if (!thead) return;
                 const index = Array.from(thead.querySelectorAll('th')).indexOf(th);
-                sortTable(table, index, th);
+                sortCurrentTable(index);
             }
 
             // Delegated handler for previous analyses buttons
@@ -676,6 +2352,8 @@
                     openReanalyzeModal(md5, name);
                 } else if (action === 'delete') {
                     openDeleteAnalysis(md5, name);
+                } else if (action === 'notes') {
+                    openAnalysisNotesFromList(md5);
                 }
             }
         });
@@ -717,17 +2395,51 @@
             document.getElementById('searchBarContainer').style.display = 'none';
             document.getElementById('inputBoxes').style.display = 'block';
             document.getElementById('appHeaderFilename').innerHTML = '';
-            document.getElementById('appHeaderMeta').innerHTML = '<span style="color: #8b949e; font-size: 0.9rem;">Security Onion Containerized Rapid Analysis of Threats, Evil, and Sus</span>';
-            document.getElementById('appHeaderRight').innerHTML = '<button class="app-header-help" onclick="showHelpModal()" title="Help">?</button>';
+            // .app-header-tagline is absolutely positioned (see socrates.css)
+            // to center in the header bar regardless of #appHeaderLeft's own
+            // width - unlike the footer's teaser, #appHeaderMeta is shared
+            // with analysis mode (file metadata next to the filename, set
+            // elsewhere), so it can't just become a 3-column layout without
+            // also centering that unrelated content away from the filename
+            // it describes. This welcome-only tagline is scoped to its own
+            // class instead, left untouched at the other #appHeaderMeta call site.
+            document.getElementById('appHeaderMeta').innerHTML = '<a href="#" onclick="event.preventDefault(); showAboutModal();" class="app-header-tagline">Security Onion Containerized Rapid Analysis of Threats, Evil, and Sus</a>';
+            document.getElementById('footerCenterTeaser').innerHTML = '<a href="#" onclick="event.preventDefault(); showSecurityOnionModal();" class="footer-teaser-link">Need more advanced functionality?</a>';
+            document.getElementById('appHeaderRight').innerHTML = renderGearMenu();
+            updateThemeMenu();
+            checkForStaleRules();
         }
 
         function shouldShowHelpModal() {
-            if (localStorage.getItem('socrates_hideHelp') === 'true') return false;
-            if (sessionStorage.getItem('socrates_helpShown') === 'true') return false;
+            if (safeStorageGet(localStorage, 'socrates_hideHelp') === 'true') return false;
+            if (safeStorageGet(sessionStorage, 'socrates_helpShown') === 'true') return false;
             return true;
         }
 
+        // Help/Settings/Themes are all full-viewport overlays sharing the
+        // same .modal z-index, so if one is already open when another is
+        // triggered (e.g. the gear menu is still reachable while the
+        // Themes modal is showing), the newer one can render behind the
+        // older one depending on DOM order rather than on top of it -
+        // opening one visibly does nothing while the other is still
+        // technically .active underneath. Closing any other open menu
+        // modal before showing a new one keeps at most one active at a
+        // time, which sidesteps the stacking ambiguity entirely. Guarded
+        // per-modal (not an unconditional close-everything) because
+        // closeHelpModal() has real side effects (persisting the "show
+        // again" checkbox state) that must only fire if Help was actually
+        // open.
+        function closeOtherMenuModals(exceptId) {
+            const closers = { helpModal: closeHelpModal, settingsModal: closeSettingsModal, themesModal: closeThemesModal, rulesModal: closeRulesModal, aboutModal: closeAboutModal, notesModal: closeNotesModal, securityOnionModal: closeSecurityOnionModal, captureModal: closeCaptureModal };
+            Object.keys(closers).forEach(function(id) {
+                if (id === exceptId) return;
+                const modal = document.getElementById(id);
+                if (modal && modal.classList.contains('active')) closers[id]();
+            });
+        }
+
         function showHelpModal() {
+            closeOtherMenuModals('helpModal');
             const isWelcome = document.getElementById('inputBoxes').style.display !== 'none';
             const modalTitle = document.getElementById('helpModalTitle');
             const modalBody = document.getElementById('helpModalBody');
@@ -736,24 +2448,24 @@
 
             const helpModal = document.getElementById('helpModal');
             if (isWelcome) {
-                modalTitle.textContent = 'Welcome to SO-CRATES!';
-                modalBody.innerHTML = WELCOME_HELP_CONTENT;
+                modalTitle.innerHTML = 'Welcome to <a href="#" onclick="event.preventDefault(); showAboutModal();" style="color: var(--accent); text-decoration: underline;">SO-CRATES</a>!';
+                modalBody.innerHTML = getWelcomeHelpContent();
                 checkboxContainer.style.display = 'flex';
-                checkbox.checked = localStorage.getItem('socrates_hideHelp') !== 'true';
+                checkbox.checked = safeStorageGet(localStorage, 'socrates_hideHelp') !== 'true';
                 helpModal.classList.add('wide');
             } else {
                 modalTitle.textContent = 'Analysis Help';
-                const isLogFile = currentFileName && /\.(evtx|json|jsonl|csv|xml|log)$/i.test(currentFileName);
+                const isLogFile = detectFileType(currentFileName) === 'log';
                 const isFileOnly = document.body.classList.contains('file-analysis');
                 let helpText;
                 if (isLogFile) {
-                    helpText = '<span style="color: #58a6ff;">💡</span> Investigate Sigma Alerts and then review Log Events. Filter using the search bar or aggregation tables.';
+                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Investigate Sigma Alerts and then review Log Events. Filter using the search bar or aggregation tables.`;
                 } else if (isFileOnly) {
-                    helpText = '<span style="color: #58a6ff;">💡</span> Review the FILE INFO section for metadata and then the data table at the bottom for any matches found by the YARA rules.';
+                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Review the FILE INFO section for metadata and then the data table at the bottom for any matches found by the YARA rules.`;
                 } else {
-                    helpText = '<span style="color: #58a6ff;">💡</span> Start by reviewing all alerts and then you can change to one of the other data types like DNS, HTTP, or TLS. Filter using the search bar, sankey diagram, or aggregation tables. When you find something interesting, you can drill into the row in the data table at the bottom. This will allow you to see the ASCII transcript and hexdump and optionally download the PCAP file for that stream.';
+                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Start by reviewing all alerts and then you can change to one of the other data types like DNS, HTTP, or TLS. Filter using the search bar, sankey diagram, or aggregation tables. When you find something interesting, you can drill into the row in the data table at the bottom. This will allow you to see the ASCII transcript and hexdump and optionally download the PCAP file for that stream.`;
                 }
-                modalBody.innerHTML = '<div style="color: #8b949e; font-size: 0.95rem; line-height: 1.6;">' + helpText + '</div>';
+                modalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 0.95rem; line-height: 1.6;">' + helpText + '</div>';
                 checkboxContainer.style.display = 'none';
                 helpModal.classList.remove('wide');
             }
@@ -765,11 +2477,11 @@
             document.getElementById('helpModal').classList.remove('active');
             const isWelcome = document.getElementById('inputBoxes').style.display !== 'none';
             if (isWelcome) {
-                sessionStorage.setItem('socrates_helpShown', 'true');
+                safeStorageSet(sessionStorage, 'socrates_helpShown', 'true');
                 if (!document.getElementById('helpShowAgain').checked) {
-                    localStorage.setItem('socrates_hideHelp', 'true');
+                    safeStorageSet(localStorage, 'socrates_hideHelp', 'true');
                 } else {
-                    localStorage.removeItem('socrates_hideHelp');
+                    safeStorageRemove(localStorage, 'socrates_hideHelp');
                 }
             }
         }
@@ -780,15 +2492,216 @@
             }
         }
 
+        // focusCustomLookup: true opens the modal with focus already in the
+        // Custom Lookup Sites add-form - reached from the pivot menu's own
+        // "Add Custom Lookup..." entry, so the analyst lands ready to type
+        // rather than having to find and click into the field themselves.
+        // Mirrors showRulesModal(expandSuricataSources)'s own pattern for
+        // the same reason.
+        function showSettingsModal(focusCustomLookup) {
+            closeOtherMenuModals('settingsModal');
+            const input = document.getElementById('maxQueryLimitInput');
+            const hint = document.getElementById('settingsHint');
+            const errorEl = document.getElementById('settingsError');
+            input.value = getUserQueryLimit();
+            errorEl.style.display = 'none';
+            hint.textContent = `Default: ${CONFIG.DEFAULT_QUERY_LIMIT.toLocaleString()}.`;
+
+            const uploadInput = document.getElementById('maxUploadSizeInput');
+            const uploadHint = document.getElementById('uploadSizeHint');
+            const uploadErrorEl = document.getElementById('uploadSizeError');
+            uploadInput.value = getUserMaxUploadSizeMB();
+            uploadErrorEl.style.display = 'none';
+            uploadHint.textContent = `Default: ${CONFIG.DEFAULT_UPLOAD_SIZE_MB.toLocaleString()} MB.`;
+
+            // Never block the modal on this - fall back to showing just the
+            // defaults if the server can't be reached (mirrors safeStorageGet's
+            // "never throw, always degrade" approach).
+            fetch('/api/limits').then(r => r.json()).then(data => {
+                input.max = data.maxQueryLimit;
+                hint.textContent = `Default: ${CONFIG.DEFAULT_QUERY_LIMIT.toLocaleString()}. Server maximum: ${data.maxQueryLimit.toLocaleString()}.`;
+                const maxUploadMB = Math.round(data.maxUploadSize / (1024 * 1024));
+                uploadInput.max = maxUploadMB;
+                uploadHint.textContent = `Default: ${CONFIG.DEFAULT_UPLOAD_SIZE_MB.toLocaleString()} MB. Server maximum: ${maxUploadMB.toLocaleString()} MB.`;
+            }).catch(() => {});
+            renderCustomLookupSitesSection();
+            document.getElementById('settingsModal').classList.add('active');
+            if (focusCustomLookup) {
+                document.getElementById('customLookupNameInput').focus();
+            }
+        }
+
+        // Re-rendered from scratch (not patched in place) on every open and
+        // after every add/edit/delete - the list is short (capped at
+        // MAX_CUSTOM_LOOKUP_SITES) so this is cheap, and it keeps the
+        // add/edit form's own reset (resetCustomLookupForm) as the single
+        // place that clears editingCustomLookupIndex, rather than needing
+        // to reason about partial DOM updates.
+        function renderCustomLookupSitesSection() {
+            const sites = getCustomLookupSites();
+            const listEl = document.getElementById('customLookupSitesList');
+            listEl.innerHTML = sites.length === 0
+                ? '<div style="color: var(--text-muted); font-size: 0.85rem; padding: 6px 0;">No custom lookup sites yet.</div>'
+                : sites.map((site, i) => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--bg-hover); min-width: 0;">
+                        <div style="min-width: 0; overflow: hidden;">
+                            <div style="color: var(--text-primary); font-size: 0.9rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(site.label)}</div>
+                            <div style="color: var(--text-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(site.urlTemplate)}">${escapeHtml(site.urlTemplate)}</div>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+                            <button onclick="startEditCustomLookupSite(${i})" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">Edit</button>
+                            <button onclick="handleDeleteCustomLookupSite(${i})" style="background: none; color: var(--badge-danger-text); border: none; padding: 0; cursor: pointer; display: flex;" title="Delete">${DELETE_ICON_SVG}</button>
+                        </div>
+                    </div>
+                `).join('');
+            resetCustomLookupForm();
+        }
+
+        function resetCustomLookupForm() {
+            editingCustomLookupIndex = null;
+            document.getElementById('customLookupNameInput').value = '';
+            document.getElementById('customLookupUrlInput').value = '';
+            document.getElementById('customLookupError').style.display = 'none';
+            document.getElementById('customLookupSaveBtn').textContent = 'Add';
+            document.getElementById('customLookupCancelBtn').style.display = 'none';
+        }
+
+        function startEditCustomLookupSite(index) {
+            const site = getCustomLookupSites()[index];
+            if (!site) return;
+            editingCustomLookupIndex = index;
+            document.getElementById('customLookupNameInput').value = site.label;
+            document.getElementById('customLookupUrlInput').value = site.urlTemplate;
+            document.getElementById('customLookupError').style.display = 'none';
+            document.getElementById('customLookupSaveBtn').textContent = 'Save';
+            document.getElementById('customLookupCancelBtn').style.display = 'inline-block';
+        }
+
+        function cancelEditCustomLookupSite() {
+            resetCustomLookupForm();
+        }
+
+        function handleSaveCustomLookupSite() {
+            const name = document.getElementById('customLookupNameInput').value;
+            const url = document.getElementById('customLookupUrlInput').value;
+            const result = saveCustomLookupSite(editingCustomLookupIndex, name, url);
+            if (!result.valid) {
+                const errorEl = document.getElementById('customLookupError');
+                errorEl.textContent = result.error;
+                errorEl.style.display = 'block';
+                return;
+            }
+            renderCustomLookupSitesSection();
+        }
+
+        function handleDeleteCustomLookupSite(index) {
+            deleteCustomLookupSite(index);
+            renderCustomLookupSitesSection();
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settingsModal').classList.remove('active');
+        }
+
+        function showAboutModal() {
+            closeOtherMenuModals('aboutModal');
+            document.getElementById('checkForUpdates').checked = safeStorageGet(localStorage, 'socrates_checkForUpdates') === 'true';
+            fetch('/api/version').then(r => r.json()).then(data => {
+                if (data.version) {
+                    document.getElementById('aboutVersion').textContent = data.version;
+                }
+            }).catch(() => {});
+            document.getElementById('aboutModal').classList.add('active');
+        }
+
+        function closeAboutModal() {
+            document.getElementById('aboutModal').classList.remove('active');
+        }
+
+        // The full feature comparison (SECURITY_ONION_COMPARISON_HTML) is
+        // set here rather than baked into the modal's static HTML skeleton
+        // - it's plain content with no per-open state, but still needs a
+        // JS-side constant since it embeds CHECKMARK_ICON_SVG.
+        function showSecurityOnionModal() {
+            closeOtherMenuModals('securityOnionModal');
+            document.getElementById('securityOnionModalBody').innerHTML = SECURITY_ONION_COMPARISON_HTML;
+            document.getElementById('securityOnionModal').classList.add('active');
+        }
+
+        function closeSecurityOnionModal() {
+            document.getElementById('securityOnionModal').classList.remove('active');
+        }
+
+        // Validates and (if valid) persists a single numeric Settings field.
+        // Returns 'saved' (persisted, nothing more to do), 'pending' (value
+        // was above the server ceiling -- auto-corrected in the input and
+        // needs a second Save click to confirm, nothing persisted yet), or
+        // 'invalid' (below floor, nothing persisted, error shown).
+        function _validateAndMaybeSaveNumberSetting(inputId, errorId, storageKey, floor, floorMessage, fallbackCeiling) {
+            const input = document.getElementById(inputId);
+            const errorEl = document.getElementById(errorId);
+            const value = parseInt(input.value, 10);
+            const serverMax = input.max ? parseInt(input.max, 10) : fallbackCeiling;
+
+            if (isNaN(value) || value < floor) {
+                errorEl.textContent = floorMessage;
+                errorEl.style.display = 'block';
+                return 'invalid';
+            }
+            if (value > serverMax) {
+                input.value = serverMax;
+                errorEl.textContent = `Clamped to the server maximum of ${serverMax.toLocaleString()}. Click Save again to confirm.`;
+                errorEl.style.display = 'block';
+                return 'pending';
+            }
+            errorEl.style.display = 'none';
+            safeStorageSet(localStorage, storageKey, String(value));
+            return 'saved';
+        }
+
+        async function saveSettings() {
+            const queryLimitResult = _validateAndMaybeSaveNumberSetting(
+                'maxQueryLimitInput', 'settingsError', 'socrates_maxQueryLimit',
+                1000, 'Please enter a number of at least 1,000.', 500000
+            );
+            const uploadSizeResult = _validateAndMaybeSaveNumberSetting(
+                'maxUploadSizeInput', 'uploadSizeError', 'socrates_maxUploadSizeMB',
+                100, 'Please enter a number of at least 100.', 20000
+            );
+
+            // refreshAnalysisData() only matters for the query-limit field --
+            // upload size has no bearing on already-loaded analysis data.
+            if (queryLimitResult === 'saved') {
+                if (currentMd5) {
+                    const saveBtn = document.getElementById('settingsSaveBtn');
+                    saveBtn.disabled = true;
+                    try {
+                        await refreshAnalysisData();
+                    } finally {
+                        saveBtn.disabled = false;
+                    }
+                }
+            }
+
+            if (queryLimitResult === 'saved' && uploadSizeResult === 'saved') {
+                closeSettingsModal();
+            }
+        }
+
         function showAnalysisUI() {
             document.getElementById('inputBoxes').style.display = 'none';
             document.getElementById('mainHeader').style.display = 'block';
             document.getElementById('dataPanel').style.display = '';
             document.getElementById('searchBarContainer').style.display = 'block';
+            // Same footer teaser as the welcome screen (showWelcomeUI) -
+            // kept consistent across both modes rather than swapping to a
+            // "Need help?" prompt during analysis.
+            document.getElementById('footerCenterTeaser').innerHTML = '<a href="#" onclick="event.preventDefault(); showSecurityOnionModal();" class="footer-teaser-link">Need more advanced functionality?</a>';
         }
         
         async function showWelcome() {
             document.title = 'SO-CRATES - Welcome';
+            closeAllModals();
             if (window.location.search.includes('file=') || window.location.search.includes('pcap=')) {
                 history.replaceState({}, '', window.location.pathname);
             }
@@ -800,255 +2713,1125 @@
             
             // Load previous analyses
             let previousHtml = '';
+            let previousAnalysisCount = 0;
             try {
                 const resp = await fetch('/api/analyses');
                 const analyses = await resp.json();
+                previousAnalysisCount = analyses.length;
                 if (analyses.length > 0) {
-                    previousHtml = analyses.map(a => 
-                        `<div style="display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid #30363d;">
-                            <a href="?file=${a.md5}" onclick="event.preventDefault(); loadAnalysis('${a.md5}');" style="color: #58a6ff; text-decoration: none; flex: 1;">📁 ${escapeHtml(a.name)}</a>
-                            <button data-md5="${a.md5}" data-name="${escapeHtml(a.name)}" data-action="reanalyze" style="background: #30363d; border: none; color: #58a6ff; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="Re-analyze">🔄</button>
-                            <button data-md5="${a.md5}" data-name="${escapeHtml(a.name)}" data-action="delete" style="background: #30363d; border: none; color: #ff6b6b; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px;" title="Delete">🗑️</button>
-                        </div>`
-                    ).join('');
+                    previousHtml = analyses.map(a => {
+                        // The MD5 is still reachable via the link's
+                        // href/status-bar URL - showing it in the hover
+                        // tooltip too would be redundant. An analyst is far
+                        // more likely to recognize the sample's own date
+                        // range at a glance than an MD5 fragment, so that's
+                        // the tooltip instead; keeping it out of the row
+                        // itself (rather than an inline span) keeps the row
+                        // uncluttered.
+                        const dateText = formatDateRange(a.date_range);
+                        const rowTitle = dateText || a.md5;
+                        // Bare presence signal (no content preview) - the row
+                        // is already tight with name + date + action buttons,
+                        // so this just answers "does this one have notes?"
+                        // without an analyst having to open it to check. It's
+                        // its own button (not nested in the name/date link)
+                        // so clicking it can jump straight to that analysis's
+                        // Notes modal instead of just the normal overview.
+                        const notesButtonHtml = a.has_notes
+                            ? `<button data-md5="${escapeHtml(a.md5)}" data-action="notes" class="previous-analysis-notes" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="View/edit notes">${NOTES_ICON_SVG}</button>`
+                            : '';
+                        return `<div class="previous-analysis-row" style="display: flex; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border-color);">
+                            <a href="?file=${escapeHtml(a.md5)}" onclick="event.preventDefault(); loadAnalysis('${escapeJsString(a.md5)}');" style="color: var(--accent); text-decoration: none; flex: 1; display: flex; align-items: baseline; gap: 8px; overflow: hidden;" title="${escapeHtml(rowTitle)}">
+                                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${FOLDER_ICON_SVG}${escapeHtml(a.name)}</span>
+                            </a>
+                            ${notesButtonHtml}
+                            <button data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="reanalyze" class="previous-analysis-reanalyze" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="Re-analyze">${REFRESH_ICON_SVG}</button>
+                            <button class="previous-analysis-delete" data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="delete" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px;" title="Delete">${DELETE_ICON_SVG}</button>
+                        </div>`;
+                    }).join('');
                 } else {
-                    previousHtml = '<span style="color: #484f58;">No previous PCAPs available</span>';
+                    previousHtml = '<span style="color: var(--bg-hover-light);">No previous analyses available</span>';
                 }
             } catch(err) {
                 console.error('Failed to load analyses:', err);
-                previousHtml = '<span style="color: #484f58;">Error loading analyses</span>';
+                previousHtml = '<span style="color: var(--bg-hover-light);">Error loading analyses</span>';
             }
+            const deleteAllButtonHtml = previousAnalysisCount > 0
+                ? `<button class="previous-analysis-delete-all" onclick="openDeleteAllAnalyses(${previousAnalysisCount})" style="border: none; cursor: pointer; font-size: 0.8rem; padding: 4px 10px; border-radius: 6px;" title="Delete all previous analyses">Delete All</button>`
+                : '';
             
             document.getElementById('inputBoxes').innerHTML = `
                 <div style="max-width: 900px; margin: 0 auto;">
                     <div style="display: flex; flex-direction: column; gap: 20px; margin-bottom: 20px;">
-                        <div style="background: #161b22; padding: 20px; border-radius: 8px; border: 1px solid #30363d; width: 100%; box-sizing: border-box;">
-                            <div style="color: #8b949e; font-size: 0.9rem; text-transform: uppercase; margin-bottom: 15px; font-weight: 600;">⬇️ Select a sample file, import a file from URL, or import a file from your local system</div>
+                        <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color); width: 100%; box-sizing: border-box;">
+                            <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; margin-bottom: 15px; font-weight: 600;">${DOWN_ARROW_ICON_SVG} Select a sample file, import a file from URL, or import a file from your local system</div>
                             <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 15px;">
-                                <div class="sample-card sample-card-red" onclick="loadSampleUrl('https://www.malware-traffic-analysis.net/2026/02/03/2026-02-03-GuLoader-for-AgentTesla-style-infection-with-FTP-data-exfil.pcap.zip')">
-                                    <span class="sample-label sample-red">Sample pcap file</span>
+                                <div class="sample-card" title="${_sampleCardTitle(DEFAULT_SAMPLE_URL)}" onclick="loadSampleUrl('${DEFAULT_SAMPLE_URL}')">
+                                     <span class="sample-label">Sample pcap file</span>
+                                 </div>
+                                <div class="sample-card" title="${_sampleCardTitle(SAMPLE_LOG_URL)}" onclick="loadSampleUrl('${SAMPLE_LOG_URL}')">
+                                    <span class="sample-label">Sample log file</span>
                                 </div>
-                                <div class="sample-card sample-card-orange" onclick="loadSampleUrl('https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES/raw/refs/heads/master/Defense%20Evasion/apt10_jjs_sideloading_prochollowing_persist_as_service_sysmon_1_7_8_13.evtx')">
-                                    <span class="sample-label sample-orange">Sample log file</span>
-                                </div>
-                                <div class="sample-card sample-card-yellow" onclick="loadSampleUrl('https://secure.eicar.org/eicar.com')">
-                                    <span class="sample-label sample-yellow">Sample binary file</span>
+                                <div class="sample-card" title="${_sampleCardTitle(SAMPLE_BINARY_URL)}" onclick="loadSampleUrl('${SAMPLE_BINARY_URL}')">
+                                    <span class="sample-label">Sample binary file</span>
                                 </div>
                             </div>
                             <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 15px;">
                                 <div style="flex: 1; text-align: center;">
-                                    <a href="https://www.malware-traffic-analysis.net/" target="_blank" rel="noopener noreferrer" style="color: #58a6ff; text-decoration: none; font-size: 0.85rem;">More pcap samples ↗</a>
+                                    <a href="https://www.malware-traffic-analysis.net/" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">More pcap samples ↗</a>
                                 </div>
                                 <div style="flex: 1; text-align: center;">
-                                    <a href="https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES" target="_blank" rel="noopener noreferrer" style="color: #58a6ff; text-decoration: none; font-size: 0.85rem;">More log samples ↗</a>
+                                    <a href="https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">More log samples ↗</a>
                                 </div>
                                 <div style="flex: 1; text-align: center;">
-                                    <a href="https://www.eicar.org/" target="_blank" rel="noopener noreferrer" style="color: #58a6ff; text-decoration: none; font-size: 0.85rem;">More binary samples ↗</a>
+                                    <a href="https://www.eicar.org/" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">More binary samples ↗</a>
                                 </div>
                             </div>
-                            <div style="text-align: center; color: #8b949e; font-size: 0.9rem; font-weight: 600; text-transform: uppercase; margin-bottom: 15px;">— OR —</div>
+                            <div style="text-align: center; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; text-transform: uppercase; margin-bottom: 15px;">— OR —</div>
                             <div style="display: flex; gap: 8px; margin-bottom: 15px;">
-                                <input type="text" id="pcapUrl" value="https://www.malware-traffic-analysis.net/2026/02/03/2026-02-03-GuLoader-for-AgentTesla-style-infection-with-FTP-data-exfil.pcap.zip" onfocus="this.value=''" onkeydown="if(event.key==='Enter')loadFromUrl()" style="background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; padding: 8px 12px; border-radius: 4px; font-size: 0.95rem; flex: 1;">
-                                <button onclick="loadFromUrl()" style="background: #58a6ff; color: #0d1117; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.95rem; border: none;">Go</button>
+                                <input type="text" id="pcapUrl" value="${DEFAULT_SAMPLE_URL}" onfocus="this.value=''" onkeydown="if(event.key==='Enter')loadFromUrl()" style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 4px; font-size: 0.95rem; flex: 1;">
+                                <button onclick="loadFromUrl()" style="background: var(--accent); color: var(--bg-primary); padding: 8px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.95rem; border: none;">Go</button>
                             </div>
-                            <div style="text-align: center; color: #8b949e; font-size: 0.9rem; font-weight: 600; text-transform: uppercase; margin-bottom: 15px;">— OR —</div>
+                            <div style="text-align: center; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; text-transform: uppercase; margin-bottom: 15px;">— OR —</div>
                             <input type="file" id="pcapUpload" onchange="uploadPcap()" style="display: none;">
-                            <div id="dropZone" style="background: #0d1117; color: #58a6ff; padding: 20px; border-radius: 4px; cursor: pointer; font-size: 0.95rem; border: 2px dashed #30363d; text-align: center; transition: border-color 0.2s, background 0.2s;"
+                            <div id="dropZone" style="background: var(--bg-primary); color: var(--accent); padding: 20px; border-radius: 4px; cursor: pointer; font-size: 0.95rem; border: 2px dashed var(--border-color); text-align: center; transition: border-color 0.2s, background 0.2s;"
                                  ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)"
                                  onclick="document.getElementById('pcapUpload').click()">
-                                <div style="font-size: 1.5rem; margin-bottom: 8px;">📂</div>
-                                <div>Choose file or drag and drop here</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="background: #161b22; padding: 20px; border-radius: 8px; border: 1px solid #30363d;">
-                        <div style="color: #8b949e; font-size: 0.9rem; text-transform: uppercase; margin-bottom: 15px; font-weight: 600;">📂 Previous Analyses</div>
-                        <div id="previousAnalysesList">${previousHtml}</div>
-                    </div>
-                    <div style="background: #161b22; padding: 20px; border-radius: 8px; border: 1px solid #30363d; margin-top: 20px;">
-                        <div style="color: #8b949e; font-size: 0.9rem; margin-bottom: 10px; text-align: center;">SO-CRATES provides basic analysis. Need more advanced functionality?<br>Take a look at the full <a href="https://securityonion.net" target="_blank" rel="noopener noreferrer" style="color: #58a6ff; text-decoration: none; font-weight: 600;">Security Onion</a> platform available in a free Community Edition!<br>If you need enterprise features, consider upgrading to <a href="https://securityonion.com/pro" target="_blank" rel="noopener noreferrer" style="color: #58a6ff; text-decoration: none; font-weight: 600;">Security Onion Pro</a>!</div>
-                        <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
-                            <thead>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <th style="text-align: left; padding: 10px; color: #8b949e; font-size: 0.8rem; text-transform: none; cursor: default;">Feature</th>
-                                    <th style="text-align: center; padding: 10px; color: #f0f6fc; font-size: 0.8rem; text-transform: none; cursor: default;">SO-CRATES</th>
-                                    <th style="text-align: center; padding: 10px; color: #f0f6fc; font-size: 0.8rem; text-transform: none; cursor: default;">Security Onion</th>
-                                    <th style="text-align: center; padding: 10px; color: #f0f6fc; font-size: 0.8rem; text-transform: none; cursor: default;">Security Onion Pro</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Import Files</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Investigate Alerts</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Slice and Dice Metadata</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Pivot to ASCII Transcript</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Download Carved PCAP</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Airgap / Offline Deployment</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Analyze Live Traffic</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Production Deployments</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Distributed Deployments</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Endpoint Visibility</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Log Management</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #30363d;">
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Case Management</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Guided Analysis</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Onion AI Assistant</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Open ID Connect (OIDC)</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">FIPS</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">STIG Compliance for the OS</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Connect API</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">External Notifications</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">Manager of Managers (MoM)</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 10px; color: #c9d1d9; font-size: 0.85rem;">MCP Server</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #484f58;">-</td>
-                                    <td style="text-align: center; padding: 8px 10px; color: #66bb6a;">✅</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                        <div style="margin-top: 15px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; font-size: 0.85rem;">
-                            <a href="https://securityonion.net" target="_blank" rel="noopener noreferrer" style="color: #58a6ff; text-decoration: none;">Security Onion</a>
-                            <span style="color: #30363d;">|</span>
-                            <a href="http://securityonion.net/docs/about" target="_blank" rel="noopener noreferrer" style="color: #58a6ff; text-decoration: none;">Security Onion Documentation</a>
-                            <span style="color: #30363d;">|</span>
-                            <a href="https://securityonion.com/pro" target="_blank" rel="noopener noreferrer" style="color: #58a6ff; text-decoration: none;">Security Onion Pro</a>
-                            <span style="color: #30363d;">|</span>
-                            <a href="http://securityonion.net/docs/security-onion-pro" target="_blank" rel="noopener noreferrer" style="color: #58a6ff; text-decoration: none;">Security Onion Pro Documentation</a>
-                        </div>
-                    </div>
-                </div>
-            `;
+                                 <div style="font-size: 1.5rem; margin-bottom: 8px;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="2 13 6 9 10 13"></polyline></svg></div>
+                                 <div>Choose file or drag and drop here</div>
+                             </div>
+                             <div id="captureSection"></div>
+                         </div>
+                     </div>
+                       <div class="previous-analyses-section" style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color);">
+                           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                               <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; font-weight: 600;">${FOLDER_OPEN_ICON_SVG} Previous Analyses</div>
+                               ${deleteAllButtonHtml}
+                           </div>
+                          <div id="previousAnalysesList">${previousHtml}</div>
+                      </div>
+                 </div>
+             `;
             
             document.getElementById('pcapUrl').value = lastSampleUrl;
+            renderCaptureSection();
+        }
+
+        // Shown only where a capture can actually run, never as a button that errors.
+        async function renderCaptureSection() {
+            const section = document.getElementById('captureSection');
+            if (!section) return;
+            let support;
+            try {
+                const resp = await fetch('/api/capture-support');
+                support = await resp.json();
+            } catch (err) {
+                return;
+            }
+            captureSupport = support;
+            if (!support.supported) return;
+            const host = escapeHtml(support.host_label || 'this host');
+            section.innerHTML = `
+                <div style="text-align: center; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; text-transform: uppercase; margin: 15px 0;">— OR —</div>
+                <div id="captureCard" onclick="showCaptureModal()" style="background: var(--bg-primary); color: var(--accent); padding: 20px; border-radius: 4px; cursor: pointer; font-size: 0.95rem; border: 2px dashed var(--border-color); text-align: center; transition: border-color 0.2s, background 0.2s;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg></div>
+                    <div>Capture live traffic from ${host}</div>
+                </div>`;
         }
         
+        // Shared by the Escape handler and showWelcome() (leaving the
+        // analysis view entirely should not leave a stale modal floating on
+        // top of it - Notes is the sharpest case since it's tied to the
+        // specific analysis being left, but none of these belong open once
+        // there's no longer an analysis page under them).
+        function closeAllModals() {
+            closeMenu();
+            closeHelpModal();
+            closeThemesModal();
+            closeSettingsModal();
+            closeErrorModal();
+            closeDeleteModal();
+            closeDeleteAllModal();
+            closeReanalyzeModal();
+            closeRulesModal();
+            closeAboutModal();
+            closeNotesModal();
+            closeSecurityOnionModal();
+            closeCaptureModal();
+        }
+
+        let keyBuffer = '';
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
-                closeHelpModal();
+                closeAllModals();
             }
             if (e.key === '?' && !e.ctrlKey && !e.altKey && !e.metaKey && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
                 e.preventDefault();
                 showHelpModal();
             }
+            if (e.key === 't' && !e.ctrlKey && !e.altKey && !e.metaKey && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA' && !e.target.isContentEditable) {
+                e.preventDefault();
+                toggleTheme();
+            }
+            // Easter eggs: type "31337" for Hacker theme, "sguil" for Sguil
+            // theme, "cga" for CGA theme, "bread" for Breadbin Blue theme,
+            // "vapor" for Vaporwave theme, "luna" for Luna Blue theme,
+            // "amber" for Amber CRT theme, "dos" for DOS Blue theme, "digit"
+            // for Digital Frontier theme, or "retro" for Retro Handheld
+            // theme. Checked with endsWith() rather than === since the
+            // buffer holds the last 5 keys typed session-wide - a code
+            // shorter than 5 characters (like "cga") would otherwise only
+            // ever match in the first few keystrokes after page load, when
+            // the buffer hasn't filled up yet.
+            const tag = e.target.tagName;
+            const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable;
+            if (!isTyping && e.key.length === 1) {
+                keyBuffer += e.key.toLowerCase();
+                if (keyBuffer.length > 5) {
+                    keyBuffer = keyBuffer.slice(-5);
+                }
+                if (keyBuffer.endsWith('31337')) {
+                    e.preventDefault();
+                    setTheme('hacker');
+                    showToast('Switched to Hacker theme. You are truly 31337!');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('sguil')) {
+                    e.preventDefault();
+                    setTheme('sguil');
+                    showToast('Switched to Sguil theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('cga')) {
+                    e.preventDefault();
+                    setTheme('cga');
+                    showToast('Switched to CGA theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('bread')) {
+                    e.preventDefault();
+                    setTheme('breadbin-blue');
+                    showToast('Switched to Breadbin Blue theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('vapor')) {
+                    e.preventDefault();
+                    setTheme('vaporwave');
+                    showToast('Switched to Vaporwave theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('luna')) {
+                    e.preventDefault();
+                    setTheme('luna-blue');
+                    showToast('Switched to Luna Blue theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('amber')) {
+                    e.preventDefault();
+                    setTheme('amber');
+                    showToast('Switched to Amber CRT theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('dos')) {
+                    e.preventDefault();
+                    setTheme('dos-blue');
+                    showToast('Switched to DOS Blue theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('digit')) {
+                    e.preventDefault();
+                    setTheme('digital-frontier');
+                    showToast('Switched to Digital Frontier theme.');
+                    keyBuffer = '';
+                }
+                if (keyBuffer.endsWith('retro')) {
+                    e.preventDefault();
+                    setTheme('retro-handheld');
+                    showToast('Switched to Retro Handheld theme.');
+                    keyBuffer = '';
+                }
+            }
         });
-        
-        // Single delegated listener for advanced toggle (prevents memory leak from repeated loadAnalysis calls)
-        function toggleDiagram() {
-            diagramMode = !diagramMode;
-            updateSankeyDiagram();
+
+        // opts.sticky: skip the auto-dismiss timeout entirely - the toast
+        // stays until the user clicks it. For messages that report an
+        // unprompted, important state change (not the routine "Switched to
+        // X theme" toasts), a fixed few-second timeout is a bad fit: the
+        // user may not even be looking at the screen when it fires, and a
+        // longer message needs more time to read than a short one -
+        // rather than guess a duration, just wait for acknowledgement.
+        // opts.actionLabel/opts.onAction: optional inline link shown after
+        // the message; clicking it dismisses the toast and runs onAction.
+        function showToast(message, opts) {
+            opts = opts || {};
+            document.querySelectorAll('.socrates-toast').forEach(t => t.remove());
+            const toast = document.createElement('div');
+            toast.className = 'socrates-toast';
+            toast.style.cssText = 'position: fixed; bottom: 20px; right: 20px; background: var(--bg-secondary); color: var(--accent); border: 1px solid var(--accent); padding: 12px 20px; border-radius: 6px; font-family: inherit; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: opacity 0.5s;';
+
+            const text = document.createElement('span');
+            text.textContent = message;
+            toast.appendChild(text);
+
+            function dismiss() {
+                toast.style.opacity = '0';
+                setTimeout(function() { toast.remove(); }, 500);
+            }
+
+            if (opts.actionLabel && opts.onAction) {
+                const link = document.createElement('a');
+                link.href = '#';
+                link.textContent = opts.actionLabel;
+                link.style.cssText = 'margin-left: 12px; color: var(--accent); text-decoration: underline; font-weight: 600;';
+                link.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dismiss();
+                    opts.onAction();
+                };
+                toast.appendChild(link);
+            }
+
+            document.body.appendChild(toast);
+
+            if (opts.sticky) {
+                toast.style.cursor = 'pointer';
+                toast.addEventListener('click', dismiss);
+            } else {
+                setTimeout(dismiss, 2000);
+            }
         }
-        
-        function toggleAggregations() {
+
+        // Only one file from a multi-file ZIP is ever analyzed (the first
+        // PCAP, or the first non-hidden file if there's no PCAP) - the
+        // server reports how many others were dropped so this isn't
+        // silent data loss the user has no way to notice.
+        function notifyIfFilesSkipped(result) {
+            if (result && result.filesSkipped) {
+                const plural = result.filesSkipped === 1 ? 'file was' : 'files were';
+                showToast(`${result.filesSkipped} additional ${plural} in the ZIP and not analyzed`, { sticky: true });
+            }
+        }
+
+        // A manually-installed (non-Docker/Podman) deployment starts with no
+        // rules at all - unlike the container image, which bakes all three
+        // rulesets in and copies them into place before the server ever
+        // accepts a request. Nothing breaks without rules (each analyzer
+        // degrades gracefully), but results are silently emptier than
+        // expected with no indication why - nudge new manual installs at the
+        // Rules modal once, rather than leaving them to discover this only
+        // by noticing an analysis came back oddly empty.
+        // Unconditional (not opt-in) - unlike checkForStaleRules() below,
+        // which only nudges about rules that exist but have gone stale,
+        // "nothing was ever downloaded" means every detection engine is
+        // completely empty, important enough to always surface once
+        // rather than gate behind a setting the user hasn't found yet.
+        // Populated by checkForMissingRules() from /api/rules-info's
+        // suricata.sidRanges - the single source of truth generated from
+        // suricata_sid_ranges.SURICATA_SID_RANGES (see db.py's
+        // sid_ranges_sql_case() for the server-side equivalent). null until
+        // that fetch resolves; classifyRuleset() below handles that gap.
+        // NOTE: must stay `var` (not let) so it attaches to the global
+        // object - the JSDOM test harness assigns/reads it via separate
+        // script evaluations, same reason as currentFilters/truncatedTypes.
+        var SID_RANGES = null;
+
+        // Best-effort mapping of an alert's signature_id to the curated
+        // ruleset it most likely came from - client-side equivalent of
+        // suricata_sid_ranges.classify_alert_ruleset(). Returns '' (not
+        // 'Other / Unrecognized', which would misleadingly claim a real
+        // classification) while SID_RANGES hasn't loaded yet.
+        function classifyRuleset(sid) {
+            if (sid === undefined || sid === null || !SID_RANGES) return '';
+            const n = Number(sid);
+            if (!Number.isFinite(n)) return '';
+            for (const r of SID_RANGES) {
+                if (n >= r.min && (r.max === null || n <= r.max)) return r.label;
+            }
+            return 'Other / Unrecognized';
+        }
+
+        async function checkForMissingRules() {
+            try {
+                const resp = await fetch('/api/rules-info');
+                if (!resp.ok) return;
+                const info = await resp.json();
+                const noRules = info.suricata.count === null
+                    && info.yara.count === null
+                    && info.sigma.windows.count === null
+                    && info.sigma.linux.count === null;
+                if (noRules) {
+                    showToast('No rule sets are configured yet — Suricata/YARA/Sigma detections will be empty until you set them up.', {
+                        sticky: true,
+                        actionLabel: 'Open Rules',
+                        onAction: showRulesModal,
+                    });
+                }
+                // Populates classifyRuleset()'s cache - this call is
+                // fire-and-forget from init(), not awaited before
+                // loadAnalysis(), so on a slow connection the alert table's
+                // very first render could happen before this resolves (see
+                // classifyRuleset()). Re-render the alert section if one is
+                // already on screen so that race self-corrects immediately
+                // instead of waiting for the next unrelated interaction.
+                if (info.suricata.sidRanges) {
+                    SID_RANGES = info.suricata.sidRanges;
+                    if (document.getElementById('section-alert')) {
+                        buildSection('alert', tabDataCache['alert'] || []);
+                    }
+                    if (document.getElementById('section-protocol_decode')) {
+                        buildSection('protocol_decode', tabDataCache['protocol_decode'] || []);
+                    }
+                }
+            } catch (e) {
+                // Ignore - not worth surfacing an error over a background nudge
+            }
+        }
+
+        const RULESET_LABELS = { suricata: 'Suricata', yara: 'YARA', sigma: 'Sigma' };
+
+        let rulesPollInterval = null;
+        // Separate 1s ticker just for the "Updating… Ns" elapsed-time
+        // display, so it counts up every second instead of only jumping
+        // every 2s alongside rulesPollInterval's actual network fetch.
+        // Only runs while at least one ruleset update is actually in
+        // progress (started/stopped from refreshRulesModal's own
+        // anyRunning check below) - re-renders from cache, no extra
+        // network calls.
+        let rulesTickInterval = null;
+        let rulesPrevRunning = { suricata: false, yara: false, sigma: false };
+        // Client-side only (the server doesn't track a start timestamp) -
+        // set the moment a ruleset is first observed running (either just
+        // triggered, or already in flight when the modal is (re)opened) and
+        // cleared once it's no longer running. Good enough for an
+        // approximate elapsed-time display; reopening mid-update just
+        // starts the count from the reopen, not the true start.
+        let ruleUpdateStartTimes = { suricata: null, yara: null, sigma: null };
+        // Log box is collapsed by default (during and after an update) -
+        // "View Log" reveals it on demand rather than always showing the
+        // raw streaming output, which read as noisy for a plain progress
+        // indicator. Persists across poll ticks until explicitly toggled.
+        let ruleLogExpanded = { suricata: false, yara: false, sigma: false };
+        // 'success' | 'error' | null - set only on an observed running->done
+        // transition (same signal the completion toast uses), never from the
+        // server's default idle state ({running: false, done: true, error:
+        // null} even before anything has ever been triggered) - otherwise
+        // every ruleset would show a false checkmark on first load.
+        let ruleLastResult = { suricata: null, yara: null, sigma: null };
+        let lastRulesInfo = null;
+        let lastRulesStatus = null;
+
+        // name -> bool, which of info.suricata.availableSources the user has
+        // checked. Only (re)synced from the server's enabledSources when the
+        // modal is (re)opened (suricataSelectionInitialized reset in
+        // closeRulesModal(), consumed once in refreshRulesModal()) - not on
+        // every 2s poll tick, or an in-progress checkbox edit would get
+        // stomped mid-click the same way staleThresholdDaysInput would if it
+        // weren't guarded against the poll.
+        let suricataSourceSelection = {};
+        let suricataSelectionInitialized = false;
+        let suricataSourcesExpanded = false;
+
+        // Whether to leave Suricata's own bundled protocol-command-decode
+        // event rules active (e.g. "SURICATA STREAM excessive
+        // retransmissions") instead of suppressed - off by default, since
+        // these are noisy built-in stream/decoder anomaly events bundled
+        // identically into every source's own fetch, not a real per-source
+        // ruleset choice. Re-synced from info.suricata.showProtocolDecodeAlerts
+        // alongside suricataSourceSelection, guarded by the same
+        // suricataSelectionInitialized flag (see its own comment above).
+        let showProtocolDecodeAlerts = false;
+
+        function formatRuleCount(count) {
+            return (count === null || count === undefined) ? 'no rules found' : count.toLocaleString() + ' rules';
+        }
+
+        function formatRuleDate(epoch) {
+            return epoch ? new Date(epoch * 1000).toLocaleString() : 'never';
+        }
+
+        // thresholdHours comes from /api/rules-info's staleThresholdHours
+        // (server's config.RULES_MAX_AGE_HOURS) rather than a separate
+        // hardcoded constant here - this used to be its own frontend-only
+        // 30-day cutoff, independently of the backend's 'stale' field
+        // (used by checkForStaleRules()'s notification), so the same
+        // ruleset could show as fresh here while triggering that
+        // notification, or vice versa. Both now agree by construction.
+        function isRulesetStale(epoch, thresholdHours) {
+            return !epoch || (Date.now() - epoch * 1000) > thresholdHours * 3600000;
+        }
+
+        // Flags an "updated" date as stale (or missing) so an analyst
+        // notices at a glance without having to do the date math themselves.
+        function formatDateSpan(epoch, thresholdHours) {
+            const style = isRulesetStale(epoch, thresholdHours) ? ' style="color: var(--badge-warning-text);"' : '';
+            return `<span${style}>${formatRuleDate(epoch)}</span>`;
+        }
+
+        // Canonical source for each ruleset - same projects/links listed in
+        // docs/credits.md - shown in the Rules modal so an analyst knows
+        // what they're pulling in before clicking Update.
+        // Suricata deliberately excluded - unlike YARA/Sigma, it's no
+        // longer a single fixed source now that sources are individually
+        // enable/disable-able (see renderRuleSection()'s suricata-specific
+        // branch below), so a single hardcoded "(Emerging Threats Open)"
+        // link would misname whatever's actually enabled.
+        const RULESET_SOURCES = {
+            yara: { label: 'YARA Forge', url: 'https://github.com/YARAHQ/yara-forge' },
+            sigma: { label: 'SigmaHQ', url: 'https://github.com/SigmaHQ/sigma' },
+        };
+
+        function formatElapsed(seconds) {
+            if (seconds < 60) return `${seconds}s`;
+            return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+        }
+
+        function renderRuleSection(name, label, countText, statusEntry, isLast) {
+            const logText = statusEntry.lines.join('\n');
+            const source = RULESET_SOURCES[name];
+            const expanded = ruleLogExpanded[name];
+            const startTime = ruleUpdateStartTimes[name];
+            const lastResult = ruleLastResult[name];
+            const resultIcon = !statusEntry.running && lastResult
+                ? `<span style="color: ${lastResult === 'error' ? 'var(--badge-danger-text)' : 'var(--badge-success-text)'};" title="${lastResult === 'error' ? 'Last update failed' : 'Last update succeeded'}">${lastResult === 'error' ? X_ICON_SVG : CHECKMARK_ICON_SVG}</span>`
+                : '';
+            // The Update button already reads "Updating…" while running, so
+            // a separate line repeating "Updating…" alongside it (its only
+            // other job being the elapsed-seconds counter) was pure
+            // redundancy - the spinner+counter now render directly inside
+            // the button itself instead (see updateButtonLabel below).
+            const updateButtonLabel = statusEntry.running
+                ? `<span class="rule-spinner"></span>Updating… ${startTime ? formatElapsed(Math.max(0, Math.round((Date.now() - startTime) / 1000))) : ''}`
+                : 'Update';
+            const logToggle = logText
+                ? `<button onclick="toggleRuleLog('${name}')" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">${expanded ? 'Hide Log' : 'View Log'}</button>`
+                : '';
+            const sectionDivider = isLast ? '' : 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--bg-hover);';
+            // Suricata's heading link opens the sources picker
+            // (toggleSuricataSources()) instead of linking to one
+            // hardcoded source's site - see the RULESET_SOURCES comment
+            // above for why a static "(Emerging Threats Open)" link would
+            // be inaccurate now. This is the *only* trigger for the picker
+            // - it used to be duplicated with a separate "Choose Rulesets"
+            // button in renderSuricataSourcesSection(), which was pure
+            // redundancy once this heading link did the same thing, so
+            // that button was removed in favor of this one label reflecting
+            // expanded/collapsed state.
+            const sourceLink = source
+                ? `<a href="${source.url}" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.8rem; margin-left: 6px;">(${source.label})</a>`
+                : `<button onclick="toggleSuricataSources()" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; margin-left: 6px;">(${suricataSourcesExpanded ? 'Hide Rulesets' : 'Enable/Disable Rulesets'})</button>`;
+            return `
+                <div style="${sectionDivider}">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 10px;">
+                        <div>
+                            <strong style="color: var(--text-bright);">${label}</strong>
+                            ${sourceLink}
+                            <span style="color: var(--text-muted); font-size: 0.9rem;"> — ${countText}</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            ${resultIcon}
+                            ${logToggle}
+                            <button onclick="triggerRulesetUpdate('${name}')" ${statusEntry.running ? 'disabled' : ''} style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">${updateButtonLabel}</button>
+                        </div>
+                    </div>
+                    ${expanded && logText ? `<div class="rule-update-log" data-ruleset="${name}">${escapeHtml(logText)}</div>` : ''}
+                </div>
+            `;
+        }
+
+        // Additive to renderRuleSection('suricata', ...) above - a
+        // collapsible checkbox list of the curated free/non-commercial
+        // suricata-update sources (info.suricata.availableSources, the
+        // single source of truth read from the server so this never drifts
+        // from suricata_analyzer.SURICATA_RULE_SOURCES). Collapsed by
+        // default, same disclosure pattern as the update log's View/Hide Log.
+        function renderSuricataSourcesSection(info) {
+            const available = (info.suricata && info.suricata.availableSources) || {};
+            const names = Object.keys(available);
+            if (!names.length) return '';
+            const rows = names.map(function(name) {
+                const src = available[name];
+                const checked = suricataSourceSelection[name] ? 'checked' : '';
+                // Surfaces per-source caveats worth knowing before enabling
+                // (e.g. ipfire/dbl's ~51 MiB / 30+ second first fetch) plus
+                // a generic "needs internet the first time" callout for any
+                // source bakedIn=false doesn't cover - both driven from
+                // SURICATA_RULE_SOURCES/BAKED_IN_SURICATA_SOURCES server-side,
+                // not hardcoded per-source here, so a future addition to
+                // either automatically gets the same treatment.
+                const notes = [];
+                if (src.note) notes.push(src.note);
+                if (src.bakedIn === false) notes.push("not included in the app image - needs internet the first time it's enabled");
+                // An inline "WARNING!" marker with the detail in its title
+                // tooltip, rather than always-visible text - a full note
+                // rendered inline forced a horizontal scrollbar in this
+                // list's narrow two-column layout (columns: 2 below). title
+                // only reaches mouse users though - iOS/Android don't show
+                // it on tap (no hover state) - so it's also a tap/click
+                // target that shows the same text as a toast, which works
+                // on touch.
+                const noteText = notes.join(' - ');
+                const noteHtml = notes.length
+                    ? `<span title="${escapeHtml(noteText)}" onclick="event.preventDefault(); event.stopPropagation(); showToast('${escapeJsString(noteText)}')" style="color: var(--badge-warning-text); font-size: 0.7rem; font-weight: bold; cursor: help; white-space: nowrap;">WARNING!</span>`
+                    : '';
+                // break-inside: avoid keeps one entry from being split
+                // across the column break below.
+                // Same checkbox-as-slider markup/class as helpShowAgain and
+                // every theme toggle (see .theme-switch/.theme-switch-slider
+                // in socrates.css) - reused rather than a new style, so it
+                // follows the current theme's palette like those already do.
+                return `
+                    <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 0.85rem; color: var(--text-primary); cursor: pointer; break-inside: avoid;">
+                        <span class="theme-switch">
+                            <input type="checkbox" ${checked} onchange="handleSuricataSourceToggle('${name}', this.checked)">
+                            <span class="theme-switch-slider"></span>
+                        </span>
+                        <span>${escapeHtml(src.label)}</span>
+                        <a href="${src.url}" target="_blank" rel="noopener noreferrer" style="color: var(--text-muted); font-size: 0.75rem; text-decoration: none;" onclick="event.stopPropagation()">(source)</a>
+                        ${noteHtml}
+                    </label>`;
+            }).join('');
+            // Excludes any not-baked-in source (currently just IPFire DBL)
+            // from "Enable All" rather than a blanket enable-everything -
+            // same bakedIn criterion the WARNING! marker uses above, so the
+            // button's label and its actual behavior can't drift apart, and
+            // a future source in the same situation is automatically
+            // excluded (and named here) too, without another code change.
+            // Users are otherwise liable to click Enable All without ever
+            // reading that source's warning and get hit with its slow first
+            // fetch unexpectedly.
+            const notBakedIn = names.filter(function(n) { return available[n].bakedIn === false; });
+            const enableAllLabel = notBakedIn.length
+                ? `Enable All (except ${notBakedIn.map(function(n) { return available[n].label; }).join(', ')})`
+                : 'Enable All';
+            const bulkLinks = `
+                <div style="display: flex; justify-content: center; gap: 10px; margin-bottom: 6px;">
+                    <button onclick="enableAllSuricataSources()" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.75rem; text-decoration: underline;">${escapeHtml(enableAllLabel)}</button>
+                    <button onclick="resetSuricataSourcesToDefault()" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.75rem; text-decoration: underline;">Revert to Default (ET Open)</button>
+                </div>`;
+            // A classtype-based filter, not a per-source choice - every
+            // curated source above bundles an identical copy of Suricata's
+            // own built-in stream/decoder anomaly rules (e.g. "SURICATA
+            // STREAM excessive retransmissions"), so this can't be one more
+            // row in the per-source list. Off by default (matches
+            // showProtocolDecodeAlerts's own default) - these events are
+            // noise for most analysts, not a per-traffic-content alert.
+            const decodeAlertsRow = `
+                <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--bg-hover);">
+                    <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 0.85rem; color: var(--text-primary); cursor: pointer;">
+                        <span class="theme-switch">
+                            <input type="checkbox" ${showProtocolDecodeAlerts ? 'checked' : ''} onchange="handleShowProtocolDecodeAlertsToggle(this.checked)">
+                            <span class="theme-switch-slider"></span>
+                        </span>
+                        <span>Show protocol-anomaly noise alerts <span style="color: var(--text-muted);">("Generic Protocol Command Decode", e.g. excessive retransmissions - off by default)</span></span>
+                    </label>
+                </div>`;
+            // No trigger button here anymore - the Suricata heading's own
+            // "(Enable/Disable Rulesets)"/"(Hide Rulesets)" link
+            // (renderRuleSection()) is the only way to expand/collapse
+            // this, so when collapsed there's nothing to render at all.
+            return suricataSourcesExpanded
+                ? `<div style="margin-top: 8px;">${decodeAlertsRow}${bulkLinks}<div class="suricata-sources-list" style="columns: 2; column-gap: 16px; max-height: 260px; overflow-y: auto; border: 1px solid var(--bg-hover); border-radius: 6px; padding: 4px 12px;">${rows}</div></div>`
+                : '';
+        }
+
+        // Only one of the three per-ruleset logs and the Suricata sources
+        // list may be open at a time - opening any of them collapses
+        // whichever of the other three was open, so the modal's total
+        // height stays bounded instead of stacking multiple long disclosed
+        // sections and forcing a vertical scrollbar.
+        function collapseAllRulesDisclosures() {
+            ruleLogExpanded = { suricata: false, yara: false, sigma: false };
+            suricataSourcesExpanded = false;
+        }
+
+        function toggleSuricataSources() {
+            const opening = !suricataSourcesExpanded;
+            collapseAllRulesDisclosures();
+            suricataSourcesExpanded = opening;
+            reRenderRulesModalFromCache();
+        }
+
+        function handleSuricataSourceToggle(name, checked) {
+            suricataSourceSelection[name] = checked;
+        }
+
+        function handleShowProtocolDecodeAlertsToggle(checked) {
+            showProtocolDecodeAlerts = checked;
+        }
+
+        // Skips any not-baked-in source (bakedIn === false) - see the
+        // enableAllLabel comment in renderSuricataSourcesSection() for why:
+        // the button's own label names exactly what this skips, driven from
+        // the same bakedIn field, so they can't disagree.
+        function enableAllSuricataSources() {
+            const available = (lastRulesInfo && lastRulesInfo.suricata && lastRulesInfo.suricata.availableSources) || {};
+            Object.keys(available).forEach(function(name) {
+                suricataSourceSelection[name] = available[name].bakedIn !== false;
+            });
+            reRenderRulesModalFromCache();
+        }
+
+        // Checks et/open and unchecks everything else, rather than
+        // unchecking everything - an all-unchecked state used to be how
+        // "Disable All" worked, relying on _reconcile_suricata_sources()'s
+        // empty-selection fallback to DEFAULT_SURICATA_SOURCES (['et/open'])
+        // once Update was actually clicked. That left the checkboxes lying
+        // about the pending state: closing the modal without clicking
+        // Update (nothing was ever POSTed) and reopening it re-synced
+        // suricataSourceSelection from the server's still-unchanged
+        // enabledSources, so et/open silently reappeared checked. Checking
+        // it here up front keeps the checkbox truthful before *and* after
+        // Update is clicked.
+        function resetSuricataSourcesToDefault() {
+            const available = (lastRulesInfo && lastRulesInfo.suricata && lastRulesInfo.suricata.availableSources) || {};
+            // Server-provided, not hardcoded here - DEFAULT_SURICATA_SOURCES
+            // in suricata_analyzer.py is the single source of truth (see
+            // /api/rules-info's defaultSources field), same reasoning as
+            // reading bakedIn instead of hardcoding which sources are
+            // baked in.
+            const defaultSources = (lastRulesInfo && lastRulesInfo.suricata && lastRulesInfo.suricata.defaultSources) || [];
+            Object.keys(available).forEach(function(name) {
+                suricataSourceSelection[name] = defaultSources.includes(name);
+            });
+            reRenderRulesModalFromCache();
+        }
+
+        function toggleRuleLog(name) {
+            const opening = !ruleLogExpanded[name];
+            collapseAllRulesDisclosures();
+            ruleLogExpanded[name] = opening;
+            reRenderRulesModalFromCache();
+        }
+
+        function renderRulesModalBody(info, status) {
+            const t = _resolveStaleThresholdHours(info.staleThresholdHours);
+            const suricataText = `${formatRuleCount(info.suricata.count)} — updated ${formatDateSpan(info.suricata.updated, t)}`;
+            const yaraText = `${formatRuleCount(info.yara.count)} — updated ${formatDateSpan(info.yara.updated, t)}`;
+            // Combined into one count/date like Suricata/YARA - Windows and
+            // Linux stay two separate underlying files (analysis still
+            // auto-picks the matching one per artifact, see detect_os() in
+            // sigma_analyzer.py), this only changes what's *reported* here.
+            // null total only when neither has ever been downloaded; the
+            // reported "updated" is the older of the two dates present
+            // (mirrors get_suricata_rules_info()'s "oldest active file"
+            // convention - the least-fresh ruleset is what should count as
+            // stale, not whichever happened to refresh most recently).
+            const sigmaTotalCount = (info.sigma.windows.count === null && info.sigma.linux.count === null)
+                ? null
+                : (info.sigma.windows.count || 0) + (info.sigma.linux.count || 0);
+            const sigmaUpdated = [info.sigma.windows.updated, info.sigma.linux.updated]
+                .filter(function(e) { return e !== null && e !== undefined; })
+                .sort(function(a, b) { return a - b; })[0] ?? null;
+            const sigmaText = `${formatRuleCount(sigmaTotalCount)} — updated ${formatDateSpan(sigmaUpdated, t)}`;
+            // Ordered shortest-to-longest output (YARA/Sigma are a couple
+            // lines; Suricata's suricata-update log can run to dozens of
+            // lines) so the two quick summaries are visible without
+            // scrolling past the long, variable-length Suricata log first.
+            return (
+                renderRuleSection('yara', RULESET_LABELS.yara, yaraText, status.yara, false) +
+                renderRuleSection('sigma', RULESET_LABELS.sigma, sigmaText, status.sigma, false) +
+                renderRuleSection('suricata', RULESET_LABELS.suricata, suricataText, status.suricata, true) +
+                renderSuricataSourcesSection(info)
+            );
+        }
+
+        // Replacing innerHTML wholesale on every poll tick would otherwise
+        // reset each log box's scroll position to the top every ~2s
+        // indefinitely (polling never stops while the modal is open) -
+        // keyed by ruleset name (not index) since a ruleset's log box only
+        // exists once it has lines, so the set of visible boxes can change
+        // between ticks. Factored out from refreshRulesModal so
+        // toggleRuleLog() can re-render from the last-fetched data
+        // instantly, without waiting on a fresh fetch just to flip a
+        // View/Hide Log button.
+        function renderRulesModalBodyIntoDom(info, status) {
+            const modalBody = document.getElementById('rulesModalBody');
+            // Replacing innerHTML destroys any in-progress text selection
+            // (e.g. the user highlighting a log line to copy it) even though
+            // the visible text is unchanged - a fresh DOM node isn't the same
+            // node the Selection API is anchored to. Skip this tick entirely
+            // while the user has an active selection inside the modal, same
+            // "don't yank it out from under them" idea as refreshRulesModal's
+            // document.activeElement guard on the days input.
+            const selection = window.getSelection();
+            if (selection && !selection.isCollapsed && modalBody.contains(selection.anchorNode)) {
+                return;
+            }
+            const scrollPositions = {};
+            modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
+                scrollPositions[el.dataset.ruleset] = el.scrollTop;
+            });
+            // Same problem as the log boxes above - the checkbox list is
+            // its own scrollable container (see renderSuricataSourcesSection)
+            // and gets wiped by the innerHTML replacement below on every 2s
+            // poll tick just like they do.
+            const sourcesListEl = modalBody.querySelector('.suricata-sources-list');
+            const sourcesScrollTop = sourcesListEl ? sourcesListEl.scrollTop : null;
+            modalBody.innerHTML = renderRulesModalBody(info, status);
+            modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
+                if (el.dataset.ruleset in scrollPositions) {
+                    el.scrollTop = scrollPositions[el.dataset.ruleset];
+                }
+            });
+            if (sourcesScrollTop !== null) {
+                const newSourcesListEl = modalBody.querySelector('.suricata-sources-list');
+                if (newSourcesListEl) newSourcesListEl.scrollTop = sourcesScrollTop;
+            }
+        }
+
+        // Shared by every client-side-only change (log toggle, source
+        // checkbox, threshold input) that wants the modal to reflect it
+        // immediately from the last-fetched data, without waiting on the
+        // next 2s poll tick. A no-op before the first successful poll,
+        // since there's nothing cached yet to re-render.
+        function reRenderRulesModalFromCache() {
+            if (lastRulesInfo && lastRulesStatus) {
+                renderRulesModalBodyIntoDom(lastRulesInfo, lastRulesStatus);
+            }
+        }
+
+        // Polls while the modal is open (stops on close) rather than
+        // continuing in the background like the old single-job modal did -
+        // three independent completion timers isn't worth the complexity;
+        // the jobs themselves keep running server-side regardless, and
+        // reopening the modal always reflects current truth.
+        async function refreshRulesModal() {
+            try {
+                const [infoResp, statusResp] = await Promise.all([
+                    fetch('/api/rules-info'),
+                    fetch('/api/rule-update-status'),
+                ]);
+                const info = await infoResp.json();
+                const status = await statusResp.json();
+                if (!suricataSelectionInitialized) {
+                    suricataSourceSelection = {};
+                    (info.suricata.enabledSources || []).forEach(function(name) {
+                        suricataSourceSelection[name] = true;
+                    });
+                    showProtocolDecodeAlerts = !!info.suricata.showProtocolDecodeAlerts;
+                    suricataSelectionInitialized = true;
+                }
+                ['suricata', 'yara', 'sigma'].forEach(function(name) {
+                    if (status[name].running && !ruleUpdateStartTimes[name]) {
+                        ruleUpdateStartTimes[name] = Date.now();
+                    } else if (!status[name].running) {
+                        ruleUpdateStartTimes[name] = null;
+                    }
+                    if (rulesPrevRunning[name] && !status[name].running) {
+                        ruleLastResult[name] = status[name].error ? 'error' : 'success';
+                        showToast(status[name].error
+                            ? (RULESET_LABELS[name] + ' update error: ' + status[name].error)
+                            : (RULESET_LABELS[name] + ' rules updated'));
+                    }
+                    rulesPrevRunning[name] = status[name].running;
+                });
+                lastRulesInfo = info;
+                lastRulesStatus = status;
+                renderRulesModalBodyIntoDom(info, status);
+                const anyRunning = ['suricata', 'yara', 'sigma'].some(n => status[n].running);
+                document.getElementById('updateAllRulesBtn').disabled = anyRunning;
+                if (anyRunning && !rulesTickInterval) {
+                    rulesTickInterval = setInterval(reRenderRulesModalFromCache, 1000);
+                } else if (!anyRunning && rulesTickInterval) {
+                    clearInterval(rulesTickInterval);
+                    rulesTickInterval = null;
+                }
+                // Reflects the effective threshold (override if set, else
+                // the server default) - but never while the user has this
+                // field focused, since refreshRulesModal() polls every 2s
+                // and would otherwise yank a value they're mid-typing.
+                const daysInput = document.getElementById('staleThresholdDaysInput');
+                if (daysInput && document.activeElement !== daysInput) {
+                    daysInput.value = getUserStaleThresholdDays() ?? Math.round(info.staleThresholdHours / 24);
+                }
+            } catch (e) {
+                // Ignore -- next poll will retry.
+            }
+        }
+
+        // expandSuricataSources: true opens the modal with the sources
+        // picker already expanded (e.g. the welcome help table's "Multiple
+        // Rulesets" link) rather than requiring an extra click on "(Show
+        // Rulesets)" once the modal is already open. Must be set before
+        // refreshRulesModal()'s first render below, not after.
+        // Live-capture modal. captureSupport is fetched once per open so a
+        // machine that gains capture permission mid-session picks it up.
+        let captureSupport = null;
+        let capturePollInterval = null;
+
+        function formatCaptureBytes(bytes) {
+            if (bytes < 1024) return `${bytes} B`;
+            if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+            return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+        }
+
+        function captureDurationOptions() {
+            const max = captureSupport ? captureSupport.max_duration : 3600;
+            return [30, 60, 300, 900].filter(s => s <= max);
+        }
+
+        function renderCaptureForm() {
+            const support = captureSupport;
+            const body = document.getElementById('captureModalBody');
+            if (!body) return;
+            if (!support || !support.supported) {
+                const reason = support && support.reason ? support.reason : 'Live capture is not available.';
+                body.innerHTML = `<div style="color: var(--text-muted); font-size: 0.9rem; line-height: 1.5;">${escapeHtml(reason)}</div>`;
+                return;
+            }
+            const ifaceOptions = support.interfaces.map(i => {
+                const label = i.address ? `${i.name} — ${i.address}` : i.name;
+                const selected = i.name === support.default_interface ? ' selected' : '';
+                return `<option value="${escapeHtml(i.name)}"${selected}>${escapeHtml(label)}</option>`;
+            }).join('');
+            const presets = captureDurationOptions().map(s => {
+                const label = s >= 60 ? `${s / 60} min` : `${s}s`;
+                return `<button type="button" class="modal-btn-secondary" onclick="setCaptureDuration(${s})" style="padding: 4px 12px; font-size: 0.85rem;">${label}</button>`;
+            }).join('');
+            body.innerHTML = `
+                <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px; line-height: 1.5;">
+                    Captures traffic on this machine's own interface and runs it straight through Suricata, YARA and the rest of the pipeline. Nothing leaves the host.
+                </div>
+                <div style="margin-bottom: 14px;">
+                    <label for="captureInterface" style="display: block; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; font-weight: 600; margin-bottom: 6px;">Interface</label>
+                    <select id="captureInterface" class="settings-text-input" style="width: 100%;">${ifaceOptions}</select>
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <label for="captureDuration" style="display: block; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; font-weight: 600; margin-bottom: 6px;">How long should we capture?</label>
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <input type="number" id="captureDuration" class="settings-text-input" min="1" max="${support.max_duration}" value="${support.default_duration}" style="width: 110px;">
+                        <span style="color: var(--text-muted); font-size: 0.9rem;">seconds</span>
+                        ${presets}
+                    </div>
+                </div>
+                <div id="captureFormError" style="color: var(--severity-high, #e06c75); font-size: 0.85rem; margin-bottom: 10px; display: none;"></div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 12px; border-top: 1px solid var(--bg-hover);">
+                    <button class="modal-btn-secondary" onclick="closeCaptureModal()">Cancel</button>
+                    <button class="modal-btn-primary" id="captureStartBtn" onclick="startCapture()">Start Capture</button>
+                </div>`;
+        }
+
+        function setCaptureDuration(seconds) {
+            const input = document.getElementById('captureDuration');
+            if (input) input.value = String(seconds);
+        }
+
+        function renderCaptureProgress(state) {
+            const body = document.getElementById('captureModalBody');
+            if (!body) return;
+            const duration = state.duration || 1;
+            const pct = state.running
+                ? Math.min(100, Math.round((state.elapsed / duration) * 100))
+                : 100;
+            const packets = state.packets === null || state.packets === undefined
+                ? '—' : String(state.packets);
+            const heading = state.running
+                ? `Capturing on ${escapeHtml(state.interface || '')} — ${state.remaining}s left`
+                : (state.error ? 'Capture failed' : 'Capture complete');
+            const lines = (state.lines || []).map(l => `<div>${escapeHtml(l)}</div>`).join('');
+            const stopButton = state.running
+                ? `<button class="modal-btn-secondary" id="captureStopBtn" onclick="stopCapture()">Stop &amp; Analyze Now</button>`
+                : `<button class="modal-btn-secondary" onclick="closeCaptureModal()">Close</button>`;
+            body.innerHTML = `
+                <div style="font-weight: 600; margin-bottom: 12px;">${heading}</div>
+                <div style="background: var(--bg-primary); border-radius: 6px; height: 10px; overflow: hidden; margin-bottom: 14px;">
+                    <div style="background: var(--accent); height: 100%; width: ${pct}%; transition: width 0.4s;"></div>
+                </div>
+                <div style="display: flex; gap: 20px; flex-wrap: wrap; color: var(--text-muted); font-size: 0.9rem; margin-bottom: 14px;">
+                    <div>Elapsed <span style="color: var(--text-primary); font-weight: 600;">${state.elapsed}s</span></div>
+                    <div>Captured <span style="color: var(--text-primary); font-weight: 600;">${formatCaptureBytes(state.bytes || 0)}</span></div>
+                    <div>Packets <span style="color: var(--text-primary); font-weight: 600;">${packets}</span></div>
+                </div>
+                <div style="background: var(--bg-primary); border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 0.8rem; color: var(--text-muted); max-height: 140px; overflow-y: auto; margin-bottom: 14px;">${lines || '<div>Starting…</div>'}</div>
+                ${state.error ? `<div style="color: var(--severity-high, #e06c75); font-size: 0.85rem; margin-bottom: 10px;">${escapeHtml(state.error)}</div>` : ''}
+                <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 12px; border-top: 1px solid var(--bg-hover);">${stopButton}</div>`;
+        }
+
+        async function refreshCaptureStatus() {
+            let state;
+            try {
+                const resp = await fetch('/api/capture-status');
+                state = await resp.json();
+            } catch (err) {
+                return;
+            }
+            if (!document.getElementById('captureModal').classList.contains('active')) return;
+            renderCaptureProgress(state);
+            if (state.running) return;
+
+            stopCapturePolling();
+            if (state.md5) {
+                closeCaptureModal();
+                await loadAnalysis(state.md5);
+                await checkStatus(state.md5, 'network');
+            }
+        }
+
+        function stopCapturePolling() {
+            if (capturePollInterval) {
+                clearInterval(capturePollInterval);
+                capturePollInterval = null;
+            }
+        }
+
+        async function startCapture() {
+            const durationInput = document.getElementById('captureDuration');
+            const errorBox = document.getElementById('captureFormError');
+            const duration = parseInt(durationInput.value, 10);
+            const max = captureSupport.max_duration;
+            if (!Number.isInteger(duration) || duration < 1 || duration > max) {
+                errorBox.textContent = `Enter a duration between 1 and ${max} seconds.`;
+                errorBox.style.display = 'block';
+                return;
+            }
+            const iface = document.getElementById('captureInterface').value;
+            document.getElementById('captureStartBtn').disabled = true;
+            try {
+                const resp = await fetch('/api/capture', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({duration: duration, interface: iface})
+                });
+                const result = await resp.json();
+                if (!resp.ok || result.error) {
+                    errorBox.textContent = result.error || 'Could not start capture';
+                    errorBox.style.display = 'block';
+                    document.getElementById('captureStartBtn').disabled = false;
+                    return;
+                }
+            } catch (err) {
+                errorBox.textContent = err.message;
+                errorBox.style.display = 'block';
+                document.getElementById('captureStartBtn').disabled = false;
+                return;
+            }
+            renderCaptureProgress({running: true, elapsed: 0, remaining: duration,
+                                   duration: duration, bytes: 0, packets: null,
+                                   interface: iface, lines: [], error: null});
+            stopCapturePolling();
+            capturePollInterval = setInterval(refreshCaptureStatus, 1000);
+        }
+
+        async function stopCapture() {
+            const btn = document.getElementById('captureStopBtn');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Stopping…';
+            }
+            try {
+                await fetch('/api/capture-stop', {method: 'POST'});
+            } catch (err) {
+                showToast('Could not stop the capture');
+            }
+        }
+
+        async function showCaptureModal() {
+            closeOtherMenuModals('captureModal');
+            document.getElementById('captureModal').classList.add('active');
+            document.getElementById('captureModalBody').innerHTML = 'Loading...';
+            try {
+                const resp = await fetch('/api/capture-support');
+                captureSupport = await resp.json();
+            } catch (err) {
+                captureSupport = {supported: false, reason: 'Could not reach the server'};
+            }
+            document.getElementById('captureModalTitle').textContent =
+                `Capture from ${captureSupport.host_label || 'this host'}`;
+            let running = null;
+            try {
+                const resp = await fetch('/api/capture-status');
+                running = await resp.json();
+            } catch (err) {
+                running = null;
+            }
+            if (running && running.running) {
+                renderCaptureProgress(running);
+                stopCapturePolling();
+                capturePollInterval = setInterval(refreshCaptureStatus, 1000);
+                return;
+            }
+            renderCaptureForm();
+        }
+
+        function closeCaptureModal() {
+            stopCapturePolling();
+            document.getElementById('captureModal').classList.remove('active');
+        }
+
+        async function showRulesModal(expandSuricataSources) {
+            closeOtherMenuModals('rulesModal');
+            document.getElementById('checkForStaleRules').checked = safeStorageGet(localStorage, 'socrates_checkForStaleRules') === 'true';
+            if (expandSuricataSources) {
+                collapseAllRulesDisclosures();
+                suricataSourcesExpanded = true;
+            }
+            document.getElementById('rulesModal').classList.add('active');
+            await refreshRulesModal();
+            if (!rulesPollInterval) {
+                rulesPollInterval = setInterval(refreshRulesModal, 2000);
+            }
+        }
+
+        function closeRulesModal() {
+            document.getElementById('rulesModal').classList.remove('active');
+            if (rulesPollInterval) {
+                clearInterval(rulesPollInterval);
+                rulesPollInterval = null;
+            }
+            if (rulesTickInterval) {
+                clearInterval(rulesTickInterval);
+                rulesTickInterval = null;
+            }
+            // Re-sync the checkbox selection from the server next time the
+            // modal opens, in case another tab/session changed it.
+            suricataSelectionInitialized = false;
+        }
+
+        async function triggerRulesetUpdate(name) {
+            const body = { ruleset: name };
+            if (name === 'suricata' || name === 'all') {
+                body.sources = Object.keys(suricataSourceSelection).filter(k => suricataSourceSelection[k]);
+                body.showProtocolDecodeAlerts = showProtocolDecodeAlerts;
+            }
+            await fetch('/api/update-rules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            await refreshRulesModal();
+            // Only (re)start polling if the modal is still open - closing it
+            // (Escape/backdrop/close button) while this fetch/refresh was
+            // still in flight already cleared rulesPollInterval, and restarting
+            // it here unconditionally would leak an indefinite background
+            // poll of a hidden modal.
+            const rulesModal = document.getElementById('rulesModal');
+            if (!rulesPollInterval && rulesModal && rulesModal.classList.contains('active')) {
+                rulesPollInterval = setInterval(refreshRulesModal, 2000);
+            }
+        }
+
+        async function toggleDiagram() {
+            diagramMode = !diagramMode;
+            if (diagramMode) {
+                const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
+                const eventType = visibleSection ? visibleSection.id.replace('section-', '') : null;
+                if (eventType && eventType !== 'sigmaalert' && eventType !== 'log'
+                    && Object.keys(currentFilters).length > 0) {
+                    await ensureCappedBatch(eventType);
+                }
+            }
+            updateFilterBarVisibility();
+            await updateSankeyDiagram();
+        }
+
+        async function toggleAggregations() {
             advancedMode = !advancedMode;
             const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
             if (!visibleSection) {
                 // Binary analysis mode: no tab sections, rebuild aggregations directly
                 const fileAlerts = allEvents.filter(e => e.event_type === 'filealerts');
-                const filtered = fileAlerts.filter(e => {
-                    for (const [col, val] of Object.entries(currentFilters)) {
-                        if (extractValue(e, col, -1) !== val) return false;
-                    }
-                    return true;
-                });
+                const filtered = fileAlerts.filter(e => matchesCurrentFilters(e, (ev, col) => extractValue(ev, col, -1)));
                 if (advancedMode) {
                     hiddenAggregations = new Set();
                     buildBinaryAggregations(filtered);
@@ -1056,13 +3839,20 @@
                     const aggContainer = document.getElementById('aggregations');
                     if (aggContainer) aggContainer.innerHTML = AGG_COLLAPSED_HTML;
                 }
+                updateFilterBarVisibility();
                 return;
             }
             const eventType = visibleSection.id.replace('section-', '');
             if (advancedMode) {
+                // needsFullBatch (not an unconditional ensureCappedBatch) so
+                // opening the aggregation view for an eligible pcap per-type
+                // tab with no active filter goes straight through
+                // buildAggregationsSection's own server-aggregation branch
+                // instead of always eagerly fetching the full capped batch.
+                if (needsFullBatch(eventType)) await ensureCappedBatch(eventType);
                 hiddenAggregations = new Set();
                 if (eventType === 'all') {
-                    buildAggregationsSectionAll();
+                    await buildAggregationsSectionAll();
                 } else if (isLogAnalysisMode && eventType === 'log') {
                     const events = tabDataCache['log'] || [];
                     const filtered = getFilteredLogEvents(events);
@@ -1072,9 +3862,9 @@
                     const filtered = getFilteredSigmaAlerts(alerts);
                     buildSigmaAlertAggregations(filtered, visibleSection.id);
                 } else {
-                    const events = tabDataCache[eventType] || sections[eventType] || [];
+                    const events = tabDataCache[eventType] || [];
                     const filtered = getFilteredEvents(visibleSection.id, events, eventType);
-                    buildAggregationsSection(eventType, filtered);
+                    await buildAggregationsSection(eventType, filtered);
                 }
             } else {
                 const aggContainer = document.getElementById('aggregations');
@@ -1082,11 +3872,13 @@
                     aggContainer.innerHTML = AGG_COLLAPSED_HTML;
                 }
             }
+            updateFilterBarVisibility();
         }
         
         const typeLabels = {
             alert: 'Network Alerts',
             anomaly: 'Anomalies',
+            protocol_decode: 'Decoder Alerts',
             dns: 'DNS Queries',
             filealerts: 'File Alerts',
             fileinfo: 'File Info',
@@ -1096,7 +3888,19 @@
             log: 'Log Events',
             sigmaalert: 'Sigma Alerts',
             stats: 'Stats',
-            tls: 'TLS'
+            tls: 'TLS',
+            // Every other event_type falls back to type.toUpperCase() below
+            // (e.g. 'smtp' -> 'SMTP'), which is fine for a single short
+            // word/acronym - but bittorrent_dht and ftp_data are the only
+            // two raw type names with an underscore, and .stat-label's
+            // word-break: keep-all (so ordinary words never wrap mid-word)
+            // means an underscore-joined fallback can't wrap at all,
+            // overflowing a narrow stat-card (e.g. "BITTORRENT_DHT" on a
+            // sample with 20+ event types squeezing the grid). A real
+            // space here gives the label a wrap point like every other
+            // multi-word entry above already has.
+            bittorrent_dht: 'BitTorrent DHT',
+            ftp_data: 'FTP Data'
         };
         
         function buildSankeyData(events) {
@@ -1143,7 +3947,6 @@
                     const bv = Array.from(linkMap.values()).filter(l => l.source === b.id || l.target === b.id).reduce((s, l) => s + l.value, 0);
                     return bv - av;
                 });
-                const keepIds = new Set(columnNodes.slice(0, limit).map(n => n.id));
                 const otherId = addNode('Other', columnIndex);
 
                 for (const node of columnNodes.slice(limit)) {
@@ -1174,9 +3977,9 @@
                 for (const [k, v] of newLinks) { linkMap.set(k, v); }
             }
 
-            capColumn(0, 50);
-            capColumn(1, 50);
-            capColumn(2, 50);
+            for (let i = 0; i < 3; i++) {
+                capColumn(i, CONFIG.SANKEY_MAX_NODES_PER_COLUMN);
+            }
 
             return { nodes: Array.from(nodeMap.values()), links: Array.from(linkMap.values()) };
         }
@@ -1299,11 +4102,11 @@
             if (eventType === 'all') {
                 return getFilteredEvents(visibleSection.id, allEvents, 'all');
             }
-            const events = tabDataCache[eventType] || sections[eventType] || [];
+            const events = tabDataCache[eventType] || [];
             return getFilteredEvents(visibleSection.id, events, eventType);
         }
 
-        function updateSankeyDiagram() {
+        async function updateSankeyDiagram() {
             const sankeyPanel = document.getElementById('sankeyPanel');
             if (!sankeyPanel) return;
             sankeyPanel.innerHTML = '';
@@ -1312,21 +4115,50 @@
                 sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▸ Sankey Diagram</div>';
                 return;
             }
-            const events = getSankeyEvents();
-            if (!events || events.length === 0) {
+
+            sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▾ Sankey Diagram</div><div style="padding:20px;color:var(--text-muted);display:flex;align-items:center;gap:8px;"><span class="ascii-loading"></span>Loading Sankey diagram...</div>';
+
+            const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
+            const eventType = visibleSection ? visibleSection.id.replace('section-', '') : null;
+
+            // bumpSankeyFetchGeneration(), not bumpFetchGeneration() - see
+            // that counter's own comment for why Sankey staleness must not
+            // be tracked against the shared one.
+            const gen = bumpSankeyFetchGeneration();
+            let data;
+            try {
+                if (canUseServerSankey(eventType)) {
+                    data = await fetchSankeyData(eventType);
+                } else {
+                    data = buildSankeyData(getSankeyEvents());
+                }
+            } catch (e) {
+                // Without this, a network hiccup or a bad/oversized
+                // response on a large sample (e.g. a 200K+ event analysis)
+                // left the panel stuck on "Loading Sankey diagram..."
+                // forever - the "Loading..." markup was already written
+                // above and nothing downstream ever ran to replace it.
+                if (isStaleSankeyFetch(gen)) return;
+                console.error('Failed to load Sankey diagram:', e);
+                sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▾ Sankey Diagram</div><div style="padding:20px;color:var(--text-muted);">Error loading Sankey diagram</div>';
+                return;
+            }
+            if (isStaleSankeyFetch(gen)) return;
+
+            if (!data || !data.nodes || data.nodes.length === 0) {
                 sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▾ Sankey Diagram</div>';
                 return;
             }
             sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▾ Sankey Diagram</div><div class="sankey-content"></div>';
             const svgContainer = sankeyPanel.querySelector('.sankey-content');
-            const data = buildSankeyData(events);
             renderSankeySVG(data, svgContainer);
         }
 
         function getColumnsForType(eventType) {
             switch(eventType) {
                 case 'alert':
-                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Alert', 'Category', 'Severity'];
+                case 'protocol_decode':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Alert', 'Category', 'Ruleset', 'Severity'];
                 case 'dns':
                     return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Query', 'Type'];
                 case 'http':
@@ -1339,6 +4171,14 @@
                     return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Filename'];
                 case 'filealerts':
                     return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Rule Name', 'Tags'];
+                case 'modbus':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Function', 'Unit ID', 'Access Type', 'Category', 'Error Flags'];
+                case 'dnp3':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Type', 'Source Addr', 'Dest Addr', 'Function'];
+                case 'pgsql':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Query', 'Command', 'Rows', 'SSL'];
+                case 'enip':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Command', 'Status'];
                 case 'log': {
                     const logEvents = tabDataCache['log'] || [];
                     const cols = discoverLogColumns(logEvents);
@@ -1349,38 +4189,210 @@
                 }
                 case 'sigmaalert':
                     return ['Time', 'Severity', 'Rule', 'MITRE Technique', 'Log Source'];
+                case 'quic':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'SNI', 'QUIC Version', 'JA3', 'JA3S'];
+                case 'dhcp':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'DHCP Type', 'Client MAC', 'Assigned IP', 'Hostname'];
+                case 'ftp_data':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'FTP Command', 'Filename'];
+                case 'smb':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'SMB Command', 'Filename', 'Share', 'SMB User'];
+                case 'ssh':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Client Version', 'Server Version'];
+                case 'krb5':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Client', 'Service', 'Realm', 'Error Code'];
+                case 'sip':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'SIP Method', 'URI', 'SIP Code', 'Reason'];
+                case 'snmp':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'SNMP Version', 'PDU Type', 'Community'];
+                case 'mqtt':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'MQTT Type', 'Topic', 'Client ID'];
+                case 'dcerpc':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Interface UUID', 'Opnum', 'Call ID'];
+                case 'rdp':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'RDP Event', 'Cookie', 'Client Name'];
+                case 'tftp':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Packet', 'File', 'Mode'];
+                case 'ike':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Exchange Type', 'IKE Version', 'Init SPI'];
+                case 'nfs':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Procedure', 'Filename'];
+                case 'rfb':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Client Version', 'Server Version', 'Security Type'];
+                case 'bittorrent_dht':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Request Type', 'Info Hash'];
+                case 'smtp':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Helo', 'Mail From', 'Rcpt To'];
+                case 'ftp':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Command', 'Command Data', 'Completion Code', 'Reply'];
+                case 'anomaly':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Event', 'Type', 'Layer', 'App Proto'];
+                case 'ntp':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Version', 'Mode', 'Stratum', 'Reference ID'];
+                case 'websocket':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Opcode', 'Fin', 'Payload'];
+                case 'pop3':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Command', 'Args', 'Status'];
+                case 'mdns':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Query', 'Type'];
+                case 'ldap':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Operation', 'Message ID', 'Result Code'];
+                case 'arp':
+                    return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Opcode', 'Src MAC', 'Dest MAC'];
+                case 'all':
+                    return ALL_EVENTS_COLUMNS;
                 default:
                     return ['Time', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port'];
             }
         }
         
-        function buildRowForEvent(e) {
+        // A fixed, unlabeled trailing note-icon cell shared by every row
+        // renderer - not one of the sortable `columns` a table declares
+        // (adding it there would shift every sort-column index), so it's
+        // baked directly into each renderer's own markup and into
+        // renderPaginatedTable's header instead.
+        //
+        // Only rendered for a row that already HAS a note - same
+        // omit-entirely convention as the Previous Analyses list's own
+        // notes button (has_notes: false -> no button at all), rather than
+        // a muted-vs-accent color distinction that's hard to tell apart on
+        // some themes. A note-less row shows nothing here; adding a first
+        // note happens from the expanded detail panel instead (see
+        // rowNoteDetailHtml below), not from this collapsed-row cell.
+        //
+        // id is passed through escapeJsString like note, not interpolated
+        // raw, even though it's always a real SQL integer in production -
+        // same "escape every onclick argument regardless of expected type"
+        // convention buildLogEventRow/buildSigmaAlertRow already use for
+        // their own detailId. openRowNoteEditor parses it back to a number.
+        function rowNoteIconHtml(table, id, note) {
+            if (!(note && note.trim())) return '<td class="row-note-cell"></td>';
+            const preview = note.slice(0, 200);
+            return `<td class="row-note-cell" onclick="event.preventDefault(); event.stopPropagation();"><span class="row-note-icon" onclick="openRowNoteEditor('${table}', '${escapeJsString(String(id))}', '${escapeJsString(note)}')" title="${escapeHtml(preview)}" style="cursor: pointer; color: var(--accent);">${NOTES_ICON_SVG}</span></td>`;
+        }
+
+        // The value half of the detail panel's Note row, split out from
+        // rowNoteDetailHtml below so saveAnalysisNotes() can refresh just
+        // this span in place after a save - the detail panel is rendered
+        // once and only toggled visible/hidden (see toggleRow), not
+        // re-rendered on each expand, so without this the panel would go
+        // on showing the pre-save "+ Add Note" link/stale text until the
+        // whole table next re-renders. The "detail-value" class matches
+        // every other value cell's styling; "row-note-detail-value" is the
+        // stable hook for that in-place replacement.
+        function rowNoteDetailValueHtml(table, id, note) {
+            const has = !!(note && note.trim());
+            const idJs = escapeJsString(String(id));
+            const noteJs = escapeJsString(note || '');
+            const editLink = `<a href="#" onclick="event.preventDefault(); openRowNoteEditor('${table}', '${idJs}', '${noteJs}');" style="color: var(--accent); text-decoration: none;">${has ? 'Edit' : '+ Add Note'}</a>`;
+            const value = has ? `${escapeHtml(note)} ${editLink}` : editLink;
+            return `<span class="detail-value row-note-detail-value">${value}</span>`;
+        }
+
+        // The "Add Note" / "Edit Note" row for an expanded detail panel -
+        // embeds directly into an already-open display:grid detail
+        // section, preceded by its own section divider (same htmlSection
+        // convention as "Connection"/"Alert Details"/"DNS Details" etc.)
+        // so it reads as a distinct section rather than one more row
+        // blended into whatever type-specific section happens to precede
+        // it. A fixed accent color (not a per-event-type COLORS.EVENT
+        // entry) since this section means the same thing regardless of
+        // which event type it's attached to, and ties visually to the
+        // note icon/links, which already use the same color. The
+        // label/value pair after it is a plain span pair, same shape
+        // htmlRow produces (not reused directly since the value half
+        // needs its own targetable class - see rowNoteDetailValueHtml
+        // above). This is the ONLY way to add a first note to a row (see
+        // rowNoteIconHtml above); editing an existing one works from
+        // either place.
+        function rowNoteDetailHtml(table, id, note) {
+            return htmlSection('Notes', 'var(--accent)') + `<span class="detail-label">Note</span>${rowNoteDetailValueHtml(table, id, note)}`;
+        }
+
+        // Row-cell pivot menu (Include/Exclude/Only, see handleRowCellClick)
+        // data, baked once per row at render time rather than resolved from
+        // a click-time id lookup - this is the ONE place that needs
+        // touching per table type (not every individual <td> in every
+        // event-type case of buildRowForEvent's switch) since it emits a
+        // single data-pivot attribute on the <tr> covering every cell.
+        //
+        // data-pivot is a JSON array of [column, value] pairs (or null),
+        // index-aligned with the row's rendered <td> DOM position - NOT
+        // filtered down to just the pivotable columns, since
+        // handleRowCellClick locates an entry purely by the clicked cell's
+        // DOM child index. 'Time' is always null: excluded for the same
+        // reason buildAggregationTablesCore's own excludeCols already
+        // excludes it from that click-to-filter feature - a raw timestamp
+        // is a poor Include/Exclude/Only target. An empty/missing value is
+        // also null, so clicking a blank cell just falls through to the
+        // normal row-expand behavior instead of offering to filter on ''.
+        //
+        // extractFn must be whichever of extractValue/extractAllValue/
+        // extractLogValue/extractSigmaValue this table's own filtering
+        // (matchesCurrentFilters call site) already uses for eventType, so
+        // a value clicked here is guaranteed to compare equal against that
+        // same column's value on every other row once applied as a filter.
+        function pivotDataAttrsHtml(e, eventType, columns, extractFn) {
+            const pairs = columns.map((col, i) => {
+                if (col === 'Time') return null;
+                const val = extractFn(e, col, i);
+                return (val === '' || val === null || val === undefined) ? null : [col, val];
+            });
+            // encodeURIComponent, not escapeHtml - a column value can be
+            // arbitrary attacker-influenced content (a log field, an HTTP
+            // header...) containing JSON's own '"' delimiter, which
+            // escapeHtml would turn into literal &quot; text sitting
+            // *inside* this already-double-quoted HTML attribute. Real
+            // browsers parse/serialize that back correctly (attribute
+            // values only strictly need their delimiter quote and '&'
+            // escaped, not '<'/'>'), so it isn't actually exploitable, but
+            // it does mean a naive "does the rendered HTML string contain
+            // '<script>'" check can false-positive on it. Percent-encoding
+            // sidesteps the whole question - the attribute value is plain
+            // ASCII with no HTML-meaningful characters at all.
+            return ` data-event-type="${escapeHtml(eventType)}" data-pivot="${encodeURIComponent(JSON.stringify(pairs))}"`;
+        }
+
+        // Shared leading cells for every per-type event row: timestamp, proto
+        // badge, and the source/dest IP:PORT columns.
+        function rowPrefixCells(e) {
             const ts = (e.timestamp || '').slice(0, 19);
-            const etype = e.event_type || '';
             const proto = e.proto || '';
             const srcIp = e.src_ip || '';
             const srcPort = e.src_port || '';
             const dstIp = e.dest_ip || '';
             const dstPort = e.dest_port || '';
+            const eventType = e.event_type || '';
+            const pivotAttrs = pivotDataAttrsHtml(e, eventType, getColumnsForType(eventType), extractValue);
+            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs} onclick="toggleRow(this, event)"><td class="timestamp">${escapeHtml(ts)}</td><td>${valueDotSpan(DOT_COLORS.PROTO[proto.toUpperCase()])}${escapeHtml(proto)}</td><td class="mono-fixed" title="${escapeHtml(srcIp)}">${escapeHtml(srcIp)}</td><td class="mono-fixed">${escapeHtml(String(srcPort))}</td><td class="mono-fixed" title="${escapeHtml(dstIp)}">${escapeHtml(dstIp)}</td><td class="mono-fixed">${escapeHtml(String(dstPort))}</td>`;
+        }
+
+        function buildRowForEvent(e) {
+            const etype = e.event_type || '';
             const formatted = formatEvent(e);
-            
+
             let row = '';
             let colSpan = 6;
-            
+
             switch(etype) {
                 case 'alert':
+                case 'protocol_decode':
                     const sig = e.alert?.signature || 'N/A';
                     const cat = e.alert?.category || '';
+                    const ruleset = classifyRuleset(e.alert?.signature_id);
                     const sev = e.alert?.severity || 0;
                     const sevColor = COLORS.SEVERITY[sev] || COLORS.SEVERITY.default;
-                    colSpan = 9;
-                    row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td>${escapeHtml(sig)}</td><td><span class="badge badge-danger">${escapeHtml(cat)}</span></td><td><span class="badge" style="background:${sevColor}33;color:${sevColor}">Sev ${sev}</span></td></tr>`;
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(sig)}</td><td>${escapeHtml(cat)}</td><td>${escapeHtml(ruleset)}</td><td>${valueDotSpan(sevColor)}Sev ${sev}</td></tr>`;
                     break;
                 case 'dns':
-                    const rrname = e.dns?.rrname || '';
-                    const rrtype = e.dns?.rrtype || '';
+                    // Suricata 8's new V3 DNS logging format moved rrname/
+                    // rrtype off the top level into queries[0] - see the
+                    // 'Query'/'Type' cases in extractValue for details.
+                    const rrname = e.dns?.rrname || e.dns?.queries?.[0]?.rrname || '';
+                    const rrtype = e.dns?.rrtype || e.dns?.queries?.[0]?.rrtype || '';
                     colSpan = 8;
-                    row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td class="mono">${escapeHtml(rrname)}</td><td><span class="badge badge-info">${escapeHtml(rrtype)}</span></td></tr>`;
+                    row = rowPrefixCells(e) + `<td class="mono">${escapeHtml(rrname)}</td><td>${valueDotSpan(DOT_COLORS.DNS_TYPE[rrtype.toUpperCase()])}${escapeHtml(rrtype)}</td></tr>`;
                     break;
                 case 'http':
                     const method = e.http?.http_method || '';
@@ -1388,18 +4400,18 @@
                     const url = e.http?.url || '';
                     const status = e.http?.status || '';
                     const ua = (e.http?.http_user_agent || '').slice(0, CONFIG.TLS_ISSUER_MAX_LENGTH);
-                    const statusBadge = status && parseInt(status) < 400 ? 'badge-success' : status && parseInt(status) < 500 ? 'badge-warning' : 'badge-danger';
+                    const statusColor = status && parseInt(status) < 400 ? 'var(--badge-success-text)' : status && parseInt(status) < 500 ? 'var(--badge-warning-text)' : 'var(--badge-danger-text)';
                     colSpan = 11;
-                    row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td><span class="badge badge-info">${escapeHtml(method)}</span></td><td class="mono">${escapeHtml(host)}</td><td class="mono">${escapeHtml(url)}</td><td>${escapeHtml(ua)}</td><td><span class="badge ${statusBadge}">${escapeHtml(String(status))}</span></td></tr>`;
+                    row = rowPrefixCells(e) + `<td>${valueDotSpan(DOT_COLORS.HTTP_METHOD[method.toUpperCase()])}${escapeHtml(method)}</td><td class="mono">${escapeHtml(host)}</td><td class="mono">${escapeHtml(url)}</td><td>${escapeHtml(ua)}</td><td>${valueDotSpan(statusColor)}${escapeHtml(String(status))}</td></tr>`;
                     break;
                 case 'tls':
                     const sni = e.tls?.sni || '-';
                     const version = e.tls?.version || '-';
-                    const subject = (e.tls?.subject || '-').slice(0, 40);
+                    const subject = (e.tls?.subject || '-').slice(0, CONFIG.TLS_SUBJECT_MAX_LENGTH);
                     let issuer = e.tls?.issuerdn || '-';
                     if (issuer && issuer.includes('CN=')) issuer = issuer.split('CN=')[1].split(',')[0];
                     colSpan = 10;
-                    row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td class="mono">${escapeHtml(sni)}</td><td><span class="badge badge-info">${escapeHtml(version)}</span></td><td class="mono">${escapeHtml(subject)}</td><td class="mono">${escapeHtml(issuer.slice(0, CONFIG.TLS_ISSUER_MAX_LENGTH))}</td></tr>`;
+                    row = rowPrefixCells(e) + `<td class="mono">${escapeHtml(sni)}</td><td>${valueDotSpan(tlsVersionColor(version))}${escapeHtml(version)}</td><td class="mono">${escapeHtml(subject)}</td><td class="mono">${escapeHtml(issuer.slice(0, CONFIG.TLS_ISSUER_MAX_LENGTH))}</td></tr>`;
                     break;
                 case 'flow':
                     const pktsTs = e.flow?.pkts_toserver || 0;
@@ -1408,29 +4420,245 @@
                     const bytesTc = e.flow?.bytes_toclient || 0;
                     const state = e.flow?.state || '';
                     const alerted = e.flow?.alerted || false;
-                    const alertedBadge = alerted ? 'badge-danger' : 'badge-success';
+                    const alertedColor = alerted ? 'var(--badge-danger-text)' : 'var(--badge-success-text)';
                     const alertedText = alerted ? 'Yes' : 'No';
                     colSpan = 12;
-                    row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td>${escapeHtml(String(pktsTs.toLocaleString()))}</td><td>${escapeHtml(String(pktsTc.toLocaleString()))}</td><td>${escapeHtml(String(bytesTs.toLocaleString()))}</td><td>${escapeHtml(String(bytesTc.toLocaleString()))}</td><td>${escapeHtml(state)}</td><td><span class="badge ${alertedBadge}">${escapeHtml(alertedText)}</span></td></tr>`;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(String(pktsTs.toLocaleString()))}</td><td>${escapeHtml(String(pktsTc.toLocaleString()))}</td><td>${escapeHtml(String(bytesTs.toLocaleString()))}</td><td>${escapeHtml(String(bytesTc.toLocaleString()))}</td><td>${escapeHtml(state)}</td><td>${valueDotSpan(alertedColor)}${escapeHtml(alertedText)}</td></tr>`;
                     break;
                 case 'fileinfo':
                     const filename = e.fileinfo?.filename || '';
                     colSpan = 7;
-                    row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td class="mono">${escapeHtml(filename)}</td></tr>`;
+                    row = rowPrefixCells(e) + `<td class="mono">${escapeHtml(filename)}</td></tr>`;
                     break;
                 case 'filealerts':
                     const fa = e.filealerts || {};
                     const ruleName = fa.rule_name || 'N/A';
                     const tagsHtml = (fa.tags || []).map(t => yaraTagBadgeHtml(t)).join('');
                     colSpan = 8;
-                    row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><span class="badge" style="background:${COLORS.FILE_ALERT.bg};color:${COLORS.FILE_ALERT.text}">${escapeHtml(ruleName)}</span></td><td>${tagsHtml}</td></tr>`;
+                    row = rowPrefixCells(e) + `<td style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(ruleName)}</td><td>${tagsHtml}</td></tr>`;
                     break;
+                case 'modbus': {
+                    const mr = e.modbus?.request || {};
+                    colSpan = 11;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(mr.function_code || '')}</td><td>${escapeHtml(String(mr.unit_id || ''))}</td><td>${escapeHtml(mr.access_type || '')}</td><td>${escapeHtml(mr.category || '')}</td><td>${escapeHtml(mr.error_flags || '')}</td></tr>`;
+                    break;
+                }
+                case 'dnp3': {
+                    const dnp = e.dnp3 || {};
+                    const dnpType = dnp.type || dnp.request?.type || dnp.response?.type || '';
+                    const dnpSrc = dnp.src !== undefined ? dnp.src : (dnp.request?.src !== undefined ? dnp.request.src : '');
+                    const dnpDst = dnp.dst !== undefined ? dnp.dst : (dnp.request?.dst !== undefined ? dnp.request.dst : '');
+                    const dnpFunc = dnp.application?.function_code !== undefined ? dnp.application.function_code : (dnp.request?.application?.function_code !== undefined ? dnp.request.application.function_code : (dnp.response?.application?.function_code !== undefined ? dnp.response.application.function_code : ''));
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(dnpType)}</td><td>${escapeHtml(String(dnpSrc))}</td><td>${escapeHtml(String(dnpDst))}</td><td>${escapeHtml(String(dnpFunc))}</td></tr>`;
+                    break;
+                }
+                case 'pgsql': {
+                    const pq = e.pgsql || {};
+                    const pqQuery = (pq.request?.simple_query || '').slice(0, 60);
+                    const pqCmd = pq.response?.command_completed || '';
+                    const pqRows = pq.response?.data_rows !== undefined ? pq.response.data_rows : '';
+                    const pqSsl = pq.response?.ssl_accepted !== undefined ? (pq.response.ssl_accepted ? 'Yes' : 'No') : '';
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td class="mono" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(pq.request?.simple_query || '')}">${escapeHtml(pqQuery)}</td><td>${escapeHtml(pqCmd)}</td><td>${escapeHtml(String(pqRows))}</td><td>${escapeHtml(pqSsl)}</td></tr>`;
+                    break;
+                }
+                case 'enip': {
+                    const en = e.enip || {};
+                    const enCommand = en.request?.command || en.response?.command || '';
+                    const enStatus = en.response?.status || en.request?.status || '';
+                    colSpan = 8;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(enCommand)}</td><td>${escapeHtml(enStatus)}</td></tr>`;
+                    break;
+                }
+                case 'quic': {
+                    const q = e.quic || {};
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td class="mono">${escapeHtml(q.sni || '')}</td><td>${escapeHtml(q.version || '')}</td><td class="mono" title="${escapeHtml(q.ja3?.string || '')}">${escapeHtml(q.ja3?.hash || '')}</td><td class="mono" title="${escapeHtml(q.ja3s?.string || '')}">${escapeHtml(q.ja3s?.hash || '')}</td></tr>`;
+                    break;
+                }
+                case 'dhcp': {
+                    const dh = e.dhcp || {};
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(dh.dhcp_type || dh.type || '')}</td><td class="mono">${escapeHtml(dh.client_mac || '')}</td><td class="mono">${escapeHtml(dh.assigned_ip || '')}</td><td>${escapeHtml(dh.hostname || '')}</td></tr>`;
+                    break;
+                }
+                case 'ftp_data': {
+                    const fd = e.ftp_data || {};
+                    colSpan = 8;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(fd.command || '')}</td><td class="mono">${escapeHtml(fd.filename || '')}</td></tr>`;
+                    break;
+                }
+                case 'smb': {
+                    const sm = e.smb || {};
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(sm.command || '')}</td><td class="mono">${escapeHtml(sm.filename || '')}</td><td>${escapeHtml(sm.share || '')}</td><td>${escapeHtml(sm.ntlmssp?.user || sm.kerberos?.cname || '')}</td></tr>`;
+                    break;
+                }
+                case 'ssh': {
+                    const sh = e.ssh || {};
+                    colSpan = 8;
+                    row = rowPrefixCells(e) + `<td class="mono">${escapeHtml(sh.client?.software_version || '')}</td><td class="mono">${escapeHtml(sh.server?.software_version || '')}</td></tr>`;
+                    break;
+                }
+                case 'krb5': {
+                    const kb = e.krb5 || {};
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(kb.cname || '')}</td><td>${escapeHtml(kb.sname || '')}</td><td>${escapeHtml(kb.realm || '')}</td><td>${escapeHtml(kb.error_code || '')}</td></tr>`;
+                    break;
+                }
+                case 'sip': {
+                    const sp = e.sip || {};
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(sp.method || '')}</td><td class="mono">${escapeHtml(sp.uri || '')}</td><td>${escapeHtml(String(sp.code || ''))}</td><td>${escapeHtml(sp.reason || '')}</td></tr>`;
+                    break;
+                }
+                case 'snmp': {
+                    const sn = e.snmp || {};
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(String(sn.version || ''))}</td><td>${escapeHtml(sn.pdu_type || '')}</td><td>${escapeHtml(sn.community || '')}</td></tr>`;
+                    break;
+                }
+                case 'mqtt': {
+                    const mq = e.mqtt || {};
+                    const mqttType = Object.keys(mq)[0] || '';
+                    const mqttSub = mq[mqttType] || {};
+                    const topic = mqttSub.topic || (mqttSub.topics || []).map(t => t.topic || t).join(', ') || '';
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(mqttType)}</td><td class="mono">${escapeHtml(topic)}</td><td>${escapeHtml(mqttSub.client_id || '')}</td></tr>`;
+                    break;
+                }
+                case 'dcerpc': {
+                    const dc = e.dcerpc || {};
+                    const dcUuid = (dc.interfaces || [])[0]?.uuid || '';
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td class="mono">${escapeHtml(dcUuid)}</td><td>${escapeHtml(String(dc.req?.opnum ?? dc.request?.opnum ?? ''))}</td><td>${escapeHtml(String(dc.call_id ?? ''))}</td></tr>`;
+                    break;
+                }
+                case 'rdp': {
+                    const rd = e.rdp || {};
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(rd.event_type || '')}</td><td class="mono">${escapeHtml(rd.cookie || '')}</td><td>${escapeHtml(rd.client_name || '')}</td></tr>`;
+                    break;
+                }
+                case 'tftp': {
+                    const tf = e.tftp || {};
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(tf.packet || '')}</td><td class="mono">${escapeHtml(tf.file || '')}</td><td>${escapeHtml(tf.mode || '')}</td></tr>`;
+                    break;
+                }
+                case 'ike': {
+                    const ik = e.ike || {};
+                    const ikeVersion = (ik.version_major !== undefined) ? `${ik.version_major}.${ik.version_minor || 0}` : '';
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(ik.exchange_type || '')}</td><td>${escapeHtml(ikeVersion)}</td><td class="mono">${escapeHtml(ik.init_spi || '')}</td></tr>`;
+                    break;
+                }
+                case 'nfs': {
+                    const nf = e.nfs || {};
+                    colSpan = 8;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(nf.procedure || '')}</td><td class="mono">${escapeHtml(nf.filename || '')}</td></tr>`;
+                    break;
+                }
+                case 'rfb': {
+                    const rf = e.rfb || {};
+                    const cpv = rf.client_protocol_version;
+                    const spv = rf.server_protocol_version;
+                    const clientVer = cpv ? `${cpv.major}.${cpv.minor}` : '';
+                    const serverVer = spv ? `${spv.major}.${spv.minor}` : '';
+                    const securityType = rf.authentication?.security_type;
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td class="mono">${escapeHtml(clientVer)}</td><td class="mono">${escapeHtml(serverVer)}</td><td>${escapeHtml(securityType != null ? String(securityType) : '')}</td></tr>`;
+                    break;
+                }
+                case 'bittorrent_dht': {
+                    const bt = e.bittorrent_dht || {};
+                    colSpan = 8;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(bt.request_type || bt.request?.request_type || '')}</td><td class="mono">${escapeHtml(bt.info_hash || bt.request?.info_hash || '')}</td></tr>`;
+                    break;
+                }
+                case 'smtp': {
+                    const sm2 = e.smtp || {};
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(sm2.helo || '')}</td><td class="mono">${escapeHtml(sm2.mail_from || '')}</td><td class="mono">${escapeHtml((sm2.rcpt_to || []).join(', '))}</td></tr>`;
+                    break;
+                }
+                case 'ftp': {
+                    const ft = e.ftp || {};
+                    const ftReply = (ft.reply || []).join(' | ').slice(0, 100);
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(ft.command || '')}</td><td class="mono">${escapeHtml(ft.command_data || '')}</td><td>${escapeHtml((ft.completion_code || []).join(', '))}</td><td class="mono">${escapeHtml(ftReply)}</td></tr>`;
+                    break;
+                }
+                case 'anomaly': {
+                    const an = e.anomaly || {};
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(an.event || '')}</td><td>${escapeHtml(an.type || '')}</td><td>${escapeHtml(an.layer || '')}</td><td>${escapeHtml(an.app_proto || '')}</td></tr>`;
+                    break;
+                }
+                case 'ntp': {
+                    const nt = e.ntp || {};
+                    colSpan = 10;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(nt.version !== undefined ? String(nt.version) : '')}</td><td>${escapeHtml(nt.mode !== undefined ? String(nt.mode) : '')}</td><td>${escapeHtml(nt.stratum !== undefined ? String(nt.stratum) : '')}</td><td class="mono">${escapeHtml(nt.reference_id || '')}</td></tr>`;
+                    break;
+                }
+                case 'websocket': {
+                    const ws = e.websocket || {};
+                    const payload = ws.payload_printable || ws.payload_base64 || '';
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(ws.opcode || '')}</td><td>${escapeHtml(ws.fin !== undefined ? String(ws.fin) : '')}</td><td class="mono">${escapeHtml(payload.slice(0, 100))}</td></tr>`;
+                    break;
+                }
+                case 'pop3': {
+                    const p3 = e.pop3 || {};
+                    const p3args = (p3.request?.args || []).join(' ');
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(p3.request?.command || '')}</td><td class="mono">${escapeHtml(p3args)}</td><td>${escapeHtml(p3.response?.status || '')}</td></tr>`;
+                    break;
+                }
+                case 'mdns': {
+                    const md = e.mdns || {};
+                    const mdQuery = md.queries?.[0] || {};
+                    colSpan = 8;
+                    row = rowPrefixCells(e) + `<td class="mono">${escapeHtml(mdQuery.rrname || '')}</td><td>${valueDotSpan(DOT_COLORS.DNS_TYPE[(mdQuery.rrtype || '').toUpperCase()])}${escapeHtml(mdQuery.rrtype || '')}</td></tr>`;
+                    break;
+                }
+                case 'ldap': {
+                    const ld = e.ldap || {};
+                    const ldOp = ld.request?.operation || ld.responses?.[0]?.operation || '';
+                    const ldMsgId = ld.request?.message_id !== undefined ? ld.request.message_id : (ld.responses?.[0]?.message_id !== undefined ? ld.responses[0].message_id : '');
+                    // result_code lives inside a differently-named
+                    // sub-object per operation (bind_response, search_
+                    // result_done, ...) - look for the first response with one.
+                    const ldResult = (ld.responses || []).map(r => {
+                        for (const key in r) {
+                            if (r[key] && typeof r[key] === 'object' && 'result_code' in r[key]) return r[key].result_code;
+                        }
+                        return undefined;
+                    }).find(v => v !== undefined) || '';
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(ldOp)}</td><td>${escapeHtml(String(ldMsgId))}</td><td>${escapeHtml(ldResult)}</td></tr>`;
+                    break;
+                }
+                case 'arp': {
+                    const ap = e.arp || {};
+                    colSpan = 9;
+                    row = rowPrefixCells(e) + `<td>${escapeHtml(ap.opcode || '')}</td><td class="mono">${escapeHtml(ap.src_mac || '')}</td><td class="mono">${escapeHtml(ap.dest_mac || '')}</td></tr>`;
+                    break;
+                }
                 default:
                     colSpan = 6;
-                    row = `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td></tr>`;
+                    row = rowPrefixCells(e) + `</tr>`;
             }
-            
-            return row + `<tr class="detail-row"><td colspan="${colSpan}"><div class="detail-content">${formatted}</div></td></tr>`;
+
+            // Every case above ends its row with a literal '</tr>' - insert
+            // the note-icon cell just before it rather than touching each
+            // of the ~30 cases individually, and bump colSpan by 1 here
+            // (its one point of consumption) to match, rather than at each
+            // case's own assignment.
+            row = row.slice(0, -'</tr>'.length) + rowNoteIconHtml('events', e.id, e.row_note) + '</tr>';
+
+            return row + `<tr class="detail-row"><td colspan="${colSpan + 1}"><div class="detail-content">${formatted}</div></td></tr>`;
         }
         
         function buildFileInfoHtml(events) {
@@ -1442,7 +4670,7 @@
             const strings = (meta.strings || []).slice(0, 10);
             const stringsHtml = strings.length
                 ? `<span class="value" style="word-break: break-all;">${escapeHtml(strings.join(', '))}</span>`
-                : '<span class="value" style="color: #484f58;">—</span>';
+                : '<span class="value" style="color: var(--bg-hover-light);">—</span>';
 
             const exif = meta.exif || {};
             const exifEntries = Object.entries(exif).slice(0, 12);
@@ -1452,7 +4680,7 @@
 
             return `
                 <div class="file-info-card">
-                    <h3>📄 File Info</h3>
+                    <h3>${FILE_ICON_SVG} File Info</h3>
                     <div class="file-info-grid">
                         <span class="label">Filename</span><span class="value">${escapeHtml(fi.filename || '')}</span>
                         <span class="label">Size</span><span class="value">${escapeHtml(String((fi.size || 0).toLocaleString()))} bytes</span>
@@ -1469,40 +4697,45 @@
             `;
         }
 
+        // buildBinaryYaraTable/buildBinaryAggregations each also define
+        // their own identical local ['Rule Name', 'Tags', 'Author'] array
+        // (pre-existing, left as-is) - this one is just for
+        // pivotDataAttrsHtml below, which needs it by name.
+        const BINARY_YARA_COLUMNS = ['Rule Name', 'Tags', 'Author'];
+
+        function buildBinaryYaraRow(e) {
+            const fa = e.filealerts || {};
+            const ruleName = fa.rule_name || 'N/A';
+            const tagsHtml = (fa.tags || []).map(t => yaraTagBadgeHtml(t)).join('');
+            const author = fa.author || '';
+            const formatted = formatEvent(e);
+            const pivotAttrs = pivotDataAttrsHtml(e, 'binary', BINARY_YARA_COLUMNS, extractValue);
+            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs} onclick="toggleRow(this, event)"><td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(ruleName)}</td><td>${tagsHtml}</td><td>${escapeHtml(author)}</td>${rowNoteIconHtml('events', e.id, e.row_note)}</tr><tr class="detail-row"><td colspan="4"><div class="detail-content">${formatted}</div></td></tr>`;
+        }
+
         function buildBinaryYaraTable(events) {
             const columns = ['Rule Name', 'Tags', 'Author'];
             const sorted = [...events].sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
 
             let filteredEvents = sorted;
             if (Object.keys(currentFilters).length > 0) {
-                filteredEvents = sorted.filter(e => {
-                    for (const [col, val] of Object.entries(currentFilters)) {
-                        if (extractValue(e, col, -1) !== val) return false;
-                    }
-                    return true;
-                });
+                filteredEvents = sorted.filter(e => matchesCurrentFilters(e, (ev, col) => extractValue(ev, col, -1)));
             }
 
-            const rows = filteredEvents.map(e => {
-                const fa = e.filealerts || {};
-                const ruleName = fa.rule_name || 'N/A';
-                const tagsHtml = (fa.tags || []).map(t => yaraTagBadgeHtml(t)).join('');
-                const author = fa.author || '';
-                const formatted = formatEvent(e);
-                return `<tr onclick="toggleRow(this)"><td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><span class="badge" style="background:${COLORS.FILE_ALERT.bg};color:${COLORS.FILE_ALERT.text}">${escapeHtml(ruleName)}</span></td><td>${tagsHtml}</td><td>${escapeHtml(author)}</td></tr><tr class="detail-row"><td colspan="3"><div class="detail-content">${formatted}</div></td></tr>`;
-            });
-
             let html = '<div class="section-content">';
-            if (rows.length === 0 && Object.keys(currentFilters).length > 0) {
+            if (filteredEvents.length === 0 && Object.keys(currentFilters).length > 0) {
                 html += EMPTY_FILTER_STATE_HTML;
-            } else if (rows.length === 0) {
-                html += '<div style="padding: 40px; text-align: center; color: #8b949e; font-size: 0.95rem;">No YARA matches found</div>';
+            } else if (filteredEvents.length === 0) {
+                html += '<div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.95rem;">No YARA matches found</div>';
             } else {
-                html += '<table><thead><tr>';
-                columns.forEach(h => html += `<th>${h}</th>`);
-                html += '</tr></thead><tbody>';
-                rows.forEach(r => html += r);
-                html += '</tbody></table>';
+                html += renderPaginatedTable({
+                    sectionKey: 'section-binary',
+                    columns,
+                    items: filteredEvents,
+                    extractFn: extractValue,
+                    rowRenderer: buildBinaryYaraRow,
+                    rerender: () => buildBinaryAnalysisView(allEvents)
+                });
             }
             html += '</div>';
             return html;
@@ -1520,15 +4753,11 @@
             aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + html + '</div></div>';
         }
 
-        function buildBinaryAnalysisView(events) {
+        function buildBinaryAnalysisView(events, baseEvents) {
             const fileAlerts = events.filter(e => e.event_type === 'filealerts');
-            const filteredAlerts = fileAlerts.filter(e => {
-                for (const [col, val] of Object.entries(currentFilters)) {
-                    if (extractValue(e, col, -1) !== val) return false;
-                }
-                return true;
-            });
-            const fileInfoHtml = buildFileInfoHtml(events);
+            const filteredAlerts = fileAlerts.filter(e => matchesCurrentFilters(e, (ev, col) => extractValue(ev, col, -1)));
+            const fileInfoSource = baseEvents || baseAllEvents || events;
+            const fileInfoHtml = buildFileInfoHtml(fileInfoSource);
             const fileInfoContainer = document.getElementById('fileInfoContainer');
             if (fileInfoContainer) {
                 fileInfoContainer.innerHTML = fileInfoHtml;
@@ -1548,10 +4777,22 @@
             const detail = getLogEventSmartDetail(jsonData);
             const detailTruncated = detail.length > 120 ? detail.slice(0, 117) + '...' : detail;
             const detailId = 'log-detail-' + (evt.row_id || ++_detailIdCounter);
-            const safeDetailId = escapeHtml(String(detailId));
-            const totalCols = 2 + (columns ? columns.length : 0); // Time + [cols] + Detail
+            // id attribute needs HTML escaping; the onclick argument also
+            // needs JS-string escaping (escapeHtml alone would let a quote
+            // break out of the JS string after attribute decoding).
+            const detailIdAttr = escapeHtml(String(detailId));
+            const detailIdJs = escapeJsString(String(detailId));
+            const totalCols = 3 + (columns ? columns.length : 0); // Time + [cols] + Detail + Note
 
-            let row = `<tr onclick="toggleLogRow(this, '${safeDetailId}')">`;
+            // Mirrors getColumnsForType('log')'s own ['Time', ...labels,
+            // 'Detail'] shape, but built from the columns already passed in
+            // here rather than calling getColumnsForType('log') (which
+            // re-derives columns via discoverLogColumns() by rescanning
+            // every cached log event - fine once per table render, but
+            // O(rows) work that must not run again per row).
+            const pivotColumns = ['Time', ...(columns || []).map(c => c.label), 'Detail'];
+            const pivotAttrs = pivotDataAttrsHtml(evt, 'log', pivotColumns, extractLogValue);
+            let row = `<tr data-id="${escapeHtml(String(evt.id))}"${pivotAttrs} onclick="toggleLogRow(this, '${detailIdJs}', event)">`;
             row += `<td class="timestamp">${timestamp}</td>`;
             if (columns) {
                 columns.forEach(c => {
@@ -1563,18 +4804,29 @@
                     } else {
                         val = getLogColumnValue(evt, c.field);
                     }
-                    row += `<td>${val ? escapeHtml(val) : '<span style="color:#8b949e;">—</span>'}</td>`;
+                    row += `<td>${val ? escapeHtml(val) : '<span style="color:var(--text-muted);">—</span>'}</td>`;
                 });
             }
-            row += `<td>${detailTruncated ? escapeHtml(detailTruncated) : '<span style="color:#8b949e;">—</span>'}</td>`;
+            row += `<td>${detailTruncated ? escapeHtml(detailTruncated) : '<span style="color:var(--text-muted);">—</span>'}</td>`;
+            row += rowNoteIconHtml('events', evt.id, evt.row_note);
             row += '</tr>';
 
             const detailHtml = formatLogEventDetail(jsonData);
-            row += `<tr class="detail-row" id="${safeDetailId}"><td colspan="${totalCols}"><div class="log-detail-panel">${detailHtml}</div></td></tr>`;
+            // formatLogEventDetail is also reused nested inside a Sigma
+            // alert's own detail panel (the "Matched Event" sub-section,
+            // see formatSigmaAlertDetail) where a note row would belong to
+            // the wrong thing - the embedded raw log, not the alert - so
+            // the note row is appended here at this call site instead of
+            // inside formatLogEventDetail itself, in its own small grid
+            // rather than assuming formatLogEventDetail's own grid is
+            // still open (it isn't - its markup is already closed).
+            const noteHtml = `<div style="display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 8px 12px; font-size: 0.9rem; margin-top: 10px;">${rowNoteDetailHtml('events', evt.id, evt.row_note)}</div>`;
+            row += `<tr class="detail-row" id="${detailIdAttr}"><td colspan="${totalCols}"><div class="log-detail-panel">${detailHtml}${noteHtml}</div></td></tr>`;
             return row;
         }
 
-        function toggleLogRow(tr, detailId) {
+        function toggleLogRow(tr, detailId, event) {
+            if (handleRowCellClick(tr, event)) return;
             const detailRow = document.getElementById(detailId);
             if (detailRow) {
                 tr.classList.toggle('expanded-row');
@@ -1584,44 +4836,45 @@
 
         function buildSigmaAlertRow(alert) {
             const sev = (alert.severity || 'low').toLowerCase();
-            const sevClass = `sigma-severity-${sev.replace(/[^a-z]/g, '')}`;
+            const sevColor = DOT_COLORS.SIGMA_SEVERITY[sev] || DOT_COLORS.SIGMA_SEVERITY.informational;
             const ruleTitle = escapeHtml(alert.rule_title || 'Unknown');
             const ruleId = escapeHtml(alert.rule_id || '');
             const timestamp = escapeHtml(alert.timestamp || '');
             const logsource = escapeHtml(alert.logsource || '');
 
-            let mitreHtml = '';
-            try {
-                const techniques = JSON.parse(alert.mitre_techniques || '[]');
-                mitreHtml = techniques.map(t => {
-                    const tid = t.replace(/^attack\./i, '').toUpperCase();
-                    return `<a href="https://attack.mitre.org/techniques/${encodeURIComponent(tid)}/" target="_blank" rel="noopener noreferrer" class="mitre-tag">${escapeHtml(tid)}</a>`;
-                }).join('');
-            } catch(e) {
-                mitreHtml = '';
-            }
+            const mitreHtml = mitreTechniquesHtml(alert.mitre_techniques);
 
             const detailId = 'sigma-detail-' + (alert.id || Math.random().toString(36).substr(2, 9));
-            const safeDetailId = escapeHtml(String(detailId));
+            // See buildLogEventRow: attribute escaping vs JS-string escaping.
+            const detailIdAttr = escapeHtml(String(detailId));
+            const detailIdJs = escapeJsString(String(detailId));
 
-            let row = `<tr onclick="toggleSigmaRow(this, '${safeDetailId}')">`;
+            const pivotAttrs = pivotDataAttrsHtml(alert, 'sigmaalert', getColumnsForType('sigmaalert'), extractSigmaValue);
+            let row = `<tr data-id="${escapeHtml(String(alert.id))}"${pivotAttrs} onclick="toggleSigmaRow(this, '${detailIdJs}', event)">`;
             row += `<td class="timestamp">${timestamp}</td>`;
-            row += `<td><span class="badge ${sevClass}">${escapeHtml(sev.toUpperCase())}</span></td>`;
-            row += `<td><strong>${ruleTitle}</strong>${ruleId ? '<br><span style="color:#8b949e;font-size:0.8rem;">' + ruleId + '</span>' : ''}</td>`;
+            row += `<td>${valueDotSpan(sevColor)}${escapeHtml(sev.toUpperCase())}</td>`;
+            row += `<td><strong>${ruleTitle}</strong>${ruleId ? '<br><span style="color:var(--text-muted);font-size:0.8rem;">' + ruleId + '</span>' : ''}</td>`;
             row += `<td>${mitreHtml}</td>`;
             row += `<td>${logsource}</td>`;
+            row += rowNoteIconHtml('sigma_alerts', alert.id, alert.row_note);
             row += '</tr>';
 
             const detailHtml = formatSigmaAlertDetail(alert);
-            row += `<tr class="detail-row" id="${safeDetailId}"><td colspan="5"><div class="log-detail-panel">${detailHtml}</div></td></tr>`;
+            row += `<tr class="detail-row" id="${detailIdAttr}"><td colspan="6"><div class="log-detail-panel">${detailHtml}</div></td></tr>`;
             return row;
         }
 
-        function toggleSigmaRow(tr, detailId) {
+        function toggleSigmaRow(tr, detailId, event) {
+            if (handleRowCellClick(tr, event)) return;
             const detailRow = document.getElementById(detailId);
             if (detailRow) {
+                const wasHidden = !detailRow.classList.contains('visible');
                 tr.classList.toggle('expanded-row');
                 detailRow.classList.toggle('visible');
+                if (wasHidden) {
+                    loadPlaybookSectionIfPresent(detailRow);
+                    loadAiSummaryPlaceholders(detailRow);
+                }
             }
         }
 
@@ -1793,57 +5046,81 @@
             return '';
         }
 
+        // currentFilters[col] is polymorphic: a plain string means "exact
+        // match" (the original shape, still written as-is by
+        // applyFilters() - now only reached via clicking a Sankey diagram
+        // link/node, since aggregation-table rows moved to the pivot menu
+        // below). An {include, exclude} object is the newer shape written
+        // by includeFilterValue()/excludeFilterValue()/onlyFilterValue()
+        // (the row-cell/aggregation-row pivot menu) - include acts as an
+        // OR-broadened allow-list for that one column, exclude as a
+        // deny-list, and both can be non-empty at once. Different columns
+        // still AND together either way.
+        function matchesCurrentFilters(e, extractFn) {
+            for (const [col, spec] of Object.entries(currentFilters)) {
+                if (typeof spec === 'string') {
+                    if (extractFn(e, col) !== spec) return false;
+                    continue;
+                }
+                const val = extractFn(e, col);
+                if (spec.include && spec.include.length > 0 && !spec.include.includes(val)) return false;
+                if (spec.exclude && spec.exclude.length > 0 && spec.exclude.includes(val)) return false;
+            }
+            return true;
+        }
+
+        function parseMitreTechniques(mitreJson) {
+            try {
+                return JSON.parse(mitreJson || '[]').map(t => t.replace(/^attack\./i, '').toUpperCase());
+            } catch(e) {
+                return [];
+            }
+        }
+
+        function mitreTechniquesHtml(mitreJson) {
+            return parseMitreTechniques(mitreJson).map(tid => {
+                // Sub-techniques (e.g. T1055.012) live at a nested MITRE URL
+                // (/techniques/T1055/012/), not a dotted slug.
+                const urlPath = tid.split('.').map(encodeURIComponent).join('/');
+                return `<a href="https://attack.mitre.org/techniques/${urlPath}/" target="_blank" rel="noopener noreferrer" class="mitre-tag" onclick="event.stopPropagation()">${escapeHtml(tid)}</a>`;
+            }).join('');
+        }
+
+        function extractSigmaValue(alert, col) {
+            switch(col) {
+                case 'Severity': return alert.severity || '';
+                case 'Rule': return alert.rule_title || '';
+                case 'MITRE Technique': return parseMitreTechniques(alert.mitre_techniques).join(', ');
+                case 'Log Source': return alert.logsource || '';
+                case 'Time': return alert.timestamp || '';
+                default: {
+                    // Dynamic column from original_log
+                    try {
+                        const logObj = JSON.parse(alert.original_log || '{}');
+                        if (logObj && typeof logObj === 'object') {
+                            const field = _getFieldForLabel(col);
+                            return String(logObj[field] || '');
+                        }
+                    } catch(e) { return ''; }
+                    return '';
+                }
+            }
+        }
+
+        function extractLogValue(ev, col) {
+            if (col === 'Time') return (ev.timestamp || '').slice(0, 19);
+            if (col === 'Detail') return getLogEventSmartDetail(_parseLogEventJson(ev));
+            return getLogColumnValue(ev, _getFieldForLabel(col));
+        }
+
         function getFilteredLogEvents(events) {
             if (Object.keys(currentFilters).length === 0) return events;
-            return events.filter(e => {
-                for (const [col, val] of Object.entries(currentFilters)) {
-                    let extracted = '';
-                    if (col === 'Time') {
-                        extracted = (e.timestamp || '').slice(0, 19);
-                    } else if (col === 'Detail') {
-                        extracted = getLogEventSmartDetail(_parseLogEventJson(e));
-                    } else {
-                        const field = _getFieldForLabel(col);
-                        extracted = getLogColumnValue(e, field);
-                    }
-                    if (extracted !== val) return false;
-                }
-                return true;
-            });
+            return events.filter(e => matchesCurrentFilters(e, extractLogValue));
         }
 
         function getFilteredSigmaAlerts(alerts) {
             if (Object.keys(currentFilters).length === 0) return alerts;
-            return alerts.filter(a => {
-                for (const [col, val] of Object.entries(currentFilters)) {
-                    let extracted = '';
-                    switch(col) {
-                        case 'Severity': extracted = a.severity || ''; break;
-                        case 'Rule': extracted = a.rule_title || ''; break;
-                        case 'MITRE Technique': {
-                            try {
-                                const techniques = JSON.parse(a.mitre_techniques || '[]');
-                                extracted = techniques.map(t => t.replace(/^attack\./i, '').toUpperCase()).join(', ');
-                            } catch(e) { extracted = ''; }
-                            break;
-                        }
-                        case 'Log Source': extracted = a.logsource || ''; break;
-                        case 'Timestamp': extracted = a.timestamp || ''; break;
-                        default: {
-                            // Dynamic column from original_log
-                            try {
-                                const logObj = JSON.parse(a.original_log || '{}');
-                                if (logObj && typeof logObj === 'object') {
-                                    const field = _getFieldForLabel(col);
-                                    extracted = String(logObj[field] || '');
-                                }
-                            } catch(e) { extracted = ''; }
-                        }
-                    }
-                    if (extracted !== val) return false;
-                }
-                return true;
-            });
+            return alerts.filter(a => matchesCurrentFilters(a, extractSigmaValue));
         }
 
         function buildLogSectionContent(sectionId, events) {
@@ -1855,36 +5132,123 @@
             } else if (events.length === 0) {
                 html += '<div class="no-matches">No log events found</div>';
             } else {
-                const columns = discoverLogColumns(events);
-                html += '<div style="overflow-x:auto;"><table><thead><tr>';
-                html += '<th>Time</th>';
-                columns.forEach(c => { html += `<th>${escapeHtml(c.label)}</th>`; });
-                html += '<th>Detail</th>';
-                html += '</tr></thead><tbody>';
-                events.forEach(evt => { html += buildLogEventRow(evt, columns); });
-                html += '</tbody></table></div>';
+                const discoveredCols = discoverLogColumns(events);
+                const columns = ['Time', ...discoveredCols.map(c => c.label), 'Detail'];
+                html += renderPaginatedTable({
+                    sectionKey: sectionId,
+                    columns,
+                    items: events,
+                    extractFn: extractLogValue,
+                    rowRenderer: (evt) => buildLogEventRow(evt, discoveredCols),
+                    rerender: () => buildLogSectionContent(sectionId, events)
+                });
             }
             html += '</div>';
             container.innerHTML = html;
         }
 
-        function buildSigmaAlertSectionContent(sectionId, alerts) {
+        // `alerts` is ignored in scalable mode (no active filter/sort) - the
+        // function fetches its own current page directly from the server, so
+        // callers may pass null there (e.g. loadTabData's scalable branch).
+        async function buildSigmaAlertSectionContent(sectionId, alerts) {
             const container = document.getElementById(sectionId);
             if (!container) return;
+
+            if (canUseScalableFetch()) {
+                const { items, serverTotal, gen } = await fetchSigmaAlertsPage();
+                if (isStaleFetch(gen)) return;
+                let html = '<div class="section-content">';
+                if (serverTotal === 0) {
+                    html += '<div class="no-matches">No Sigma alerts detected</div>';
+                } else {
+                    html += renderPaginatedTable({
+                        sectionKey: sectionId,
+                        columns: getColumnsForType('sigmaalert'),
+                        items,
+                        serverTotal,
+                        extractFn: extractSigmaValue,
+                        rowRenderer: buildSigmaAlertRow,
+                        // Recomputes a real, filtered list rather than hardcoding
+                        // null - a sort click (sigmaalert isn't server-sortable)
+                        // flips canUseScalableFetch() false before invoking this
+                        // same closure, so it must not assume scalable mode still
+                        // applies. tabDataCache['sigmaalert'] is guaranteed
+                        // populated by then since sortCurrentTable always awaits
+                        // ensureCappedBatch() first for non-server-sortable types.
+                        rerender: () => buildSigmaAlertSectionContent(sectionId, getFilteredSigmaAlerts(tabDataCache['sigmaalert'] || []))
+                    });
+                }
+                html += '</div>';
+                container.innerHTML = html;
+                return;
+            }
+
+            // Defensive fallback matching buildBinaryAnalysisView's `||` style -
+            // guards against any caller (present or future) passing a falsy
+            // alerts value into this branch, which reads alerts.length below.
+            if (!alerts) {
+                alerts = getFilteredSigmaAlerts(tabDataCache['sigmaalert'] || []);
+            }
+
             let html = '<div class="section-content">';
             if (alerts.length === 0 && Object.keys(currentFilters).length > 0) {
                 html += EMPTY_FILTER_STATE_HTML;
             } else if (alerts.length === 0) {
                 html += '<div class="no-matches">No Sigma alerts detected</div>';
             } else {
-                html += '<table><thead><tr>';
-                html += '<th>Timestamp</th><th>Severity</th><th>Rule</th><th>MITRE Technique</th><th>Log Source</th>';
-                html += '</tr></thead><tbody>';
-                alerts.forEach(alert => { html += buildSigmaAlertRow(alert); });
-                html += '</tbody></table>';
+                html += renderPaginatedTable({
+                    sectionKey: sectionId,
+                    columns: getColumnsForType('sigmaalert'),
+                    items: alerts,
+                    extractFn: extractSigmaValue,
+                    rowRenderer: buildSigmaAlertRow,
+                    rerender: () => buildSigmaAlertSectionContent(sectionId, alerts)
+                });
             }
             html += '</div>';
             container.innerHTML = html;
+        }
+
+        // Shared aggregation-table renderer: countsByColumn maps column label ->
+        // {value: count}; columns control display order. Hidden columns and
+        // empty columns are skipped.
+        function _renderAggTablesHtml(countsByColumn, columns, sectionId) {
+            let html = '';
+            for (const col of columns) {
+                if (hiddenAggregations.has(sectionId + ':' + col)) continue;
+                const colCounts = countsByColumn[col] || {};
+                const entries = Object.entries(colCounts).sort((a, b) => b[1] - a[1]).slice(0, CONFIG.AGGREGATION_TOP_N);
+                if (entries.length === 0) continue;
+                html += `<div class="section agg-section" data-col="${escapeHtml(col)}"><div class="section-content"><div class="agg-table">
+                    <div class="agg-header"><span>${escapeHtml(col)}</span><button class="agg-close" onclick="hideAggregationTable('${sectionId}', '${escapeJsString(col)}')" title="Hide">&times;</button></div>
+                    <table><thead><tr><th style="width:60px;text-align:right;">Count</th><th>Value</th></tr></thead><tbody>`;
+                for (const [val, count] of entries) {
+                    const escapedVal = escapeHtml(val);
+                    const filterVal = val === '(empty)' ? '' : val;
+                    // data-agg-pivot (delegated, see the pivot-menu click
+                    // listener below), not a direct call to the old
+                    // (now-removed) single-value applyFilter helper -
+                    // val is arbitrary field content, and the pivot menu
+                    // needs the raw value for Hunt/Copy/the lookup sites,
+                    // not just a JS-string-escaped one for a single
+                    // hardcoded call. The "(empty)" bucket has nothing
+                    // meaningful to pivot on (matches pivotDataAttrsHtml/
+                    // htmlRowText's own empty-value exclusion) - left
+                    // without the attribute, so it's not clickable at all.
+                    const pivotAttr = filterVal
+                        ? ` data-agg-pivot="${encodeURIComponent(JSON.stringify([sectionId, col, filterVal]))}"`
+                        : '';
+                    html += `<tr class="agg-row"${pivotAttr}>
+                        <td style="text-align:right;color:var(--text-muted);">${count}</td><td class="agg-cell" title="${escapedVal}">${escapedVal}</td>
+                    </tr>`;
+                }
+                html += '</tbody></table></div></div></div>';
+            }
+            return html;
+        }
+
+        function _wrapAggPanel(innerHtml) {
+            return '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + innerHtml + '</div></div>';
         }
 
         function buildLogAggregations(events, sectionId) {
@@ -1912,25 +5276,7 @@
                     if (val) counts[c.label][val] = (counts[c.label][val] || 0) + 1;
                 });
             });
-            let html = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content"><div class="agg-grid">';
-            for (const col of aggCols) {
-                if (hiddenAggregations.has(sectionId + ':' + col)) continue;
-                const colCounts = counts[col];
-                const entries = Object.entries(colCounts).sort((a, b) => b[1] - a[1]).slice(0, CONFIG.AGGREGATION_TOP_N);
-                if (entries.length === 0) continue;
-                html += `<div class="section agg-section" data-col="${col}"><div class="section-content"><div class="agg-table">
-                    <div class="agg-header"><span>${col}</span><button class="agg-close" onclick="hideAggregationTable('${sectionId}', '${escapeJsString(col)}')" title="Hide">&times;</button></div>
-                    <table><thead><tr><th style="width:60px;text-align:right;">Count</th><th>Value</th></tr></thead><tbody>`;
-                for (const [val, count] of entries) {
-                    const escapedVal = escapeHtml(val);
-                    html += `<tr class="agg-row" onclick="applyFilter('${sectionId}', '${escapeJsString(col)}', '${escapeJsString(val)}')">
-                        <td style="text-align:right;color:#8b949e;">${count}</td><td class="agg-cell" title="${escapedVal}">${escapedVal}</td>
-                    </tr>`;
-                }
-                html += '</tbody></table></div></div></div>';
-            }
-            html += '</div></div></div>';
-            aggContainer.innerHTML = html;
+            aggContainer.innerHTML = _wrapAggPanel('<div class="agg-grid">' + _renderAggTablesHtml(counts, aggCols, sectionId) + '</div>');
         }
 
         function discoverSigmaAlertColumns(alerts) {
@@ -1979,10 +5325,7 @@
                 if (sev) counts['Severity'][sev] = (counts['Severity'][sev] || 0) + 1;
                 const rule = a.rule_title || '';
                 if (rule) counts['Rule'][rule] = (counts['Rule'][rule] || 0) + 1;
-                let techniques = [];
-                try { techniques = JSON.parse(a.mitre_techniques || '[]'); } catch(e) {}
-                techniques.forEach(t => {
-                    const tid = t.replace(/^attack\./i, '').toUpperCase();
+                parseMitreTechniques(a.mitre_techniques).forEach(tid => {
                     if (tid) counts['MITRE Technique'][tid] = (counts['MITRE Technique'][tid] || 0) + 1;
                 });
                 const logsource = a.logsource || '';
@@ -1998,29 +5341,11 @@
                     if (val) counts[c.label][val] = (counts[c.label][val] || 0) + 1;
                 });
             });
-            let html = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content"><div class="agg-grid">';
-            for (const col of aggCols) {
-                if (hiddenAggregations.has(sectionId + ':' + col)) continue;
-                const colCounts = counts[col];
-                const entries = Object.entries(colCounts).sort((a, b) => b[1] - a[1]).slice(0, CONFIG.AGGREGATION_TOP_N);
-                if (entries.length === 0) continue;
-                html += `<div class="section agg-section" data-col="${col}"><div class="section-content"><div class="agg-table">
-                    <div class="agg-header"><span>${col}</span><button class="agg-close" onclick="hideAggregationTable('${sectionId}', '${escapeJsString(col)}')" title="Hide">&times;</button></div>
-                    <table><thead><tr><th style="width:60px;text-align:right;">Count</th><th>Value</th></tr></thead><tbody>`;
-                for (const [val, count] of entries) {
-                    const escapedVal = escapeHtml(val);
-                    html += `<tr class="agg-row" onclick="applyFilter('${sectionId}', '${escapeJsString(col)}', '${escapeJsString(val)}')">
-                        <td style="text-align:right;color:#8b949e;">${count}</td><td class="agg-cell" title="${escapedVal}">${escapedVal}</td>
-                    </tr>`;
-                }
-                html += '</tbody></table></div></div></div>';
-            }
-            html += '</div></div></div>';
-            aggContainer.innerHTML = html;
+            aggContainer.innerHTML = _wrapAggPanel('<div class="agg-grid">' + _renderAggTablesHtml(counts, aggCols, sectionId) + '</div>');
         }
 
         function formatLogEventDetail(jsonData) {
-            if (!jsonData || Object.keys(jsonData).length === 0) return '<div style="color:#8b949e;padding:10px;">No event data available</div>';
+            if (!jsonData || Object.keys(jsonData).length === 0) return '<div style="color:var(--text-muted);padding:10px;">No event data available</div>';
 
             const sections = [
                 {
@@ -2092,10 +5417,10 @@
             }
 
             html += '</div>';
-            return hasAny ? html : '<div style="color:#8b949e;padding:10px;">No event data available</div>';
+            return hasAny ? html : '<div style="color:var(--text-muted);padding:10px;">No event data available</div>';
         }
 
-                function formatSigmaAlertDetail(alert) {
+        function formatSigmaAlertDetail(alert) {
             let html = `<div style="display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 8px 12px; font-size: 0.9rem; overflow-wrap: break-word;">`;
 
             // Matched Event
@@ -2114,72 +5439,89 @@
             // Sigma Rule
             html += htmlSection('Sigma Rule', COLORS.EVENT.sigmaalert);
             html += htmlRowText('Rule Title', alert.rule_title);
+            html += aiSummaryPlaceholderHtml('sigma', alert.rule_id);
             html += htmlRowText('Rule ID', alert.rule_id);
             html += htmlRowText('Severity', alert.severity);
             html += htmlRowText('Level', alert.level);
             html += htmlRowText('Log Source', alert.logsource);
 
-            let mitreHtml = '';
-            try {
-                const techniques = JSON.parse(alert.mitre_techniques || '[]');
-                mitreHtml = techniques.map(t => {
-                    const tid = t.replace(/^attack\./i, '').toUpperCase();
-                    return `<a href="https://attack.mitre.org/techniques/${encodeURIComponent(tid)}/" target="_blank" rel="noopener noreferrer" class="mitre-tag">${escapeHtml(tid)}</a>`;
-                }).join('');
-            } catch(e) {}
+            const mitreHtml = mitreTechniquesHtml(alert.mitre_techniques);
             if (mitreHtml) {
                 html += htmlRow('MITRE Techniques', mitreHtml);
             }
 
-            let tagsHtml = '';
+            let tagsText = '';
             try {
                 const tags = JSON.parse(alert.tags || '[]');
                 if (tags.length > 0) {
-                    tagsHtml = tags.map(t => `<span class="badge badge-info">${escapeHtml(t)}</span>`).join(' ');
+                    tagsText = tags.join(', ');
                 }
             } catch(e) {}
-            if (tagsHtml) {
-                html += htmlRow('Tags', tagsHtml);
+            if (tagsText) {
+                html += htmlRowText('Tags', tagsText);
             }
 
+            // See renderAlertDetails' own comment - same hidden anchor,
+            // populated (or not) by loadPlaybookSectionIfPresent on first
+            // expand.
+            html += `<span class="playbook-section-placeholder" data-detection-type="sigma" data-rule-id="${escapeHtml(String(alert.rule_id || ''))}" style="display:none;"></span>`;
+
+            html += rowNoteDetailHtml('sigma_alerts', alert.id, alert.row_note);
             html += '</div>';
             return html;
         }
 
-        function buildSection(eventType, events) {
-            const sorted = [...events].sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
+        async function buildSection(eventType, events) {
             const columns = getColumnsForType(eventType);
             const sectionId = `section-${eventType}`;
-            
-            let filteredEvents = sorted;
-            if (Object.keys(currentFilters).length > 0) {
-                filteredEvents = sorted.filter(e => {
-                    for (const [col, val] of Object.entries(currentFilters)) {
-                        const colIndex = columns.indexOf(col);
-                        const extracted = extractValue(e, col, colIndex);
-                        if (extracted !== val) return false;
-                    }
-                    return true;
-                });
-            }
-            
-            const rows = filteredEvents.map(e => buildRowForEvent(e));
-            
             const container = document.getElementById(sectionId);
             if (!container) return;
-            
+
+            if (canUseScalableFetchForSort(eventType)) {
+                const { items, serverTotal, gen } = await fetchEventsPage(eventType);
+                if (isStaleFetch(gen)) return;
+                let html = '<div class="section-content">';
+                html += renderPaginatedTable({
+                    sectionKey: sectionId,
+                    columns,
+                    items,
+                    serverTotal,
+                    extractFn: extractValue,
+                    rowRenderer: buildRowForEvent,
+                    rerender: () => buildSection(eventType, tabDataCache[eventType] || [])
+                });
+                html += '</div>';
+                try {
+                    container.innerHTML = html;
+                } catch(e) {
+                    console.error('Failed to render section:', e);
+                    container.innerHTML = '<div class="loading">Error rendering table</div>';
+                }
+                return;
+            }
+
+            const sorted = [...events].sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
+
+            let filteredEvents = sorted;
+            if (Object.keys(currentFilters).length > 0) {
+                filteredEvents = sorted.filter(e => matchesCurrentFilters(e, (ev, col) => extractValue(ev, col, columns.indexOf(col))));
+            }
+
             let html = '<div class="section-content">';
-            if (rows.length === 0 && Object.keys(currentFilters).length > 0) {
+            if (filteredEvents.length === 0 && Object.keys(currentFilters).length > 0) {
                 html += EMPTY_FILTER_STATE_HTML;
             } else {
-                html += '<table><thead><tr>';
-                columns.forEach(h => html += `<th>${h}</th>`);
-                html += '</tr></thead><tbody>';
-                rows.forEach(r => html += r);
-                html += '</tbody></table>';
+                html += renderPaginatedTable({
+                    sectionKey: sectionId,
+                    columns,
+                    items: filteredEvents,
+                    extractFn: extractValue,
+                    rowRenderer: buildRowForEvent,
+                    rerender: () => buildSection(eventType, events)
+                });
             }
             html += '</div>';
-            
+
             try {
                 container.innerHTML = html;
             } catch(e) {
@@ -2187,34 +5529,84 @@
                 container.innerHTML = '<div class="loading">Error rendering table</div>';
             }
         }
-        
-        function buildAggregationsSection(eventType, events) {
+
+        async function buildAggregationsSection(eventType, events) {
             const aggContainer = document.getElementById('aggregations');
             if (!aggContainer) return;
-            
+
             if (!advancedMode) {
                 aggContainer.innerHTML = AGG_COLLAPSED_HTML;
                 return;
             }
-            
+
             const sectionId = `section-${eventType}`;
-            
+
+            if (canUseServerAggregation(eventType)) {
+                const data = await fetchAggregationData(eventType);
+                const countsByColumn = {};
+                for (const [col, entries] of Object.entries(data)) {
+                    countsByColumn[col] = {};
+                    for (const { value, count } of entries) countsByColumn[col][value] = count;
+                }
+                const html = '<div class="agg-grid">' + _renderAggTablesHtml(countsByColumn, getColumnsForType(eventType), sectionId) + '</div>';
+                aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + html + '</div></div>';
+                return;
+            }
+
             aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + buildAggregationTables(events, eventType) + '</div></div>';
         }
         
+        // Whether the row table/aggregations/diagram for the currently-visible
+        // tab are known to be operating on a capped (partial) dataset - see
+        // truncatedTypes, maintained by ensureCappedBatch.
+        function isCurrentTabTruncated() {
+            const eventType = getVisibleEventType();
+            return !!eventType && truncatedTypes.has(eventType);
+        }
+
+        function getVisibleEventType() {
+            const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
+            return visibleSection ? visibleSection.id.replace('section-', '') : null;
+        }
+
+        // Actual number of rows currently cached for eventType - used in the
+        // truncation-warning message since the effective limit is user-configurable
+        // (getUserQueryLimit()) and may itself still be clamped lower server-side.
+        function getFetchedLengthForType(eventType) {
+            return (eventType === 'all' ? allEvents : (tabDataCache[eventType] || [])).length;
+        }
+
         function buildFilterBarHtml() {
             const hasFilters = Object.keys(currentFilters).length > 0;
-            if (currentSearch.length === 0 && !hasFilters) return '';
-
-            let html = '<div class="filter-bar"><span class="filter-label">🔍 Active:</span>';
-            for (let i = 0; i < currentSearch.length; i++) {
-                const term = currentSearch[i];
-                html += `<span class="filter-chip">🔍 "${escapeHtml(term)}" <span class="filter-chip-remove" onclick="clearSearchTerm(${i})">&times;</span></span>`;
+            let html = '';
+            if (currentSearch.length > 0 || hasFilters) {
+                html += `<div class="filter-bar"><span class="filter-label">${SEARCH_ICON_SVG} Active:</span>`;
+                for (let i = 0; i < currentSearch.length; i++) {
+                    const term = currentSearch[i];
+                    html += `<span class="filter-chip">${SEARCH_ICON_SVG} "${escapeHtml(term)}" <span class="filter-chip-remove" onclick="clearSearchTerm(${i})">&times;</span></span>`;
+                }
+                for (const [col, spec] of Object.entries(currentFilters)) {
+                    if (typeof spec === 'string') {
+                        html += `<span class="filter-chip">${escapeHtml(col)}: ${escapeHtml(spec)} <span class="filter-chip-remove" onclick="clearFilter('${escapeJsString(col)}')">&times;</span></span>`;
+                        continue;
+                    }
+                    // Object shape (pivot menu's include/exclude) - one
+                    // removable chip per value, unlike the string shape's
+                    // one chip per column, since multiple include/exclude
+                    // values can be active on the same column at once.
+                    for (const val of (spec.include || [])) {
+                        html += `<span class="filter-chip">${escapeHtml(col)}: ${escapeHtml(val)} <span class="filter-chip-remove" onclick="clearFilterValue('${escapeJsString(col)}', 'include', '${escapeJsString(val)}')">&times;</span></span>`;
+                    }
+                    for (const val of (spec.exclude || [])) {
+                        html += `<span class="filter-chip filter-chip-exclude">${escapeHtml(col)} ≠ ${escapeHtml(val)} <span class="filter-chip-remove" onclick="clearFilterValue('${escapeJsString(col)}', 'exclude', '${escapeJsString(val)}')">&times;</span></span>`;
+                    }
+                }
+                html += '<button class="filter-clear-all" onclick="clearAllFilters()">Clear All</button></div>';
             }
-            for (const [col, val] of Object.entries(currentFilters)) {
-                html += `<span class="filter-chip">${col}: ${escapeHtml(val)} <span class="filter-chip-remove" onclick="clearFilter('${col}')">&times;</span></span>`;
+            if (isCurrentTabTruncated()) {
+                const fetchedCount = getFetchedLengthForType(getVisibleEventType()).toLocaleString();
+                html += `<div class="filter-bar"><span style="color: var(--badge-warning-text);">⚠ Showing the first ${fetchedCount} matching events for this view — results may be incomplete.</span></div>`;
             }
-            html += '<button class="filter-clear-all" onclick="clearAllFilters()">Clear All</button></div>';
             return html;
         }
 
@@ -2223,7 +5615,7 @@
             if (!filterBarContainer) return;
 
             const hasFilters = Object.keys(currentFilters).length > 0;
-            if (currentSearch.length > 0 || hasFilters) {
+            if (currentSearch.length > 0 || hasFilters || isCurrentTabTruncated()) {
                 filterBarContainer.innerHTML = buildFilterBarHtml();
                 filterBarContainer.style.display = 'block';
             } else {
@@ -2236,23 +5628,27 @@
         
         function eventMatchesFilters(event) {
             if (Object.keys(currentFilters).length === 0) return true;
-            for (const [col, val] of Object.entries(currentFilters)) {
-                let extracted;
+            return matchesCurrentFilters(event, (ev, col) => {
                 if (col === 'Type' || col === 'Detail') {
-                    const types = EVENT_TYPE_ICONS;
-                    const allColumns = ALL_EVENTS_COLUMNS;
-                    const allColIndex = allColumns.indexOf(col);
-                    extracted = extractAllValue(event, col, allColIndex);
-                } else {
-                    extracted = extractValue(event, col, -1);
+                    const allColIndex = ALL_EVENTS_COLUMNS.indexOf(col);
+                    return extractAllValue(ev, col, allColIndex);
                 }
-                if (extracted !== val) return false;
-            }
-            return true;
+                return extractValue(event, col, -1);
+            });
         }
 
-        function computeFilteredStats() {
+        async function computeFilteredStats() {
             if (isLogAnalysisMode) {
+                // eventMatchesFilters/sigmaAlertMatchesFilters only check
+                // currentFilters (search is already reflected server-side in
+                // eventStats via /api/count?q=/api/sigma-count?q=), so with no
+                // active column filter eventStats already holds the exact
+                // same counts - no need to touch the full arrays at all.
+                if (Object.keys(currentFilters).length === 0) {
+                    return eventStats;
+                }
+                await ensureCappedBatch('log');
+                await ensureCappedBatch('sigmaalert');
                 const stats = {};
                 const logEvents = tabDataCache['log'] || [];
                 const sigmaAlerts = tabDataCache['sigmaalert'] || [];
@@ -2268,6 +5664,15 @@
                 if (sigmaCount > 0) stats['sigmaalert'] = sigmaCount;
                 return stats;
             }
+            // eventMatchesFilters only ever checks currentFilters (search is
+            // already reflected server-side in eventStats via /api/stats?q=),
+            // so with no active column filter every event trivially matches -
+            // eventStats already holds the exact same per-type counts, no need
+            // to touch allEvents at all.
+            if (Object.keys(currentFilters).length === 0) {
+                return eventStats;
+            }
+            await ensureCappedBatch('all');
             const stats = {};
             const events = allEvents.filter(e => e.event_type !== 'stats');
             for (const e of events) {
@@ -2281,71 +5686,54 @@
 
         function sigmaAlertMatchesFilters(alert) {
             if (Object.keys(currentFilters).length === 0) return true;
-            for (const [col, val] of Object.entries(currentFilters)) {
-                let extracted = '';
-                switch(col) {
-                    case 'Severity': extracted = alert.severity || ''; break;
-                    case 'Rule': extracted = alert.rule_title || ''; break;
-                    case 'MITRE Technique': {
-                        try {
-                            const techniques = JSON.parse(alert.mitre_techniques || '[]');
-                            extracted = techniques.map(t => t.replace(/^attack\./i, '').toUpperCase()).join(', ');
-                        } catch(e) { extracted = ''; }
-                        break;
-                    }
-                    case 'Log Source': extracted = alert.logsource || ''; break;
-                    case 'Timestamp': extracted = alert.timestamp || ''; break;
-                    default: extracted = '';
-                }
-                if (extracted !== val) return false;
-            }
-            return true;
+            return matchesCurrentFilters(alert, extractSigmaValue);
         }
 
         function buildStats(filteredStats) {
             const grid = document.getElementById('statsGrid');
             const stats = [];
-            const hasFilters = Object.keys(currentFilters).length > 0 || currentSearch.length > 0;
-            
+
             eventTypes.forEach(type => {
-                const total = baseEventStats[type] || 0;
-                let filtered;
-                if (type === 'filealerts') {
-                    filtered = eventStats[type] || 0;
-                } else {
-                    filtered = filteredStats ? (filteredStats[type] || 0) : (eventStats[type] || 0);
-                }
+                const filtered = filteredStats ? (filteredStats[type] || 0) : (eventStats[type] || 0);
                 stats.push({
                     id: type,
                     label: typeLabels[type] || type.toUpperCase(),
                     count: filtered,
-                    total: total,
                     color: COLORS.EVENT[type] || COLORS.EVENT.tls
                 });
             });
-            
+
             if (!isLogAnalysisMode) {
                 const allFiltered = stats.reduce((a, s) => a + s.count, 0);
-                const allTotal = Object.values(baseEventStats).reduce((a, b) => a + b, 0) - (baseEventStats['stats'] || 0);
                 stats.push({
                     id: 'all',
                     label: 'All Events',
                     count: allFiltered,
-                    total: allTotal,
-                    color: '#f0f6fc'
+                    color: 'var(--text-bright)'
                 });
             }
-            
+
             const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
             const activeType = visibleSection ? visibleSection.id.replace('section-', '') : (stats[0] && stats[0].id);
-            grid.innerHTML = stats.map(s => {
-                const countDisplay = hasFilters ? `${s.count} / ${s.total}` : String(s.count);
-                const isClickable = s.count > 0;
+            // A type only ever reaches eventTypes because it had at least
+            // one event in the unfiltered sample (see eventTypes' own
+            // derivation from baseEventStats), so count === 0 here only
+            // happens once a search/filter has narrowed it away entirely -
+            // dropped rather than shown disabled, so a heavily-filtered
+            // large sample (20+ event types, most zeroed out) doesn't turn
+            // into a wall of grayed-out cards.
+            grid.innerHTML = stats.filter(s => s.count > 0).map(s => {
+                // Filtered/searched-down counts show as just the filtered
+                // number, not "filtered / total" - the filter bar's own
+                // chips already signal that a filter is active, and a
+                // combined "count / total" string could run to twice the
+                // length of a lone count on a large sample (e.g. "229,378 /
+                // 229,831"), which no stat-card width/font-size could
+                // reliably keep from overflowing.
+                const countDisplay = s.count.toLocaleString();
                 const activeClass = s.id === activeType ? ' tab-active' : '';
-                const disabledClass = isClickable ? '' : ' stat-disabled';
-                const onclickAttr = isClickable ? `onclick="showTab('section-${s.id}', this)"` : '';
                 return `
-                    <div class="stat-card${activeClass}${disabledClass}" ${onclickAttr}>
+                    <div class="stat-card${activeClass}" onclick="showTab('section-${s.id}', this)">
                         <div class="stat-number" style="color: ${s.color}">${countDisplay}</div>
                         <div class="stat-label">${s.label}</div>
                     </div>
@@ -2367,143 +5755,149 @@
             
         }
         
-        function buildAllEvents() {
-            const types = EVENT_TYPE_ICONS;
+        function buildAllEventRow(e) {
+            const ts = (e.timestamp || '').slice(0, 19);
+            const etype = e.event_type || '';
+            const proto = e.proto || '';
+            const srcIp = e.src_ip || '';
+            const srcPort = e.src_port || '';
+            const dstIp = e.dest_ip || '';
+            const dstPort = e.dest_port || '';
+            // Uses the canonical Detail logic (extractValue's 'Detail' case)
+            // instead of maintaining a separate, independently-drifted copy -
+            // the old inline copy here was missing modbus/dnp3/pgsql/filealerts
+            // (always blank), even though those were already correctly
+            // sortable/filterable via extractValue elsewhere.
+            const detail = extractValue(e, 'Detail', -1);
+            const formatted = formatEvent(e);
+            const pivotAttrs = pivotDataAttrsHtml(e, 'all', ALL_EVENTS_COLUMNS, extractAllValue);
+            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs} onclick="toggleRow(this, event)"><td class="timestamp">${escapeHtml(ts)}</td><td>${valueDotSpan(COLORS.EVENT[etype])}${escapeHtml(etype.toUpperCase())}</td><td>${valueDotSpan(DOT_COLORS.PROTO[proto.toUpperCase()])}${escapeHtml(proto)}</td><td class="mono-fixed" title="${escapeHtml(srcIp)}">${escapeHtml(srcIp)}</td><td class="mono-fixed">${escapeHtml(String(srcPort))}</td><td class="mono-fixed" title="${escapeHtml(dstIp)}">${escapeHtml(dstIp)}</td><td class="mono-fixed">${escapeHtml(String(dstPort))}</td><td class="mono">${escapeHtml(detail)}</td>${rowNoteIconHtml('events', e.id, e.row_note)}</tr><tr class="detail-row"><td colspan="9"><div class="detail-content">${formatted}</div></td></tr>`;
+        }
+
+        async function buildAllEvents() {
             const allColumns = ALL_EVENTS_COLUMNS;
             const sectionId = 'section-all';
+            const container = document.getElementById(sectionId);
+            if (!container) return;
+
+            if (canUseScalableFetchForSort('all')) {
+                const { items, serverTotal, gen } = await fetchEventsPage('all');
+                if (isStaleFetch(gen)) return;
+                let html = '<div class="section-content">';
+                html += renderPaginatedTable({
+                    sectionKey: sectionId,
+                    columns: allColumns,
+                    items,
+                    serverTotal,
+                    extractFn: extractAllValue,
+                    rowRenderer: buildAllEventRow,
+                    rerender: buildAllEvents
+                });
+                html += '</div>';
+                container.innerHTML = html;
+                return;
+            }
+
             const sortedAll = [...allEvents].filter(e => e.event_type !== 'stats').sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
-            
+
             if (sortedAll.length === 0) return;
-            
+
             let filteredEvents = sortedAll;
             if (Object.keys(currentFilters).length > 0) {
-                filteredEvents = sortedAll.filter(e => {
-                    for (const [col, val] of Object.entries(currentFilters)) {
-                        const colIndex = allColumns.indexOf(col);
-                        const extracted = extractAllValue(e, col, colIndex);
-                        if (extracted !== val) return false;
-                    }
-                    return true;
-                });
+                filteredEvents = sortedAll.filter(e => matchesCurrentFilters(e, (ev, col) => extractAllValue(ev, col, allColumns.indexOf(col))));
             }
-            
-            const rows = filteredEvents.map(e => {
-                const ts = (e.timestamp || '').slice(0, 19);
-                const etype = e.event_type || '';
-                const icon = types[etype] || '❓';
-                const proto = e.proto || '';
-                const srcIp = e.src_ip || '';
-                const srcPort = e.src_port || '';
-                const dstIp = e.dest_ip || '';
-                const dstPort = e.dest_port || '';
-                let detail = '';
-                if (etype === 'alert') detail = e.alert?.signature || '';
-                else if (etype === 'dns') detail = e.dns?.rrname || '';
-                else if (etype === 'http') detail = (e.http?.http_method || '') + ' ' + (e.http?.url || '');
-                else if (etype === 'tls') detail = e.tls?.sni || '';
-                else if (etype === 'flow') detail = `${srcIp}:${srcPort} → ${dstIp}:${dstPort}`;
-                else if (etype === 'ftp') detail = e.ftp?.command || '';
-                else if (etype === 'anomaly') detail = e.anomaly?.message || '';
-                else if (etype === 'fileinfo') detail = e.fileinfo?.filename || '';
-                const formatted = formatEvent(e);
-                return `<tr onclick="toggleRow(this)"><td class="timestamp">${escapeHtml(ts)}</td><td>${escapeHtml(icon)} ${escapeHtml(etype.toUpperCase())}</td><td><span class="badge badge-info">${escapeHtml(proto)}</span></td><td class="mono">${escapeHtml(srcIp)}</td><td class="mono">${escapeHtml(String(srcPort))}</td><td class="mono">${escapeHtml(dstIp)}</td><td class="mono">${escapeHtml(String(dstPort))}</td><td class="mono">${escapeHtml(detail)}</td></tr><tr class="detail-row"><td colspan="8"><div class="detail-content">${formatted}</div></td></tr>`;
-            });
-            
-            const container = document.getElementById(sectionId);
+
             let html = '<div class="section-content">';
-            if (rows.length === 0 && Object.keys(currentFilters).length > 0) {
+            if (filteredEvents.length === 0 && Object.keys(currentFilters).length > 0) {
                 html += EMPTY_FILTER_STATE_HTML;
             } else {
-                html += '<table><thead><tr>';
-                allColumns.forEach(h => html += `<th>${h}</th>`);
-                html += '</tr></thead><tbody>';
-                rows.forEach(r => html += r);
-                html += '</tbody></table>';
+                html += renderPaginatedTable({
+                    sectionKey: sectionId,
+                    columns: allColumns,
+                    items: filteredEvents,
+                    extractFn: extractAllValue,
+                    rowRenderer: buildAllEventRow,
+                    rerender: buildAllEvents
+                });
             }
             html += '</div>';
-            
+
             container.innerHTML = html;
         }
         
-        function buildAggregationsSectionAll() {
+        async function buildAggregationsSectionAll() {
             const aggContainer = document.getElementById('aggregations');
             if (!aggContainer) return;
-            
-            const types = EVENT_TYPE_ICONS;
-            const allColumns = ALL_EVENTS_COLUMNS;
-            const sectionId = 'section-all';
-            const sortedAll = [...allEvents].filter(e => e.event_type !== 'stats').sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
-            
-            let filteredEvents = sortedAll;
-            if (Object.keys(currentFilters).length > 0) {
-                filteredEvents = sortedAll.filter(e => {
-                    for (const [col, val] of Object.entries(currentFilters)) {
-                        const colIndex = allColumns.indexOf(col);
-                        if (extractAllValue(e, col, colIndex) !== val) return false;
-                    }
-                    return true;
-                });
-            }
-            
+
             if (!advancedMode) {
                 aggContainer.innerHTML = AGG_COLLAPSED_HTML;
                 return;
             }
-            
-            aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + buildAggregationTablesAll(filteredEvents, allColumns, types) + '</div></div>';
+
+            const allColumns = ALL_EVENTS_COLUMNS;
+            const sectionId = 'section-all';
+
+            if (canUseServerAggregation('all')) {
+                const data = await fetchAggregationData('all');
+                const countsByColumn = {};
+                for (const [col, entries] of Object.entries(data)) {
+                    countsByColumn[col] = {};
+                    for (const { value, count } of entries) countsByColumn[col][value] = count;
+                }
+                const html = '<div class="agg-grid">' + _renderAggTablesHtml(countsByColumn, allColumns, sectionId) + '</div>';
+                aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + html + '</div></div>';
+                return;
+            }
+
+            const sortedAll = [...allEvents].filter(e => e.event_type !== 'stats').sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
+            let filteredEvents = sortedAll;
+            if (Object.keys(currentFilters).length > 0) {
+                filteredEvents = sortedAll.filter(e => matchesCurrentFilters(e, (ev, col) => extractAllValue(ev, col, allColumns.indexOf(col))));
+            }
+
+            aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + buildAggregationTablesAll(filteredEvents, allColumns) + '</div></div>';
         }
         
         function extractAllValue(e, col, colIndex) {
+            // 'Type' means something different here (the event_type itself,
+            // e.g. "DNS"/"ANOMALY") than it does on a per-type tab (a DNS
+            // record type, dnp3's type field, etc.) - this override is
+            // real and must stay. 'Command' and 'Message' used to be
+            // overridden here too, but both were stale: 'Command' predates
+            // pgsql/enip/pop3 gaining their own real command fields (this
+            // always returned '' for them, ignoring extractValue's own
+            // already-correct per-protocol handling), and 'Message' read
+            // e.anomaly?.message, a field that has never existed in
+            // Suricata's eve.json anomaly schema (real field is 'event') -
+            // also, no column has been labeled 'Message' since anomaly
+            // gained real columns (Event/Type/Layer/App Proto). Both are
+            // removed; extractValue's own switch already handles every
+            // real per-type column correctly.
             if (col === 'Type') return (e.event_type || '').toUpperCase();
-            if (col === 'Command') return e.ftp?.command || '';
-            if (col === 'Message') return e.anomaly?.message || '';
             return extractValue(e, col, colIndex);
         }
         
         function buildAggregationTablesCore(events, columns, sectionId, extractFn) {
             if (!events || events.length === 0) return '';
-            
+
             const excludeCols = ['Time'];
             const aggCols = columns.filter(c => !excludeCols.includes(c) && !hiddenAggregations.has(sectionId + ':' + c));
-            
-            let html = '<div class="agg-grid">';
-            
+
+            const counts = {};
+            aggCols.forEach(col => { counts[col] = {}; });
             for (const col of aggCols) {
                 const colIndex = columns.indexOf(col);
-                const counts = {};
-                
                 for (const e of events) {
                     const val = extractFn(e, col, colIndex);
                     const key = val || '(empty)';
-                    counts[key] = (counts[key] || 0) + 1;
+                    counts[col][key] = (counts[col][key] || 0) + 1;
                 }
-                
-                const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, CONFIG.AGGREGATION_TOP_N);
-                
-                html += `<div class="section agg-section" data-col="${col}"><div class="section-content"><div class="agg-table">
-                    <div class="agg-header"><span>${col}</span><button class="agg-close" onclick="hideAggregationTable('${sectionId}', '${escapeJsString(col)}')" title="Hide">&times;</button></div>
-                    <table>
-                        <thead><tr><th style="width:60px;text-align:right;">Count</th><th>Value</th></tr></thead>
-                        <tbody>`;
-                
-                for (const [val, count] of sorted) {
-                    const displayVal = val === '(empty)' ? '' : val;
-                    const escapedVal = escapeHtml(val);
-                    const filterVal = val === '(empty)' ? '' : val;
-                    html += `<tr class="agg-row" onclick="applyFilter('${sectionId}', '${escapeJsString(col)}', '${escapeJsString(filterVal)}')">
-                        <td style="text-align:right;color:#8b949e;">${count}</td>
-                        <td class="agg-cell" title="${escapedVal}">${escapedVal}</td>
-                    </tr>`;
-                }
-                
-                html += `</tbody></table></div></div></div>`;
             }
-            
-            html += '</div>';
-            return html;
+
+            return '<div class="agg-grid">' + _renderAggTablesHtml(counts, aggCols, sectionId) + '</div>';
         }
         
-        function buildAggregationTablesAll(events, columns, types) {
+        function buildAggregationTablesAll(events, columns) {
             return buildAggregationTablesCore(events, columns, 'section-all', extractAllValue);
         }
         
@@ -2515,29 +5909,191 @@
                 case 'Dest IP': return e.dest_ip || '';
                 case 'Dest Port': return String(e.dest_port || '');
                 case 'Alert': return e.alert?.signature || '';
-                case 'Category': return e.alert?.category || '';
+                case 'Category': {
+                    if (e.event_type === 'modbus') return e.modbus?.request?.category || '';
+                    return e.alert?.category || '';
+                }
                 case 'Severity': return 'Sev ' + (e.alert?.severity || 0);
-                case 'Query': return e.dns?.rrname || '';
-                case 'Type': return e.dns?.rrtype || '';
+                case 'Ruleset': return classifyRuleset(e.alert?.signature_id);
+                case 'Type': {
+                    if (e.event_type === 'dnp3') return e.dnp3?.type || '';
+                    if (e.event_type === 'anomaly') return e.anomaly?.type || '';
+                    if (e.event_type === 'mdns') return e.mdns?.queries?.[0]?.rrtype || '';
+                    // See the 'Query' case above for why both the old flat
+                    // field and the new Suricata 8 V3 queries[0] path are
+                    // read here.
+                    return e.dns?.rrtype || e.dns?.queries?.[0]?.rrtype || '';
+                }
                 case 'Method': return e.http?.http_method || '';
                 case 'Host': return e.http?.hostname || '';
                 case 'URL': return e.http?.url || '';
-                case 'Status': return String(e.http?.status || '');
-                case 'User-Agent': return (e.http?.http_user_agent || '').slice(0, 50);
+                case 'Status': {
+                    if (e.event_type === 'enip') return e.enip?.response?.status || e.enip?.request?.status || '';
+                    if (e.event_type === 'pop3') return e.pop3?.response?.status || '';
+                    return String(e.http?.status || '');
+                }
+                case 'User-Agent': return (e.http?.http_user_agent || '').slice(0, CONFIG.USER_AGENT_MAX_LENGTH);
                 case 'SNI / Host': return e.tls?.sni || '-';
-                case 'Version': return e.tls?.version || '-';
-                case 'Subject': return (e.tls?.subject || '-').slice(0, 40);
-                case 'Issuer': return (e.tls?.issuerdn || '-').slice(0, 40);
+                case 'Version': {
+                    if (e.event_type === 'ntp') return e.ntp?.version !== undefined ? String(e.ntp.version) : '';
+                    return e.tls?.version || '-';
+                }
+                case 'Subject': return (e.tls?.subject || '-').slice(0, CONFIG.TLS_SUBJECT_MAX_LENGTH);
+                case 'Issuer': return (e.tls?.issuerdn || '-').slice(0, CONFIG.TLS_SUBJECT_MAX_LENGTH);
                 case 'Pkts →': return String(e.flow?.pkts_toserver || 0);
                 case 'Pkts ←': return String(e.flow?.pkts_toclient || 0);
                 case 'Bytes →': return String(e.flow?.bytes_toserver || 0);
                 case 'Bytes ←': return String(e.flow?.bytes_toclient || 0);
                 case 'State': return e.flow?.state || '';
                 case 'Alerted': return e.flow?.alerted ? 'Yes' : 'No';
-                case 'Filename': return e.fileinfo?.filename || '';
+                case 'Filename': {
+                    if (e.event_type === 'smb') return e.smb?.filename || '';
+                    if (e.event_type === 'ftp_data') return e.ftp_data?.filename || '';
+                    if (e.event_type === 'nfs') return e.nfs?.filename || '';
+                    return e.fileinfo?.filename || '';
+                }
                 case 'Rule Name': return e.filealerts?.rule_name || '';
                 case 'Tags': return (e.filealerts?.tags || []).join(', ');
                 case 'Author': return e.filealerts?.author || '';
+                case 'Function': {
+                    if (e.event_type === 'modbus') return e.modbus?.request?.function_code || '';
+                    if (e.event_type === 'dnp3') {
+                        return e.dnp3?.application?.function_code !== undefined ? String(e.dnp3.application.function_code) :
+                               (e.dnp3?.request?.application?.function_code !== undefined ? String(e.dnp3.request.application.function_code) :
+                               (e.dnp3?.response?.application?.function_code !== undefined ? String(e.dnp3.response.application.function_code) : ''));
+                    }
+                    return '';
+                }
+                case 'Unit ID': return e.modbus?.request?.unit_id !== undefined ? String(e.modbus.request.unit_id) : '';
+                case 'Access Type': return e.modbus?.request?.access_type || '';
+                case 'Error Flags': return e.modbus?.request?.error_flags || '';
+                case 'Source Addr': return e.dnp3?.src !== undefined ? String(e.dnp3.src) : (e.dnp3?.request?.src !== undefined ? String(e.dnp3.request.src) : '');
+                case 'Dest Addr': return e.dnp3?.dst !== undefined ? String(e.dnp3.dst) : (e.dnp3?.request?.dst !== undefined ? String(e.dnp3.request.dst) : '');
+                case 'Query': {
+                    if (e.event_type === 'pgsql') return e.pgsql?.request?.simple_query || '';
+                    if (e.event_type === 'mdns') return e.mdns?.queries?.[0]?.rrname || '';
+                    // dns.rrname/rrtype are the pre-Suricata-8 flat shortcut
+                    // fields for "the query this transaction is about". As
+                    // of Suricata 8's V3 DNS logging format (the new
+                    // default - see rust/src/dns/log.rs), those flat fields
+                    // are gone entirely and the same info lives at
+                    // dns.queries[0].rrname/rrtype instead - confirmed
+                    // against real Suricata 8.0.6 output, which silently
+                    // rendered every DNS row's Query/Type as empty before
+                    // this fix. Falling back to the old flat fields too
+                    // keeps any previously-stored Suricata 7 analyses
+                    // working.
+                    return e.dns?.rrname || e.dns?.queries?.[0]?.rrname || '';
+                }
+                case 'Command': {
+                    if (e.event_type === 'pgsql') return e.pgsql?.response?.command_completed || '';
+                    if (e.event_type === 'enip') return e.enip?.request?.command || e.enip?.response?.command || '';
+                    if (e.event_type === 'pop3') return e.pop3?.request?.command || '';
+                    return e.ftp?.command || '';
+                }
+                case 'Rows': return e.pgsql?.response?.data_rows !== undefined ? String(e.pgsql.response.data_rows) : '';
+                case 'SSL': return e.pgsql?.response?.ssl_accepted !== undefined ? (e.pgsql.response.ssl_accepted ? 'Yes' : 'No') : '';
+                case 'SNI': return e.quic?.sni || '';
+                case 'QUIC Version': return e.quic?.version || '';
+                case 'JA3': return e.quic?.ja3?.hash || '';
+                case 'JA3S': return e.quic?.ja3s?.hash || '';
+                case 'DHCP Type': return e.dhcp?.dhcp_type || e.dhcp?.type || '';
+                case 'Client MAC': return e.dhcp?.client_mac || '';
+                case 'Assigned IP': return e.dhcp?.assigned_ip || '';
+                case 'Hostname': return e.dhcp?.hostname || '';
+                case 'FTP Command': return e.ftp_data?.command || '';
+                case 'SMB Command': return e.smb?.command || '';
+                case 'Share': return e.smb?.share || '';
+                case 'SMB User': return e.smb?.ntlmssp?.user || e.smb?.kerberos?.cname || '';
+                case 'Client Version': {
+                    if (e.event_type === 'rfb') {
+                        const cpv = e.rfb?.client_protocol_version;
+                        return cpv ? `${cpv.major}.${cpv.minor}` : '';
+                    }
+                    return e.ssh?.client?.software_version || '';
+                }
+                case 'Server Version': {
+                    if (e.event_type === 'rfb') {
+                        const spv = e.rfb?.server_protocol_version;
+                        return spv ? `${spv.major}.${spv.minor}` : '';
+                    }
+                    return e.ssh?.server?.software_version || '';
+                }
+                case 'Client': return e.krb5?.cname || '';
+                case 'Service': return e.krb5?.sname || '';
+                case 'Realm': return e.krb5?.realm || '';
+                case 'Error Code': return e.krb5?.error_code || '';
+                case 'SIP Method': return e.sip?.method || '';
+                case 'URI': return e.sip?.uri || '';
+                case 'SIP Code': return String(e.sip?.code || '');
+                case 'Reason': return e.sip?.reason || '';
+                case 'SNMP Version': return String(e.snmp?.version || '');
+                case 'PDU Type': return e.snmp?.pdu_type || '';
+                case 'Community': return e.snmp?.community || '';
+                case 'MQTT Type': return e.mqtt ? (Object.keys(e.mqtt)[0] || '') : '';
+                case 'Topic': {
+                    const mqttType = e.mqtt ? Object.keys(e.mqtt)[0] : '';
+                    const mqttSub = (mqttType && e.mqtt[mqttType]) || {};
+                    return mqttSub.topic || (mqttSub.topics || []).map(t => t.topic || t).join(', ') || '';
+                }
+                case 'Client ID': {
+                    const mqttType = e.mqtt ? Object.keys(e.mqtt)[0] : '';
+                    return ((mqttType && e.mqtt[mqttType]) || {}).client_id || '';
+                }
+                case 'Interface UUID': return (e.dcerpc?.interfaces || [])[0]?.uuid || '';
+                case 'Opnum': return String(e.dcerpc?.req?.opnum ?? e.dcerpc?.request?.opnum ?? '');
+                case 'Call ID': return String(e.dcerpc?.call_id ?? '');
+                case 'RDP Event': return e.rdp?.event_type || '';
+                case 'Cookie': return e.rdp?.cookie || '';
+                case 'Client Name': return e.rdp?.client_name || '';
+                case 'Packet': return e.tftp?.packet || '';
+                case 'File': return e.tftp?.file || '';
+                case 'Mode': {
+                    if (e.event_type === 'ntp') return e.ntp?.mode !== undefined ? String(e.ntp.mode) : '';
+                    return e.tftp?.mode || '';
+                }
+                case 'Exchange Type': return e.ike?.exchange_type || '';
+                case 'IKE Version': return e.ike?.version_major !== undefined ? `${e.ike.version_major}.${e.ike.version_minor || 0}` : '';
+                case 'Init SPI': return e.ike?.init_spi || '';
+                case 'Procedure': return e.nfs?.procedure || '';
+                case 'Security Type': return String(e.rfb?.authentication?.security_type ?? '');
+                case 'Request Type': return e.bittorrent_dht?.request_type || e.bittorrent_dht?.request?.request_type || '';
+                case 'Info Hash': return e.bittorrent_dht?.info_hash || e.bittorrent_dht?.request?.info_hash || '';
+                case 'Helo': return e.smtp?.helo || '';
+                case 'Mail From': return e.smtp?.mail_from || '';
+                case 'Rcpt To': return (e.smtp?.rcpt_to || []).join(', ');
+                case 'Command Data': return e.ftp?.command_data || '';
+                case 'Completion Code': return (e.ftp?.completion_code || []).join(', ');
+                case 'Reply': return (e.ftp?.reply || []).join(' | ');
+                case 'Event': return e.anomaly?.event || '';
+                case 'Layer': return e.anomaly?.layer || '';
+                case 'App Proto': return e.anomaly?.app_proto || '';
+                case 'Stratum': return e.ntp?.stratum !== undefined ? String(e.ntp.stratum) : '';
+                case 'Reference ID': return e.ntp?.reference_id || '';
+                case 'Opcode': {
+                    if (e.event_type === 'arp') return e.arp?.opcode || '';
+                    return e.websocket?.opcode || '';
+                }
+                case 'Src MAC': return e.arp?.src_mac || '';
+                case 'Dest MAC': return e.arp?.dest_mac || '';
+                case 'Fin': return e.websocket?.fin !== undefined ? String(e.websocket.fin) : '';
+                case 'Payload': return (e.websocket?.payload_printable || e.websocket?.payload_base64 || '').slice(0, 100);
+                case 'Args': return (e.pop3?.request?.args || []).join(' ');
+                case 'Operation': return e.ldap?.request?.operation || e.ldap?.responses?.[0]?.operation || '';
+                case 'Message ID': {
+                    const req = e.ldap?.request;
+                    if (req?.message_id !== undefined) return String(req.message_id);
+                    const resp = e.ldap?.responses?.[0];
+                    return resp?.message_id !== undefined ? String(resp.message_id) : '';
+                }
+                case 'Result Code': {
+                    for (const r of (e.ldap?.responses || [])) {
+                        for (const key in r) {
+                            if (r[key] && typeof r[key] === 'object' && 'result_code' in r[key]) return r[key].result_code;
+                        }
+                    }
+                    return '';
+                }
                 case 'Channel': {
                     try { const jd = _parseLogEventJson(e); return jd.Channel || jd.Provider_Name || e.app_proto || ''; } catch(e2) { return e.app_proto || ''; }
                 }
@@ -2550,13 +6106,45 @@
                 case 'Detail': {
                     const etype = e.event_type || '';
                     if (etype === 'alert') return e.alert?.signature || '';
-                    if (etype === 'dns') return e.dns?.rrname || '';
+                    if (etype === 'protocol_decode') return e.alert?.signature || '';
+                    if (etype === 'dns') return e.dns?.rrname || e.dns?.queries?.[0]?.rrname || '';
+                    if (etype === 'mdns') return e.mdns?.queries?.[0]?.rrname || '';
                     if (etype === 'http') return (e.http?.http_method || '') + ' ' + (e.http?.url || '');
                     if (etype === 'tls') return e.tls?.sni || '';
                     if (etype === 'flow') return `${e.src_ip || ''}:${e.src_port || ''} → ${e.dest_ip || ''}:${e.dest_port || ''}`;
-                    if (etype === 'ftp') return e.ftp?.command || '';
-                    if (etype === 'anomaly') return e.anomaly?.message || '';
+                    if (etype === 'ftp') return e.ftp?.command || (e.ftp?.reply || [])[0] || '';
+                    // BUGFIX: was e.anomaly?.message, a field that has never
+                    // existed in Suricata's eve.json anomaly schema (real
+                    // field is 'event', e.g. "APPLAYER_DETECT_PROTOCOL_ONLY_
+                    // ONE_DIRECTION") - always silently returned '' before.
+                    if (etype === 'anomaly') return e.anomaly?.event || '';
                     if (etype === 'fileinfo') return e.fileinfo?.filename || '';
+                    if (etype === 'modbus') return e.modbus?.request?.function_code || '';
+                    if (etype === 'dnp3') return e.dnp3?.type || e.dnp3?.request?.type || e.dnp3?.response?.type || '';
+                    if (etype === 'pgsql') return e.pgsql?.request?.simple_query || e.pgsql?.response?.command_completed || '';
+                    if (etype === 'enip') return e.enip?.request?.command || e.enip?.response?.command || '';
+                    if (etype === 'ntp') return e.ntp?.version !== undefined ? `v${e.ntp.version} mode ${e.ntp?.mode ?? ''}` : '';
+                    if (etype === 'websocket') return e.websocket?.opcode || '';
+                    if (etype === 'pop3') return e.pop3?.request?.command || e.pop3?.response?.status || '';
+                    if (etype === 'ldap') return e.ldap?.request?.operation || e.ldap?.responses?.[0]?.operation || '';
+                    if (etype === 'arp') return `${e.arp?.opcode || ''} ${e.arp?.src_mac || ''} → ${e.arp?.dest_mac || ''}`.trim();
+                    if (etype === 'quic') return e.quic?.sni || '';
+                    if (etype === 'dhcp') return `${e.dhcp?.dhcp_type || e.dhcp?.type || ''} ${e.dhcp?.assigned_ip || ''}`.trim();
+                    if (etype === 'ftp_data') return `${e.ftp_data?.command || ''} ${e.ftp_data?.filename || ''}`.trim();
+                    if (etype === 'smb') return `${e.smb?.command || ''} ${e.smb?.filename || ''}`.trim();
+                    if (etype === 'ssh') return e.ssh?.client?.software_version || e.ssh?.server?.software_version || '';
+                    if (etype === 'krb5') return `${e.krb5?.cname || ''} → ${e.krb5?.sname || ''}`;
+                    if (etype === 'sip') return e.sip?.method ? `${e.sip.method} ${e.sip?.uri || ''}` : `${e.sip?.code || ''} ${e.sip?.reason || ''}`;
+                    if (etype === 'snmp') return e.snmp?.pdu_type || '';
+                    if (etype === 'mqtt') return e.mqtt ? (Object.keys(e.mqtt)[0] || '') : '';
+                    if (etype === 'dcerpc') return (e.dcerpc?.interfaces || [])[0]?.uuid || '';
+                    if (etype === 'rdp') return e.rdp?.event_type || '';
+                    if (etype === 'tftp') return `${e.tftp?.packet || ''} ${e.tftp?.file || ''}`.trim();
+                    if (etype === 'ike') return e.ike?.exchange_type || '';
+                    if (etype === 'nfs') return `${e.nfs?.procedure || ''} ${e.nfs?.filename || ''}`.trim();
+                    if (etype === 'rfb') return e.rfb?.authentication?.security_type ?? '';
+                    if (etype === 'bittorrent_dht') return e.bittorrent_dht?.request_type || e.bittorrent_dht?.request?.request_type || '';
+                    if (etype === 'smtp') return e.smtp?.mail_from || '';
                     if (etype === 'log') {
                         try {
                             const jd = _parseLogEventJson(e);
@@ -2582,27 +6170,467 @@
         }
         
         let allEvents = [];
-        let sections = {};
+        let baseAllEvents = [];
+        // Tracks which eventTypes' currently-cached tabDataCache/allEvents data is
+        // known to be a partial (capped) result - i.e. the real total exceeds
+        // getUserQueryLimit()'s current value. Cleared whenever those caches
+        // themselves are reset (new file load, search change).
+        // NOTE: must stay `var` (not let/const) so it attaches to the global
+        // object - the JSDOM test harness assigns/reads it via separate
+        // script evaluations, same reason as currentFilters/advancedMode below.
+        var truncatedTypes = new Set();
         let eventTypes = [];
-        let currentMd5 = '';
-          let currentFileName = '';
-          var currentFilters = {};
-          let currentSearch = [];
-          var advancedMode = false;
-          let diagramMode = true;
-          var hiddenAggregations = new Set();
-          let baseEventStats = {};
-          var isLogAnalysisMode = false;
+        // NOTE: these must stay `var` (not let/const) so they attach to the
+        // global object - the JSDOM test harness assigns/reads them via
+        // separate script evaluations, same reason as truncatedTypes above
+        // and currentFilters/advancedMode below.
+        var currentMd5 = '';
+        var currentFileName = '';
+        var currentNotes = '';
+        // Non-null while #notesModal is editing a row-scoped note instead
+        // of the whole-analysis one - {table, rowId} identifying which row.
+        // Reset to null on close so a stray reopen via the header icon
+        // can't inherit stale row scope.
+        var currentRowNoteScope = null;
+        // NOTE: these must stay `var` (not let/const) so they attach to the
+        // global object — the JSDOM test harness and inline handlers assign
+        // them via separate script evaluations.
+        var currentFilters = {};
+        let currentSearch = [];
+        var advancedMode = false;
+        let diagramMode = true;
 
-        const EVENT_TYPE_ICONS = { alert: '🔴', dns: '🟢', http: '🟠', tls: '🔵', flow: '🟣', ftp: '📁', anomaly: '⚠️', fileinfo: '📄', filealerts: '🚨', log: '📋', sigmaalert: '🛡️' };
+        // Pagination/sort state for the currently-visible data table. A single
+        // set (not per-tab) is sufficient because loadTabData always fully
+        // rebuilds whichever one section is visible at a time.
+        let currentPage = 1;
+        let currentSort = null;       // { sectionKey, colIndex, asc } | null
+        let activeTableRender = null; // { sectionKey, rerender } - set each render
+
+        function resetPagination() {
+            currentPage = 1;
+            currentSort = null;
+        }
+
+        // Whether the row table for the current view can be fetched a page at
+        // a time directly from the server (arbitrarily large datasets), rather
+        // than needing the whole filtered/sorted array in memory. Only true
+        // when there's no active column filter and no active client-side sort
+        // - both require the full array to be correct, since neither is
+        // supported server-side yet.
+        function canUseScalableFetch() {
+            return Object.keys(currentFilters).length === 0 && currentSort === null;
+        }
+
+        // Guards against out-of-order async renders (tab switched, or
+        // Prev/Next/sort clicked again, while a previous fetch is in flight).
+        // Every scalable-mode fetch captures the generation at call time and
+        // checks it's still current immediately before touching the DOM.
+        let fetchGeneration = 0;
+        function bumpFetchGeneration() { return ++fetchGeneration; }
+        function isStaleFetch(gen) { return gen !== fetchGeneration; }
+
+        // Sankey gets its own, separate generation counter rather than
+        // sharing fetchGeneration above. REGRESSION (recurring): every
+        // unrelated caller of bumpFetchGeneration() (pagination, sort, a
+        // filter/search change, loadAnalysis, ...) invalidates whichever
+        // Sankey fetch happens to still be in flight from a just-prior tab
+        // load or filter change - if that caller's own chain doesn't
+        // itself end in a fresh updateSankeyDiagram() call (easy to miss,
+        // and already missed at least twice: loadAnalysis and
+        // sortCurrentTable both needed a dedicated follow-up call added
+        // after being caught stranding the panel on "Loading Sankey
+        // diagram..." forever), nothing ever repaints it. Since sort order
+        // and pagination have no bearing on the diagram's own content
+        // anyway (see sortCurrentTable's own comment), Sankey never needed
+        // to share staleness tracking with table fetches in the first
+        // place - an isolated counter means only another Sankey render can
+        // ever invalidate an in-flight one, so this whole bug class can no
+        // longer recur no matter what future code bumps fetchGeneration for.
+        let sankeyFetchGeneration = 0;
+        function bumpSankeyFetchGeneration() { return ++sankeyFetchGeneration; }
+        function isStaleSankeyFetch(gen) { return gen !== sankeyFetchGeneration; }
+
+        // Fetches exactly one page (CONFIG.TABLE_PAGE_SIZE rows) of a per-type
+        // or merged "all events" table directly from the server, plus the true
+        // total via /api/count - both already support offset/limit and q.
+        // eventType null/'all' -> merged multi-type query (no &type= param).
+        async function fetchEventsPage(eventType) {
+            const gen = bumpFetchGeneration();
+            const qParam = buildSearchQuery();
+            const typeParam = (eventType && eventType !== 'all') ? `&type=${eventType}` : '';
+            const offset = (currentPage - 1) * CONFIG.TABLE_PAGE_SIZE;
+            const sortParam = (currentSort && currentSort.sectionKey === `section-${eventType}` && canServerSortEventType(eventType))
+                ? `&order_by=${encodeURIComponent(getColumnsForType(eventType)[currentSort.colIndex])}&sort_dir=${currentSort.asc ? 'asc' : 'desc'}`
+                : '';
+            const [rowsResp, countResp] = await Promise.all([
+                fetch(`/api/events?md5=${encodeURIComponent(currentMd5)}${typeParam}&offset=${offset}&limit=${CONFIG.TABLE_PAGE_SIZE}${qParam}${sortParam}&t=${Date.now()}`),
+                fetch(`/api/count?md5=${encodeURIComponent(currentMd5)}${typeParam}${qParam}&t=${Date.now()}`)
+            ]);
+            const items = await rowsResp.json();
+            const { count } = await countResp.json();
+            return { items, serverTotal: count, gen };
+        }
+
+        async function fetchSigmaAlertsPage() {
+            const gen = bumpFetchGeneration();
+            const qParam = buildSearchQuery();
+            const offset = (currentPage - 1) * CONFIG.TABLE_PAGE_SIZE;
+            const [rowsResp, countResp] = await Promise.all([
+                fetch(`/api/sigma-alerts?md5=${encodeURIComponent(currentMd5)}&offset=${offset}&limit=${CONFIG.TABLE_PAGE_SIZE}${qParam}&t=${Date.now()}`),
+                fetch(`/api/sigma-count?md5=${encodeURIComponent(currentMd5)}${qParam}&t=${Date.now()}`)
+            ]);
+            const items = await rowsResp.json();
+            const { count } = await countResp.json();
+            return { items, serverTotal: count, gen };
+        }
+
+        // Fetches an already-aggregated {nodes, links} Sankey payload (top-N
+        // per column + Other bucketing computed server-side), so the diagram
+        // can stay visible by default without needing the full capped batch.
+        async function fetchSankeyData(eventType) {
+            const qParam = buildSearchQuery();
+            const typeParam = (eventType && eventType !== 'all') ? `&type=${eventType}` : '';
+            const resp = await fetch(`/api/sankey-data?md5=${encodeURIComponent(currentMd5)}${typeParam}${qParam}&t=${Date.now()}`);
+            return await resp.json();
+        }
+
+        // Whether the Sankey diagram can use the lightweight server-aggregated
+        // fetch above instead of needing the full capped batch - only true
+        // when there's no active column filter (search is already reflected
+        // server-side). Deliberately not canUseScalableFetch(), which also
+        // checks currentSort - sort has no bearing on the diagram.
+        function canUseServerSankey(eventType) {
+            return !!eventType && eventType !== 'sigmaalert' && eventType !== 'log'
+                && Object.keys(currentFilters).length === 0;
+        }
+
+        // Whether the aggregation tables (the "advanced" per-column top-10
+        // view) can be computed server-side via /api/aggregation-data
+        // instead of needing the full capped batch. True for the 10 pcap
+        // per-type tabs (sharing the generic buildAggregationTablesCore
+        // /extractValue code path) plus the merged 'all' view (its 'Type'/
+        // 'Detail' columns now have SQL equivalents too - db.py's
+        // _all_events_detail_expr/UPPER(event_type)). sigmaalert/log stay
+        // excluded (MITRE-Technique array-parse / entire column set being
+        // data-dependent/untrusted, respectively) - and only when there's no
+        // active column filter (the server endpoint is read-only/unfiltered).
+        function canUseServerAggregation(eventType) {
+            // 'mqtt'/'ldap' are excluded alongside sigmaalert/log/binary:
+            // their fields are dynamically keyed by message/operation
+            // subtype (connect/publish/subscribe/... for mqtt;
+            // bind_request/search_request/modify_request/... for ldap),
+            // which has no static JSON path representation server-side
+            // (see db.py's AGGREGATION_JSON_PATHS) - falling back to
+            // client-side computation here, like log/sigmaalert already do,
+            // instead of hitting an always-empty server result.
+            return !!eventType && eventType !== 'sigmaalert'
+                && eventType !== 'log' && eventType !== 'binary'
+                && eventType !== 'mqtt' && eventType !== 'ldap'
+                && Object.keys(currentFilters).length === 0;
+        }
+
+        // Whether column-header sort can be performed server-side (via
+        // /api/events' order_by/sort_dir params) for eventType. Same scope
+        // as canUseServerAggregation - every column of the 10 pcap per-type
+        // tabs plus the merged 'all' view now has a safe SQL expression via
+        // db.py's _sort_expr (reusing the exact same mapping
+        // /api/aggregation-data uses). sigmaalert/log/binary each have at
+        // least one column with no server-side equivalent (sigmaalert's
+        // MITRE-Technique array-parse, log's entire column set being
+        // data-dependent/untrusted, binary having no scalable path at all),
+        // so they keep the existing full-batch-then-client-sort fallback.
+        function canServerSortEventType(eventType) {
+            // 'mqtt'/'ldap' excluded for the same reason as
+            // canUseServerAggregation: their column-specific fields have no
+            // static JSON path server-side, so _sort_expr() returns None for
+            // anything but 'Time' - fall back to full client-side sort,
+            // which handles every column correctly.
+            return !!eventType && eventType !== 'sigmaalert'
+                && eventType !== 'log' && eventType !== 'binary'
+                && eventType !== 'mqtt' && eventType !== 'ldap';
+        }
+
+        // Whether buildSection's scalable (per-page) fetch remains valid
+        // given the CURRENT currentFilters/currentSort state - true when
+        // unfiltered and either no sort is active, or the active sort is one
+        // the server can perform for this eventType.
+        function canUseScalableFetchForSort(eventType) {
+            return Object.keys(currentFilters).length === 0
+                && (currentSort === null || canServerSortEventType(eventType));
+        }
+
+        async function fetchAggregationData(eventType) {
+            const qParam = buildSearchQuery();
+            const typeParam = (eventType && eventType !== 'all') ? `&type=${eventType}` : '';
+            const resp = await fetch(`/api/aggregation-data?md5=${encodeURIComponent(currentMd5)}${typeParam}${qParam}&t=${Date.now()}`);
+            return await resp.json();
+        }
+
+        // Whether the (still fully client-side, for log/sigmaalert/binary/'all')
+        // aggregation tables and/or the Sankey diagram need the full capped
+        // batch loaded, independent of whatever mode the row table itself is
+        // using.
+        function needsFullBatch(eventType) {
+            // The aggregation view only needs the full batch when it can't use
+            // the lightweight server-aggregated fetch - i.e. for log/sigmaalert
+            // (bespoke dynamic columns) or when a column filter is active
+            // (canUseServerAggregation mirrors this same condition).
+            if (advancedMode && (eventType === 'sigmaalert' || eventType === 'log'
+                || !canUseServerAggregation(eventType))) return true;
+            // The diagram only needs the full batch when it can't use the
+            // lightweight server-aggregated fetch - i.e. when a column filter
+            // is active (canUseServerSankey mirrors this same condition).
+            if (eventType !== 'sigmaalert' && eventType !== 'log' && diagramMode
+                && Object.keys(currentFilters).length > 0) return true;
+            return false;
+        }
+
+        // Ensures tabDataCache[eventType] (or allEvents for 'all') is
+        // populated, fetching at today's existing capped limit if not already
+        // cached. No-op if already cached - safe to call redundantly. This is
+        // the one fetch that feeds aggregation tables/Sankey (unchanged from
+        // today) and is also what a mode transition into filtered/sorted
+        // fallback rendering needs before it can render correctly.
+        async function ensureCappedBatch(eventType) {
+            const qParam = buildSearchQuery();
+            if (eventType === 'all') {
+                if (allEvents.length > 0) return;
+                const [resp, countResp] = await Promise.all([
+                    fetch(`/api/events?md5=${encodeURIComponent(currentMd5)}&limit=${getUserQueryLimit()}${qParam}&t=${Date.now()}`),
+                    fetch(`/api/count?md5=${encodeURIComponent(currentMd5)}${qParam}&t=${Date.now()}`)
+                ]);
+                allEvents = await resp.json();
+                const { count } = await countResp.json();
+                if (allEvents.length < count) truncatedTypes.add('all'); else truncatedTypes.delete('all');
+                return;
+            }
+            if (tabDataCache[eventType]) return;
+            const limit = getUserQueryLimit();
+            const endpoint = eventType === 'sigmaalert' ? '/api/sigma-alerts' : '/api/events';
+            const countEndpoint = eventType === 'sigmaalert' ? '/api/sigma-count' : '/api/count';
+            const typeParam = eventType === 'sigmaalert' ? '' : `&type=${eventType}`;
+            const [resp, countResp] = await Promise.all([
+                fetch(`${endpoint}?md5=${encodeURIComponent(currentMd5)}${typeParam}&limit=${limit}${qParam}&t=${Date.now()}`),
+                fetch(`${countEndpoint}?md5=${encodeURIComponent(currentMd5)}${typeParam}${qParam}&t=${Date.now()}`)
+            ]);
+            tabDataCache[eventType] = await resp.json();
+            const { count } = await countResp.json();
+            if (tabDataCache[eventType].length < count) truncatedTypes.add(eventType); else truncatedTypes.delete(eventType);
+        }
+
+        // Fetches only the two event types binary-file analysis ever produces
+        // (fileinfo: exactly one row, guaranteed by create_file_analysis_db's
+        // insert-once call in db.py; filealerts: one row per YARA match) in
+        // parallel, instead of every event type via ensureCappedBatch('all').
+        // Binary-mode databases (routed here only when detectedType ===
+        // 'binary') never contain any other event type, so this is a strict
+        // narrowing with no fallback-loss risk.
+        async function fetchBinaryEvents(qParam) {
+            const q = qParam || '';
+            const [fileAlertsResp, fileInfoResp] = await Promise.all([
+                fetch(`/api/events?md5=${encodeURIComponent(currentMd5)}&type=filealerts&limit=${getUserQueryLimit()}${q}&t=${Date.now()}`),
+                fetch(`/api/events?md5=${encodeURIComponent(currentMd5)}&type=fileinfo&limit=1${q}&t=${Date.now()}`)
+            ]);
+            const [fileAlerts, fileInfo] = await Promise.all([fileAlertsResp.json(), fileInfoResp.json()]);
+            return [...fileInfo, ...fileAlerts];
+        }
+
+        // Cache-aware wrapper mirroring ensureCappedBatch('all')'s "no-op if
+        // already populated" contract, for call sites (initial load,
+        // applyFilters, clearFilter) that want to reuse an already-fetched
+        // allEvents instead of forcing a fresh fetch on every column-filter
+        // change.
+        async function ensureBinaryEventsBatch() {
+            if (allEvents.length > 0) return;
+            allEvents = await fetchBinaryEvents(buildSearchQuery());
+        }
+
+        var hiddenAggregations = new Set();
+        let baseEventStats = {};
+        var isLogAnalysisMode = false;
         const ALL_EVENTS_COLUMNS = ['Time', 'Type', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Detail'];
-        const EMPTY_FILTER_STATE_HTML = '<div style="padding: 40px; text-align: center; color: #8b949e; font-size: 0.95rem;">🔍 No events match the current filters</div>';
+
+        // Columns whose content is short and structurally identical across every
+        // table (pcap per-type, All Events, Sigma Alerts). Fixed widths keep them
+        // the same size everywhere, regardless of how many other columns a given
+        // table has - table-layout:fixed otherwise splits width evenly by column
+        // count alone, so the same field ends up a different width per tab.
+        const FIXED_COLUMN_WIDTHS = {
+            'Time': '170px',
+            'Type': '130px',
+            'Protocol': '110px',
+            'Source IP': '150px',
+            'Dest IP': '150px',
+            'Source Port': '120px',
+            'Dest Port': '120px',
+            'Severity': '150px',
+        };
+
+        function tableHeaderCellsHtml(columns, sectionKey) {
+            return columns.map((h, i) => {
+                const w = FIXED_COLUMN_WIDTHS[h];
+                const styleAttr = w ? ` style="width:${w}"` : '';
+                let cls = '', arrow = '';
+                if (sectionKey && currentSort && currentSort.sectionKey === sectionKey && currentSort.colIndex === i) {
+                    cls = ` class="${currentSort.asc ? 'sort-asc' : 'sort-desc'}"`;
+                    arrow = `<span class="sort-arrow">${currentSort.asc ? '▲' : '▼'}</span>`;
+                }
+                return `<th${styleAttr}${cls}>${escapeHtml(h)}${arrow}</th>`;
+            }).join('');
+        }
+
+        // Sorts a copy of `items` by columns[colIndex], reusing the caller's
+        // existing (label, colIndex) => value extractor. Numeric-aware, same
+        // rule the old DOM-based sortTable used.
+        function sortItemsByColumn(items, columns, extractFn, colIndex, asc) {
+            const col = columns[colIndex];
+            return [...items].sort((a, b) => {
+                const aStr = String(extractFn(a, col, colIndex) ?? '').trim();
+                const bStr = String(extractFn(b, col, colIndex) ?? '').trim();
+                if (aStr !== '' && bStr !== '' && !isNaN(aStr) && !isNaN(bStr)) {
+                    return asc ? parseFloat(aStr) - parseFloat(bStr) : parseFloat(bStr) - parseFloat(aStr);
+                }
+                return asc ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+            });
+        }
+
+        // Shared paginated-table renderer used by every data table (per-type
+        // pcap tables, All Events, Sigma Alerts, Binary/YARA, Log Events).
+        // `items` is the full already-filtered array for the current tab (not
+        // yet sliced to a page). `rowRenderer` maps one item to its row HTML.
+        // `rerender` re-invokes the exact call that produced `items`, so
+        // Prev/Next and column-sort clicks know how to redraw.
+        function renderPaginatedTable({ sectionKey, columns, items, extractFn, rowRenderer, rerender, serverTotal }) {
+            activeTableRender = { sectionKey, rerender };
+
+            let sortedItems = null, totalItems;
+            if (serverTotal !== undefined) {
+                // Scalable mode: `items` is already exactly one page, fetched
+                // and ordered by the server - no local sort/slice needed.
+                totalItems = serverTotal;
+            } else {
+                sortedItems = items;
+                if (currentSort && currentSort.sectionKey === sectionKey) {
+                    sortedItems = sortItemsByColumn(items, columns, extractFn, currentSort.colIndex, currentSort.asc);
+                }
+                totalItems = sortedItems.length;
+            }
+
+            const totalPages = Math.max(1, Math.ceil(totalItems / CONFIG.TABLE_PAGE_SIZE));
+            currentPage = Math.min(Math.max(currentPage, 1), totalPages);
+            const start = (currentPage - 1) * CONFIG.TABLE_PAGE_SIZE;
+            const pageItems = sortedItems === null ? items : sortedItems.slice(start, start + CONFIG.TABLE_PAGE_SIZE);
+
+            let html = '<div class="table-scroll-wrapper"><table><thead><tr>';
+            html += tableHeaderCellsHtml(columns, sectionKey);
+            // Fixed, unlabeled trailing column for the per-row note icon -
+            // not one of `columns` (those are index-correlated with
+            // currentSort.colIndex; inserting a sortable header here would
+            // shift every other column's sort index).
+            html += '<th style="width:32px;"></th>';
+            html += '</tr></thead><tbody>';
+            pageItems.forEach(item => { html += rowRenderer(item); });
+            html += '</tbody></table></div>';
+            html += buildPaginationControlsHtml(totalItems, start, pageItems.length, totalPages);
+
+            return html;
+        }
+
+        function buildPaginationControlsHtml(totalItems, start, pageCount, totalPages) {
+            if (totalItems <= CONFIG.TABLE_PAGE_SIZE) return '';
+            const end = start + pageCount;
+            return `<div class="pagination-bar">
+                <span class="pagination-info">Showing ${start + 1}-${end} of ${totalItems}</span>
+                <div class="pagination-controls">
+                    <button class="pagination-btn" onclick="changeTablePage(-1)" ${currentPage <= 1 ? 'disabled' : ''}>&larr; Prev</button>
+                    <span class="pagination-page">Page
+                        <input type="number" id="paginationPageInput" class="pagination-page-input" min="1" max="${totalPages}" value="${currentPage}" onkeydown="if(event.key==='Enter'){jumpToPage()}">
+                        of ${totalPages}
+                    </span>
+                    <button class="pagination-btn" onclick="jumpToPage()">Go</button>
+                    <button class="pagination-btn" onclick="changeTablePage(1)" ${currentPage >= totalPages ? 'disabled' : ''}>Next &rarr;</button>
+                </div>
+            </div>`;
+        }
+
+        async function jumpToPage() {
+            if (!activeTableRender) return;
+            const input = document.getElementById('paginationPageInput');
+            if (!input) return;
+            const page = parseInt(input.value, 10);
+            if (!isNaN(page)) {
+                currentPage = page; // renderPaginatedTable clamps to the valid [1, totalPages] range
+                await activeTableRender.rerender();
+            } else {
+                input.value = currentPage;
+            }
+        }
+
+        async function changeTablePage(delta) {
+            if (!activeTableRender) return;
+            currentPage += delta;
+            await activeTableRender.rerender();
+        }
+
+        // For the 10 pcap per-type tabs (canServerSortEventType), sort is
+        // performed server-side - fetchEventsPage picks up the new
+        // currentSort and re-fetches just one page in the new order, so no
+        // full-batch fetch is needed here. For everything else ('all',
+        // sigmaalert, log, binary), clicking a column header while in
+        // scalable mode must first fetch the full capped batch (a no-op if
+        // already cached for aggregations/Sankey) before currentSort takes
+        // effect - canUseScalableFetch() becomes false the moment it's set,
+        // so the next rerender() naturally takes the fallback (full-batch,
+        // client-side sort) path through the same top-level build function.
+        async function sortCurrentTable(colIndex) {
+            if (!activeTableRender) return;
+            const { sectionKey } = activeTableRender;
+            const eventType = sectionKey.replace('section-', '');
+            bumpFetchGeneration();
+            if (!(Object.keys(currentFilters).length === 0 && canServerSortEventType(eventType))) {
+                await ensureCappedBatch(eventType);
+            }
+            const sameCol = currentSort && currentSort.sectionKey === sectionKey && currentSort.colIndex === colIndex;
+            currentSort = { sectionKey, colIndex, asc: sameCol ? !currentSort.asc : true };
+            currentPage = 1;
+            await activeTableRender.rerender();
+            updateFilterBarVisibility();
+            // Sort order has no bearing on the diagram's own content, so
+            // this is a resync rather than something sorting itself
+            // requires - Sankey now tracks its own staleness independently
+            // (see bumpSankeyFetchGeneration's comment), so the
+            // bumpFetchGeneration() above can no longer strand an in-flight
+            // Sankey fetch the way it used to. Kept anyway (cheap - the
+            // panel already shows a diagram for this exact eventType, so
+            // there's nothing to visibly change) as a resync in case
+            // something upstream ever needs it. applyFilters()/clearFilter()
+            // call updateSankeyDiagram() too, for the same reason.
+            //
+            // Skipped for log/sigmaalert - loadTabData never calls
+            // updateSankeyDiagram for either (they're the only two tabs
+            // reachable in log-analysis mode, where #sankeyPanel stays
+            // display:none for the whole session, set by
+            // clearAnalysisContainers() - see its comment). Calling it
+            // here anyway would be pure wasted work behind a hidden
+            // panel at best, since neither tab's data has the src_ip/
+            // dest_ip/dest_port shape a Sankey diagram needs.
+            if (eventType !== 'log' && eventType !== 'sigmaalert') {
+                await updateSankeyDiagram();
+            }
+        }
+
+        const EMPTY_FILTER_STATE_HTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.95rem;">${SEARCH_ICON_SVG} No events match the current filters</div>`;
         const AGG_COLLAPSED_HTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▸ Aggregation Tables</div></div>';
 
         function hideAggregationTable(sectionId, col) {
             hiddenAggregations.add(sectionId + ':' + col);
-            document.querySelectorAll(`.agg-section[data-col="${col}"]`).forEach(el => {
-                el.style.display = 'none';
+            // col can contain quotes (attacker-controlled log field names), so
+            // compare attributes directly instead of building a CSS selector.
+            document.querySelectorAll('.agg-section').forEach(el => {
+                if (el.getAttribute('data-col') === col) {
+                    el.style.display = 'none';
+                }
             });
             const anyVisible = document.querySelectorAll('.agg-section:not([style*="display: none"])').length > 0;
             if (!anyVisible) {
@@ -2618,7 +6646,7 @@
             return ['Source IP', 'Dest IP', 'Dest Port'][col] || '';
         }
 
-        function refreshCurrentView(sectionId, eventType) {
+        async function refreshCurrentView(sectionId, eventType) {
             if (isLogAnalysisMode && eventType === 'log') {
                 const events = tabDataCache['log'] || [];
                 const filtered = getFilteredLogEvents(events);
@@ -2633,51 +6661,332 @@
                 buildSigmaAlertSectionContent(sectionId, filtered);
                 return;
             }
-            const events = tabDataCache[eventType] || sections[eventType] || [];
+            if (eventType === 'all') {
+                if (advancedMode) await buildAggregationsSectionAll();
+                buildAllEvents();
+                return;
+            }
+            const events = tabDataCache[eventType] || [];
             const filtered = getFilteredEvents(sectionId, events, eventType);
             if (advancedMode) {
-                buildAggregationsSection(eventType, filtered);
+                await buildAggregationsSection(eventType, filtered);
             }
             buildSection(eventType, events);
         }
 
-        function applyFilters(sectionId, filters) {
+        async function applyFilters(sectionId, filters) {
+            resetPagination();
             for (const f of filters) {
                 currentFilters[f.column] = f.value;
             }
             if (sectionId === 'section-binary') {
+                await ensureBinaryEventsBatch();
                 buildBinaryAnalysisView(allEvents);
                 updateFilterBarVisibility();
-                buildStats(computeFilteredStats());
                 return;
             }
             const eventType = sectionId.replace('section-', '');
-            refreshCurrentView(sectionId, eventType);
+            bumpFetchGeneration();
+            await ensureCappedBatch(eventType);
+            await refreshCurrentView(sectionId, eventType);
             updateFilterBarVisibility();
-            buildStats(computeFilteredStats());
+            buildStats(await computeFilteredStats());
+            await updateSankeyDiagram();
         }
 
-        function clearFilter(columnName) {
+        async function clearFilter(columnName) {
+            resetPagination();
             delete currentFilters[columnName];
             const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
             if (!visibleSection) {
                 // Binary analysis mode
+                await ensureBinaryEventsBatch();
                 buildBinaryAnalysisView(allEvents);
                 updateFilterBarVisibility();
-                buildStats(computeFilteredStats());
                 return;
             }
             const eventType = visibleSection.id.replace('section-', '');
-            refreshCurrentView(visibleSection.id, eventType);
+            await refreshCurrentView(visibleSection.id, eventType);
             updateFilterBarVisibility();
-            buildStats(computeFilteredStats());
+            buildStats(await computeFilteredStats());
+            await updateSankeyDiagram();
         }
 
-        function applyFilter(sectionId, columnName, value) {
-            applyFilters(sectionId, [{column: columnName, value: value}]);
+        // Row-cell pivot menu (Include/Exclude/Only) support below. These
+        // write the {include, exclude} object shape into currentFilters -
+        // see matchesCurrentFilters()'s own comment for why that shape
+        // coexists with the older plain-string shape applyFilters() above
+        // still writes, rather than replacing it.
+
+        // Normalizes currentFilters[column] to the {include, exclude}
+        // shape, upgrading a pre-existing plain-string entry (e.g. left
+        // over from an aggregation-row click on this same column) into an
+        // equivalent one-item include list rather than clobbering it -
+        // this is the only place a string-shape entry ever gets converted.
+        function ensureFilterSpec(column) {
+            const existing = currentFilters[column];
+            if (existing && typeof existing === 'object') return existing;
+            const spec = { include: existing !== undefined ? [existing] : [], exclude: [] };
+            currentFilters[column] = spec;
+            return spec;
+        }
+
+        // Broadens column to also match value (OR'd with whatever it
+        // already allows), while every other column's filter is untouched -
+        // "show me this too". Un-excludes value on the same column first,
+        // since asking to include something just excluded is a clearer
+        // signal than leaving it excluded.
+        function includeFilterValue(sectionId, column, value) {
+            const spec = ensureFilterSpec(column);
+            if (!spec.include.includes(value)) spec.include.push(value);
+            const idx = spec.exclude.indexOf(value);
+            if (idx !== -1) spec.exclude.splice(idx, 1);
+            applyFilters(sectionId, []);
+        }
+
+        // Narrows column to also deny value, while every other column's
+        // filter is untouched - "hide this". Un-includes value on the same
+        // column first, mirroring includeFilterValue's symmetry.
+        function excludeFilterValue(sectionId, column, value) {
+            const spec = ensureFilterSpec(column);
+            if (!spec.exclude.includes(value)) spec.exclude.push(value);
+            const idx = spec.include.indexOf(value);
+            if (idx !== -1) spec.include.splice(idx, 1);
+            applyFilters(sectionId, []);
+        }
+
+        // Resets every other filter (every other column, and any other
+        // value already on this one) so column=value is the sole active
+        // filter - "start over with just this". Deliberately leaves
+        // currentSearch untouched: free-text search and column filters are
+        // separate, independently-cleared mechanisms everywhere else in
+        // this app (see clearAllFilters), and clearing a typed search query
+        // as a side effect of a table-cell click would be surprising.
+        function onlyFilterValue(sectionId, column, value) {
+            currentFilters = {};
+            currentFilters[column] = { include: [value], exclude: [] };
+            applyFilters(sectionId, []);
+        }
+
+        // Replaces currentSearch (the whole-analysis free-text search - the
+        // same mechanism the search box's performSearch() feeds, a
+        // server-side FTS5 match against the entire event, not scoped to
+        // the column it was clicked from) with just this one term, AND
+        // clears currentFilters - "start completely over, search for this
+        // and only this anywhere". Unlike onlyFilterValue() (which
+        // deliberately leaves currentSearch alone, since it's narrowing
+        // one specific field and a separately-typed search query is a
+        // distinct, probably-still-wanted criterion), Hunt is framed as a
+        // full reset: a lingering Include/Exclude/Only from earlier would
+        // keep narrowing the results underneath the new search term,
+        // which reads as "Hunt is combining with whatever I had before"
+        // even though only currentSearch actually changed.
+        function huntFilterValue(value) {
+            const term = String(value).trim();
+            if (!term) return;
+            resetPagination();
+            currentSearch = [term];
+            currentFilters = {};
+            updateFilterBarVisibility();
+            return refreshAnalysisData();
+        }
+
+        // Generalized form of copyMd5ToClipboard() below (kept separate,
+        // not refactored into a shared helper, since that function's own
+        // tests assert its exact body/behavior) - same
+        // secure-context-required handling, for the pivot menu's own Copy
+        // to Clipboard entry.
+        async function copyValueToClipboard(value) {
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                showToast('Clipboard access unavailable (requires HTTPS or localhost)');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(value);
+                showToast('Copied to clipboard');
+            } catch (e) {
+                showToast('Could not copy to clipboard');
+            }
+        }
+
+        // CyberChef takes its input pre-filled via a base64 blob in the URL
+        // fragment (#input=...), not a plain query string like the other
+        // lookup sites - unescape(encodeURIComponent(...)) is the standard
+        // idiom for UTF-8-safe btoa() (btoa() alone only accepts Latin1 and
+        // throws on e.g. multi-byte characters in a log field's value).
+        // Falls back to a bare (empty-input) CyberChef link on any encoding
+        // failure rather than the whole menu action silently doing nothing.
+        function cyberChefUrl(value) {
+            try {
+                const b64 = btoa(unescape(encodeURIComponent(String(value))));
+                return `https://gchq.github.io/CyberChef/#input=${encodeURIComponent(b64)}`;
+            } catch (e) {
+                return 'https://gchq.github.io/CyberChef/';
+            }
+        }
+
+        // OSINT/threat-intel lookup sites offered from the pivot menu -
+        // naive general-purpose links (no field-type detection: the same
+        // value is handed to every site regardless of whether it's
+        // actually an IP/domain/hash that site's syntax implies), matching
+        // this menu's own Include/Exclude/Only/Hunt pivots, which are
+        // equally naive about field type. Opened via window.open with
+        // noopener,noreferrer rather than a plain <a target="_blank">,
+        // since these are constructed and opened programmatically rather
+        // than rendered as real anchor elements.
+        const PIVOT_LOOKUP_SITES = [
+            { label: 'Google', urlTemplate: v => `https://www.google.com/search?q=${encodeURIComponent(v)}` },
+            { label: 'VirusTotal', urlTemplate: v => `https://www.virustotal.com/gui/search/${encodeURIComponent(v)}` },
+            { label: 'Shodan', urlTemplate: v => `https://www.shodan.io/search?query=${encodeURIComponent(v)}` },
+            { label: 'AbuseIPDB', urlTemplate: v => `https://www.abuseipdb.com/check/${encodeURIComponent(v)}` },
+            { label: 'urlscan.io', urlTemplate: v => `https://urlscan.io/search/#${encodeURIComponent(v)}` },
+            { label: 'CyberChef', urlTemplate: cyberChefUrl },
+        ];
+
+        // User-added lookup sites (Settings modal's "Custom Lookup Sites"
+        // section) - stored as plain {label, urlTemplate} data (a string
+        // template with a literal "{value}" placeholder), not a function
+        // like PIVOT_LOOKUP_SITES' own entries, since these come from
+        // localStorage/JSON rather than being written directly in this
+        // file. applyCustomLookupUrlTemplate does the substitution;
+        // showPivotMenu's click handler branches on typeof to call
+        // whichever form a given site actually has.
+        const CUSTOM_LOOKUP_SITES_KEY = 'socrates_customLookupSites';
+        const MAX_CUSTOM_LOOKUP_SITES = 20;
+        const MAX_CUSTOM_LOOKUP_LABEL_LENGTH = 40;
+        const MAX_CUSTOM_LOOKUP_URL_LENGTH = 500;
+
+        // null while adding a new site; the index being edited otherwise -
+        // see resetCustomLookupForm/startEditCustomLookupSite in the
+        // Settings modal section below.
+        let editingCustomLookupIndex = null;
+
+        function getCustomLookupSites() {
+            const raw = safeStorageGet(localStorage, CUSTOM_LOOKUP_SITES_KEY);
+            if (!raw) return [];
+            try {
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) return [];
+                return parsed.filter(s => s && typeof s.label === 'string' && typeof s.urlTemplate === 'string');
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function setCustomLookupSites(sites) {
+            safeStorageSet(localStorage, CUSTOM_LOOKUP_SITES_KEY, JSON.stringify(sites));
+        }
+
+        // http(s)-only, checked against the template with any "{value}"
+        // placeholder substituted for a harmless stand-in - a stored
+        // javascript:/data:/vbscript: URL would execute in this page's own
+        // context once opened via window.open, and unlike the built-in
+        // PIVOT_LOOKUP_SITES entries (fixed strings written directly in
+        // this file), a custom site's URL is attacker-reachable input:
+        // typed by whoever is at the keyboard, persisted to localStorage,
+        // and replayed later without further review.
+        function isSafeLookupUrlTemplate(template) {
+            try {
+                const parsed = new URL(String(template).replace(/\{value\}/g, 'x'));
+                return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // No "{value}" placeholder is left as a fixed link (e.g. a static
+        // internal dashboard bookmark) rather than an error - a deliberate
+        // allowance, not an oversight.
+        function applyCustomLookupUrlTemplate(template, value) {
+            if (template.indexOf('{value}') === -1) return template;
+            return template.replace(/\{value\}/g, encodeURIComponent(value));
+        }
+
+        // Shared validation for both add and edit (see
+        // renderCustomLookupSitesSection) - returns {valid, error} rather
+        // than throwing, so the caller can show the message inline instead
+        // of a toast.
+        function validateCustomLookupSite(label, urlTemplate) {
+            const trimmedLabel = String(label || '').trim();
+            const trimmedUrl = String(urlTemplate || '').trim();
+            if (!trimmedLabel) return { valid: false, error: 'Name is required.' };
+            if (trimmedLabel.length > MAX_CUSTOM_LOOKUP_LABEL_LENGTH) {
+                return { valid: false, error: `Name must be ${MAX_CUSTOM_LOOKUP_LABEL_LENGTH} characters or fewer.` };
+            }
+            if (!trimmedUrl) return { valid: false, error: 'URL template is required.' };
+            if (trimmedUrl.length > MAX_CUSTOM_LOOKUP_URL_LENGTH) {
+                return { valid: false, error: `URL template must be ${MAX_CUSTOM_LOOKUP_URL_LENGTH} characters or fewer.` };
+            }
+            if (!isSafeLookupUrlTemplate(trimmedUrl)) {
+                return { valid: false, error: 'URL template must be a valid http:// or https:// URL.' };
+            }
+            return { valid: true, label: trimmedLabel, urlTemplate: trimmedUrl };
+        }
+
+        // editIndex null adds a new entry; otherwise replaces the entry at
+        // that index in place (so editing doesn't reorder the list).
+        function saveCustomLookupSite(editIndex, label, urlTemplate) {
+            const result = validateCustomLookupSite(label, urlTemplate);
+            if (!result.valid) return result;
+            const sites = getCustomLookupSites();
+            if (editIndex === null || editIndex === undefined) {
+                if (sites.length >= MAX_CUSTOM_LOOKUP_SITES) {
+                    return { valid: false, error: `You can have at most ${MAX_CUSTOM_LOOKUP_SITES} custom lookup sites.` };
+                }
+                sites.push({ label: result.label, urlTemplate: result.urlTemplate });
+            } else {
+                if (editIndex < 0 || editIndex >= sites.length) return { valid: false, error: 'That entry no longer exists.' };
+                sites[editIndex] = { label: result.label, urlTemplate: result.urlTemplate };
+            }
+            setCustomLookupSites(sites);
+            return { valid: true };
+        }
+
+        function deleteCustomLookupSite(index) {
+            const sites = getCustomLookupSites();
+            if (index < 0 || index >= sites.length) return;
+            sites.splice(index, 1);
+            setCustomLookupSites(sites);
+        }
+
+        // Removes one value from one column's include/exclude list (the
+        // filter-bar chip's own remove button) - NOT a thin wrapper around
+        // clearFilter(column), which unconditionally deletes the whole
+        // column's entry; this needs to leave any other still-active
+        // value(s) on the same column alone. Duplicates clearFilter's own
+        // refresh tail (visible-section detection, binary early return)
+        // rather than factoring it out, since several existing tests slice
+        // clearFilter's exact function body and assert those calls appear
+        // directly inside it.
+        async function clearFilterValue(column, kind, value) {
+            resetPagination();
+            const spec = currentFilters[column];
+            if (spec && typeof spec === 'object') {
+                const list = spec[kind] || [];
+                const idx = list.indexOf(value);
+                if (idx !== -1) list.splice(idx, 1);
+                if (spec.include.length === 0 && spec.exclude.length === 0) {
+                    delete currentFilters[column];
+                }
+            } else {
+                delete currentFilters[column];
+            }
+            const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
+            if (!visibleSection) {
+                await ensureBinaryEventsBatch();
+                buildBinaryAnalysisView(allEvents);
+                updateFilterBarVisibility();
+                return;
+            }
+            const eventType = visibleSection.id.replace('section-', '');
+            await refreshCurrentView(visibleSection.id, eventType);
+            updateFilterBarVisibility();
+            buildStats(await computeFilteredStats());
+            await updateSankeyDiagram();
         }
 
         async function clearAllFilters() {
+            resetPagination();
             currentFilters = {};
             currentSearch = [];
             const input = document.getElementById('searchInput');
@@ -2688,27 +6997,14 @@
         
         function getFilteredEvents(sectionId, events, eventType) {
             if (Object.keys(currentFilters).length === 0) return events;
-            
+
             if (eventType === 'all') {
-                const types = EVENT_TYPE_ICONS;
                 const allColumns = ALL_EVENTS_COLUMNS;
-                return events.filter(e => {
-                    for (const [col, val] of Object.entries(currentFilters)) {
-                        const colIndex = allColumns.indexOf(col);
-                        if (extractAllValue(e, col, colIndex) !== val) return false;
-                    }
-                    return true;
-                });
+                return events.filter(e => matchesCurrentFilters(e, (ev, col) => extractAllValue(ev, col, allColumns.indexOf(col))));
             }
-            
+
             const columns = getColumnsForType(eventType);
-            return events.filter(e => {
-                for (const [col, val] of Object.entries(currentFilters)) {
-                    const colIndex = columns.indexOf(col);
-                    if (extractValue(e, col, colIndex) !== val) return false;
-                }
-                return true;
-            });
+            return events.filter(e => matchesCurrentFilters(e, (ev, col) => extractValue(ev, col, columns.indexOf(col))));
         }
         
         async function performSearch() {
@@ -2716,6 +7012,7 @@
             const text = input ? input.value.trim() : '';
             if (!text) return;
 
+            resetPagination();
             const terms = text.match(/"[^"]+"|\S+/g) || [];
             for (const t of terms) {
                 const term = t.replace(/^"|"$/g, '').trim();
@@ -2729,39 +7026,89 @@
             await refreshAnalysisData();
         }
 
-        async function clearSearch() {
-            currentSearch = [];
-            const input = document.getElementById('searchInput');
-            if (input) input.value = '';
-            updateFilterBarVisibility();
-            await refreshAnalysisData();
-        }
-
         async function clearSearchTerm(index) {
+            resetPagination();
             currentSearch.splice(index, 1);
             updateFilterBarVisibility();
             await refreshAnalysisData();
         }
 
+        // Fetch cheap log-event + sigma-alert *counts* in parallel, optionally
+        // filtered by the current search terms. Deliberately does NOT fetch the
+        // full arrays - _renderLogAnalysisView only needs counts to build the
+        // stat cards and pick the default tab; the actual per-tab data is
+        // fetched lazily, on-demand, by loadTabData when a tab is visited
+        // (ensureCappedBatch('log') / buildSigmaAlertSectionContent's own
+        // scalable fetch).
+        async function _fetchLogAnalysisCounts(qParam) {
+            const [logResp, sigmaResp] = await Promise.all([
+                fetch(`/api/count?md5=${encodeURIComponent(currentMd5)}&type=log${qParam || ''}&t=${Date.now()}`),
+                fetch(`/api/sigma-count?md5=${encodeURIComponent(currentMd5)}${qParam || ''}&t=${Date.now()}`)
+            ]);
+            const { count: logCount } = await logResp.json();
+            const { count: sigmaCount } = await sigmaResp.json();
+            return { log: logCount, sigmaalert: sigmaCount };
+        }
+
+        // Shared log-analysis view setup: records the (cheap) counts, builds
+        // stat cards + sections, then loads the default tab. Deliberately does
+        // NOT populate tabDataCache['log']/['sigmaalert'] - loadTabData
+        // (defaultType) below does that lazily itself, and the non-default
+        // tab's data is left uncached until (if ever) the user switches to it
+        // via showTab().
+        // Callers must set baseEventStats first (baseline or same-as-filtered).
+        async function _renderLogAnalysisView(counts) {
+            eventStats = counts;
+
+            eventTypes = sortEventTypes(Object.keys(baseEventStats));
+            buildStats(await computeFilteredStats());
+            buildSections();
+
+            const defaultType = counts.sigmaalert > 0 ? 'sigmaalert' : 'log';
+            document.querySelectorAll('.section').forEach(s => s.classList.add('section-hidden'));
+            const defaultSection = document.getElementById('section-' + defaultType);
+            if (defaultSection) defaultSection.classList.remove('section-hidden');
+            await loadTabData(defaultType, null);
+
+            // loadTabData already builds the aggregation table itself when
+            // advancedMode is true (for whichever type is defaultType) - the
+            // only case it doesn't handle is collapsing the panel when
+            // advancedMode is false.
+            const aggContainer = document.getElementById('aggregations');
+            if (aggContainer && !advancedMode) {
+                aggContainer.innerHTML = AGG_COLLAPSED_HTML;
+            }
+        }
+
         async function refreshAnalysisData() {
             if (!currentMd5) return;
+            const gen = bumpFetchGeneration();
             showLoading(currentSearch.length > 0 ? 'Searching...' : 'Loading events...');
 
             try {
-                const qParam = currentSearch.length > 0 ? currentSearch.map(t => '&q=' + encodeURIComponent(t)).join('') : '';
+                const qParam = buildSearchQuery();
 
                 const [statsResp, baseStatsResp] = await Promise.all([
-                    fetch('/api/stats?md5=' + currentMd5 + qParam + '&t=' + Date.now()),
-                    fetch('/api/stats?md5=' + currentMd5 + '&t=' + Date.now())
+                    fetch('/api/stats?md5=' + encodeURIComponent(currentMd5) + qParam + '&t=' + Date.now()),
+                    fetch('/api/stats?md5=' + encodeURIComponent(currentMd5) + '&t=' + Date.now())
                 ]);
-                eventStats = await statsResp.json();
-                baseEventStats = await baseStatsResp.json();
+                const statsCounts = (await statsResp.json()).counts;
+                const baseStatsCounts = (await baseStatsResp.json()).counts;
+                if (isStaleFetch(gen)) return;
+                eventStats = statsCounts;
+                baseEventStats = baseStatsCounts;
 
                 const types = sortEventTypes(Object.keys(baseEventStats).filter(t => t !== 'stats' && t !== 'all'));
                 eventTypes = types;
 
-                const eventsResp = await fetch('/api/events?md5=' + currentMd5 + '&limit=' + CONFIG.MAX_QUERY_LIMIT + qParam + '&t=' + Date.now());
-                allEvents = await eventsResp.json();
+                // Invalidate any previously-cached full batch - the search
+                // state just changed, so a stale array must not satisfy
+                // ensureCappedBatch's cache guard. Whichever branch below
+                // actually needs allEvents (binary mode, or stats when a
+                // column filter is active) fetches it lazily on demand.
+                allEvents = [];
+                baseAllEvents = [];
+                truncatedTypes.clear();
 
                 // Use existing file-analysis class set during initial load
                 const isFileOnly = document.body.classList.contains('file-analysis');
@@ -2776,54 +7123,20 @@
                     isLogAnalysisMode = true;
 
                     try {
-                        const qParamLocal = currentSearch.length > 0 ? currentSearch.map(t => '&q=' + encodeURIComponent(t)).join('') : '';
-                        // Fetch unfiltered baseline
-                        const [baseLogResp, baseSigmaResp] = await Promise.all([
-                            fetch('/api/events?md5=' + currentMd5 + '&type=log&limit=' + CONFIG.MAX_QUERY_LIMIT + '&t=' + Date.now()),
-                            fetch('/api/sigma-alerts?md5=' + currentMd5 + '&limit=5000&t=' + Date.now())
-                        ]);
-                        const baseLogEvents = await baseLogResp.json();
-                        const baseSigmaAlerts = await baseSigmaResp.json();
-                        baseEventStats = { log: baseLogEvents.length, sigmaalert: baseSigmaAlerts.length };
-
-                        // Fetch filtered data if search is active
-                        let logEvents = baseLogEvents;
-                        let sigmaAlerts = baseSigmaAlerts;
-                        if (qParamLocal) {
-                            const [filteredLogResp, filteredSigmaResp] = await Promise.all([
-                                fetch('/api/events?md5=' + currentMd5 + '&type=log&limit=' + CONFIG.MAX_QUERY_LIMIT + qParamLocal + '&t=' + Date.now()),
-                                fetch('/api/sigma-alerts?md5=' + currentMd5 + '&limit=5000' + qParamLocal + '&t=' + Date.now())
+                        // Unfiltered baseline counts (for totals) and, if a
+                        // search is active, filtered counts - independent
+                        // requests, fetched concurrently rather than back to
+                        // back when both are needed.
+                        let counts;
+                        if (qParam) {
+                            [baseEventStats, counts] = await Promise.all([
+                                _fetchLogAnalysisCounts(''),
+                                _fetchLogAnalysisCounts(qParam),
                             ]);
-                            logEvents = await filteredLogResp.json();
-                            sigmaAlerts = await filteredSigmaResp.json();
+                        } else {
+                            counts = baseEventStats = await _fetchLogAnalysisCounts('');
                         }
-                        tabDataCache['log'] = logEvents;
-                        tabDataCache['sigmaalert'] = sigmaAlerts;
-                        allEvents = logEvents;
-                        eventStats = { log: logEvents.length, sigmaalert: sigmaAlerts.length };
-
-                        eventTypes = sortEventTypes(Object.keys(baseEventStats));
-                        buildStats(computeFilteredStats());
-                        buildSections();
-
-                        const defaultType = sigmaAlerts.length > 0 ? 'sigmaalert' : 'log';
-                        document.querySelectorAll('.section').forEach(s => s.classList.add('section-hidden'));
-                        const defaultSection = document.getElementById('section-' + defaultType);
-                        if (defaultSection) defaultSection.classList.remove('section-hidden');
-                        loadTabData(defaultType, null);
-
-                        const aggContainer = document.getElementById('aggregations');
-                        if (aggContainer) {
-                            if (advancedMode) {
-                                if (defaultType === 'sigmaalert') {
-                                    buildSigmaAlertAggregations(getFilteredSigmaAlerts(sigmaAlerts), 'section-sigmaalert');
-                                } else {
-                                    buildLogAggregations(getFilteredLogEvents(logEvents), 'section-log');
-                                }
-                            } else {
-                                aggContainer.innerHTML = AGG_COLLAPSED_HTML;
-                            }
-                        }
+                        await _renderLogAnalysisView(counts);
                     } catch(e) {
                         console.error('Failed to load log analysis:', e);
                         document.getElementById('sections').innerHTML = '<div class="log-events-section"><h3>📋 Log Events</h3><div class="no-matches">Error loading log events</div></div>';
@@ -2835,14 +7148,28 @@
                         statsGrid.innerHTML = '';
                         statsGrid.style.display = 'none';
                     }
-                    buildBinaryAnalysisView(allEvents);
+                    // Keep file info visible even when the current search filter
+                    // excludes the fileinfo event by using unfiltered events.
+                    // Both are independent requests, fetched concurrently
+                    // rather than back to back when both are needed.
+                    let baseEvents;
+                    if (qParam) {
+                        [allEvents, baseEvents] = await Promise.all([
+                            fetchBinaryEvents(qParam),
+                            fetchBinaryEvents(''),
+                        ]);
+                    } else {
+                        allEvents = baseEvents = await fetchBinaryEvents(qParam);
+                    }
+                    baseAllEvents = baseEvents;
+                    buildBinaryAnalysisView(allEvents, baseEvents);
                 }
             } else {
                 document.body.classList.remove('file-analysis');
                 isLogAnalysisMode = false;
                 const statsGrid = document.getElementById('statsGrid');
                 if (statsGrid) statsGrid.style.display = '';
-                buildStats(computeFilteredStats());
+                buildStats(await computeFilteredStats());
                 
                 // Remember active section before rebuild
                 const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
@@ -2858,10 +7185,10 @@
                     const sectionEl = document.getElementById('section-' + activeType);
                     if (sectionEl) {
                         sectionEl.classList.remove('section-hidden');
-                        loadTabData(activeType, null);
+                        await loadTabData(activeType, null);
                     }
                 } else if (eventTypes[0]) {
-                    loadTabData(eventTypes[0], null);
+                    await loadTabData(eventTypes[0], null);
                 }
             }
 
@@ -2874,20 +7201,234 @@
             }
         }
 
-        async function loadAnalysis(md5) {
+        // Click-to-rename for the header filename. Only one edit can be
+        // active at a time (guarded by the existing <input> check below),
+        // and blur commits the edit (matching common rename-in-place UIs
+        // like a file manager) while Escape cancels it.
+        async function copyMd5ToClipboard(md5) {
+            // navigator.clipboard requires a secure context (HTTPS, or the
+            // browser's localhost/127.0.0.1/::1 loopback exception) - a
+            // real LAN deployment reached over plain http:// (a common way
+            // to reach a container's published port from another machine)
+            // won't have it at all, so fail with a clear toast rather than
+            // a silent no-op either way.
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                showToast('Clipboard access unavailable (requires HTTPS or localhost)');
+                return;
+            }
             try {
-                const resp = await fetch('/api/load-analysis?md5=' + md5);
+                await navigator.clipboard.writeText(md5);
+                showToast('MD5 copied to clipboard');
+            } catch (e) {
+                showToast('Could not copy to clipboard');
+            }
+        }
+
+        async function startRenameAnalysis() {
+            const el = document.getElementById('appHeaderFilename');
+            if (!el || el.querySelector('input')) return;
+
+            const originalName = currentFileName;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'app-header-filename-input';
+            input.value = originalName;
+            input.maxLength = 255;
+            el.onclick = null;
+            el.style.cursor = 'default';
+            el.innerHTML = '';
+            el.appendChild(input);
+            input.focus();
+            input.select();
+
+            let finished = false;
+            async function finish(save) {
+                if (finished) return;
+                finished = true;
+                const newValue = input.value.trim();
+                if (save && newValue && newValue !== originalName) {
+                    try {
+                        const resp = await fetch('/api/rename-analysis', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ md5: currentMd5, name: newValue })
+                        });
+                        const result = await resp.json();
+                        if (resp.ok && result.success) {
+                            currentFileName = result.name;
+                            document.title = 'SO-CRATES - ' + currentFileName;
+                        } else {
+                            showToast(result.error || 'Could not rename analysis');
+                        }
+                    } catch (e) {
+                        showToast('Could not rename analysis');
+                    }
+                }
+                el.innerHTML = `${FILE_ICON_SVG}${escapeHtml(currentFileName)}`;
+                el.title = currentFileName;
+                el.style.cursor = 'pointer';
+                el.onclick = startRenameAnalysis;
+            }
+
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+                else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+            });
+            input.addEventListener('blur', function() { finish(true); });
+            input.addEventListener('click', function(e) { e.stopPropagation(); });
+        }
+
+        // Cheap "has notes" signal in the header, without opening the modal.
+        function notesIconHtml() {
+            const color = currentNotes ? 'var(--accent)' : 'var(--text-muted)';
+            const title = currentNotes ? 'View/edit notes' : 'Add notes';
+            return `<span id="appHeaderNotesIcon" onclick="showNotesModal()" style="cursor: pointer; white-space: nowrap; color: ${color};" title="${title}">${NOTES_ICON_SVG}</span>`;
+        }
+
+        // Lets an analyst re-analyze the currently open sample without going
+        // back to the welcome screen's previous-analyses list first -
+        // openReanalyzeModal() is already self-contained (just md5/name), so
+        // this reuses it as-is rather than a second reanalyze code path.
+        function reanalyzeIconHtml() {
+            return `<span onclick="openReanalyzeModal(currentMd5, currentFileName)" style="cursor: pointer; white-space: nowrap; color: var(--text-muted);" title="Re-analyze">${REFRESH_ICON_SVG}</span>`;
+        }
+
+        function updateNotesCountHint() {
+            const textarea = document.getElementById('analysisNotesInput');
+            document.getElementById('notesCountHint').textContent =
+                `${textarea.value.length.toLocaleString()} / ${textarea.maxLength.toLocaleString()}`;
+        }
+
+        // Called with no arguments for the existing whole-analysis note
+        // (unchanged behavior). Called with (table, rowId, initialNote) to
+        // edit a single row's note instead - same modal, same Save/Cancel
+        // buttons, just re-scoped, rather than a second component with its
+        // own focus/blur/escape/click-outside handling to build and test.
+        function showNotesModal(table, rowId, initialNote) {
+            closeOtherMenuModals('notesModal');
+            const textarea = document.getElementById('analysisNotesInput');
+            const titleEl = document.getElementById('notesModalTitle');
+            if (table !== undefined) {
+                currentRowNoteScope = { table, rowId };
+                textarea.maxLength = ROW_NOTE_MAX_LENGTH;
+                textarea.value = initialNote || '';
+                titleEl.textContent = 'Row Note';
+            } else {
+                currentRowNoteScope = null;
+                textarea.maxLength = NOTES_MAX_LENGTH;
+                textarea.value = currentNotes;
+                titleEl.textContent = 'Notes';
+            }
+            textarea.oninput = updateNotesCountHint;
+            document.getElementById('notesError').style.display = 'none';
+            updateNotesCountHint();
+            document.getElementById('notesModal').classList.add('active');
+            textarea.focus();
+        }
+
+        function closeNotesModal() {
+            document.getElementById('notesModal').classList.remove('active');
+            // Reset so a stray reopen via the header icon can't inherit
+            // stale row scope from whatever was last edited.
+            currentRowNoteScope = null;
+        }
+
+        // The note-icon's onclick argument is a JS-string-escaped rowId
+        // (see rowNoteIconHtml), not a bare number - HTML attributes are
+        // always strings regardless, and this way the same escaping
+        // discipline covers it as covers the note text itself. Parsed back
+        // to a real number here before it's ever used as row-note state.
+        function openRowNoteEditor(table, rowIdStr, note) {
+            showNotesModal(table, parseInt(rowIdStr, 10), note);
+        }
+
+        async function saveAnalysisNotes() {
+            const textarea = document.getElementById('analysisNotesInput');
+            const errorEl = document.getElementById('notesError');
+            const saveBtn = document.getElementById('notesSaveBtn');
+            const rowScope = currentRowNoteScope;
+            errorEl.style.display = 'none';
+            saveBtn.disabled = true;
+            try {
+                if (rowScope) {
+                    const resp = await fetch('/api/row-note', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ md5: currentMd5, table: rowScope.table, rowId: rowScope.rowId, note: textarea.value })
+                    });
+                    const result = await resp.json();
+                    if (resp.ok && result.success) {
+                        const rowEl = document.querySelector('tr[data-id="' + rowScope.rowId + '"]');
+                        if (rowEl) {
+                            const cell = rowEl.querySelector('.row-note-cell');
+                            if (cell) cell.outerHTML = rowNoteIconHtml(rowScope.table, rowScope.rowId, result.note);
+                            // The detail panel is rendered once and only
+                            // toggled visible/hidden (see toggleRow), not
+                            // re-rendered on expand - without this it would
+                            // keep showing the pre-save Note value until the
+                            // whole table next re-renders.
+                            const detailRow = rowEl.nextElementSibling;
+                            const valueEl = (detailRow && detailRow.classList.contains('detail-row'))
+                                ? detailRow.querySelector('.row-note-detail-value')
+                                : null;
+                            if (valueEl) valueEl.outerHTML = rowNoteDetailValueHtml(rowScope.table, rowScope.rowId, result.note);
+                        }
+                        closeNotesModal();
+                    } else {
+                        errorEl.textContent = result.error || 'Could not save note';
+                        errorEl.style.display = 'block';
+                    }
+                } else {
+                    const resp = await fetch('/api/analysis-notes', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ md5: currentMd5, notes: textarea.value })
+                    });
+                    const result = await resp.json();
+                    if (resp.ok && result.success) {
+                        currentNotes = result.notes;
+                        const iconEl = document.getElementById('appHeaderNotesIcon');
+                        if (iconEl) iconEl.outerHTML = notesIconHtml();
+                        closeNotesModal();
+                    } else {
+                        errorEl.textContent = result.error || 'Could not save notes';
+                        errorEl.style.display = 'block';
+                    }
+                }
+            } catch (e) {
+                errorEl.textContent = rowScope ? 'Could not save note' : 'Could not save notes';
+                errorEl.style.display = 'block';
+            } finally {
+                saveBtn.disabled = false;
+            }
+        }
+
+        // Lets the notes icon in the Previous Analyses list jump straight to
+        // that analysis's Notes modal, instead of just the normal overview -
+        // loadAnalysis() must finish first so currentMd5/currentNotes (and
+        // the DOM the modal reads from) reflect the newly-opened analysis.
+        async function openAnalysisNotesFromList(md5) {
+            await loadAnalysis(md5);
+            showNotesModal();
+        }
+
+        async function loadAnalysis(md5) {
+            const gen = bumpFetchGeneration();
+            try {
+                const resp = await fetch('/api/load-analysis?md5=' + encodeURIComponent(md5));
                 const result = await resp.json();
-                
+                if (isStaleFetch(gen)) return;
+
                 if (result.error) {
                     showError(result.error);
                     await showWelcome();
                     return;
                 }
-                
+
                 if (result.success) {
                     currentMd5 = md5;
                     currentFileName = result.file_name || md5;
+                    currentNotes = result.notes || '';
                     document.title = 'SO-CRATES - ' + currentFileName;
                     const urlParams = new URLSearchParams(window.location.search);
                     urlParams.set('file', md5);
@@ -2897,10 +7438,12 @@
                     }
                     
                     allEvents = [];
-                    sections = {};
+                    baseAllEvents = [];
+                    truncatedTypes.clear();
                     eventTypes = [];
                     currentFilters = {};
                     currentSearch = [];
+                    resetPagination();
                     hiddenAggregations = new Set();
                     tabDataCache = {};
                     clearAnalysisContainers();
@@ -2908,40 +7451,23 @@
                     
                     showLoading('Loading events...');
                     
-                    const statsResp = await fetch('/api/stats?md5=' + md5 + '&t=' + Date.now());
-                    eventStats = await statsResp.json();
+                    const statsResp = await fetch('/api/stats?md5=' + encodeURIComponent(md5) + '&t=' + Date.now());
+                    const statsData = await statsResp.json();
+                    if (isStaleFetch(gen)) return;
+                    eventStats = statsData.counts;
                     baseEventStats = {...eventStats};
-                    
+
                     const types = sortEventTypes(Object.keys(baseEventStats).filter(t => t !== 'stats' && t !== 'all'));
                     // eventTypes should not include 'all' - it's added separately by buildStats()
                     eventTypes = types;
-                    
-                    const eventsResp = await fetch('/api/events?md5=' + md5 + '&limit=' + CONFIG.MAX_QUERY_LIMIT + '&t=' + Date.now());
-                    allEvents = await eventsResp.json();
-                    
-                    eventTypes = types;
-                    
-                    buildStats(computeFilteredStats());
-                    
-                    // Get date range from non-stats events
-                    const mainEvents = allEvents.filter(e => e.event_type !== 'stats');
-                    const ts = mainEvents.map(e => e.timestamp).filter(Boolean).sort();
-                    const dateDisplay = ts.length > 0 && ts[0] === ts[ts.length - 1]
-                        ? ts[0].slice(0, 19)
-                        : `${ts[0]?.slice(0, 19) || ''} to ${ts[ts.length-1]?.slice(0, 19) || ''}`;
-                    
+
+                    const dateDisplay = formatDateRange(statsData.date_range);
+
                     // Fetch analysis metadata for routing (supports ZIP uploads)
-                    const statusResp = await fetch('/api/status?md5=' + md5 + '&t=' + Date.now());
+                    const statusResp = await fetch('/api/status?md5=' + encodeURIComponent(md5) + '&t=' + Date.now());
                     const analysisStatus = await statusResp.json();
-                    const detectedType = analysisStatus.meta?.detected_type ||
-                        (currentFileName && /\.(pcap|pcapng|cap|trace)$/i.test(currentFileName) ? 'pcap' :
-                         currentFileName && /\.(evtx|json|jsonl|csv|xml|log)$/i.test(currentFileName) ? 'log' : 'binary');
-                    
-                    // Update filename to extracted inner name if available
-                    if (analysisStatus.meta?.extracted) {
-                        currentFileName = analysisStatus.meta.extracted;
-                    }
-                    
+                    const detectedType = analysisStatus.meta?.detected_type || detectFileType(currentFileName);
+
                     const isPcap = detectedType === 'pcap';
                     const isLogFile = detectedType === 'log';
                     const isFileOnly = !isPcap;
@@ -2952,12 +7478,20 @@
                         document.body.classList.remove('file-analysis');
                     }
                     
-                    document.getElementById('appHeaderFilename').innerHTML = `📄 ${escapeHtml(currentFileName)}`;
+                    const appHeaderFilenameEl = document.getElementById('appHeaderFilename');
+                    appHeaderFilenameEl.innerHTML = `${FILE_ICON_SVG}${escapeHtml(currentFileName)}`;
+                    appHeaderFilenameEl.title = currentFileName;
+                    appHeaderFilenameEl.style.cursor = 'pointer';
+                    appHeaderFilenameEl.onclick = startRenameAnalysis;
                     document.getElementById('appHeaderMeta').innerHTML = `
-                        <span style="color: #8b949e; font-size: 0.85rem; white-space: nowrap;">📁 ${currentMd5}</span>
-                        <span style="color: #8b949e; font-size: 0.85rem; white-space: nowrap;">📅 ${dateDisplay}</span>
+                        <span id="appHeaderMd5" style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; cursor: pointer;" title="Click to copy">${FOLDER_ICON_SVG}${escapeHtml(currentMd5)}</span>
+                        <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${CALENDAR_ICON_SVG}${escapeHtml(dateDisplay)}</span>
+                        ${notesIconHtml()}
+                        ${reanalyzeIconHtml()}
                     `;
-                    document.getElementById('appHeaderRight').innerHTML = `<button class="app-header-help" onclick="showHelpModal()" title="Help">?</button>`;
+                    document.getElementById('appHeaderMd5').onclick = () => copyMd5ToClipboard(currentMd5);
+                    document.getElementById('appHeaderRight').innerHTML = renderGearMenu();
+                    updateThemeMenu();
                     showAnalysisUI();
                     updateFilterBarVisibility();
                     
@@ -2977,43 +7511,9 @@
         
                             (async () => {
                                 try {
-                                    const [logResp, sigmaResp] = await Promise.all([
-                                        fetch('/api/events?md5=' + currentMd5 + '&type=log&limit=' + CONFIG.MAX_QUERY_LIMIT + '&t=' + Date.now()),
-                                        fetch('/api/sigma-alerts?md5=' + currentMd5 + '&limit=5000&t=' + Date.now())
-                                    ]);
-                                    const logEvents = await logResp.json();
-                                    const sigmaAlerts = await sigmaResp.json();
-                                    tabDataCache['log'] = logEvents;
-                                    tabDataCache['sigmaalert'] = sigmaAlerts;
-                                    allEvents = logEvents;
-
-                                    const logCount = logEvents.length;
-                                    const sigmaCount = sigmaAlerts.length;
-                                    baseEventStats = { log: logCount, sigmaalert: sigmaCount };
-                                    eventStats = { ...baseEventStats };
-
-                                    eventTypes = sortEventTypes(Object.keys(baseEventStats));
-                                    buildStats(computeFilteredStats());
-                                    buildSections();
-
-                                    const defaultType = sigmaCount > 0 ? 'sigmaalert' : 'log';
-                                    document.querySelectorAll('.section').forEach(s => s.classList.add('section-hidden'));
-                                    const defaultSection = document.getElementById('section-' + defaultType);
-                                    if (defaultSection) defaultSection.classList.remove('section-hidden');
-                                    loadTabData(defaultType, null);
-
-                                    const aggContainer = document.getElementById('aggregations');
-                                    if (aggContainer) {
-                                        if (advancedMode) {
-                                            if (defaultType === 'sigmaalert') {
-                                                buildSigmaAlertAggregations(getFilteredSigmaAlerts(sigmaAlerts), 'section-sigmaalert');
-                                            } else {
-                                                buildLogAggregations(getFilteredLogEvents(logEvents), 'section-log');
-                                            }
-                                        } else {
-                                            aggContainer.innerHTML = AGG_COLLAPSED_HTML;
-                                        }
-                                    }
+                                    const counts = await _fetchLogAnalysisCounts('');
+                                    baseEventStats = counts;
+                                    await _renderLogAnalysisView(counts);
                                 } catch(e) {
                                     console.error('Failed to load log analysis:', e);
                                     document.getElementById('sections').innerHTML = '<div class="log-events-section"><h3>📋 Log Events</h3><div class="no-matches">Error loading log events</div></div>';
@@ -3021,25 +7521,39 @@
                             })();
                         } else {
                             // Binary file analysis: unified view with search + aggregations + file info + YARA table
+                            await ensureBinaryEventsBatch();
+                            baseAllEvents = allEvents;
                             buildBinaryAnalysisView(allEvents);
                         }
                     } else {
-    
+
                         isLogAnalysisMode = false;
+                        // currentFilters was just reset to {} above, so this is
+                        // guaranteed to take computeFilteredStats' fast,
+                        // fetch-free eventStats path (not ensureCappedBatch).
+                        buildStats(await computeFilteredStats());
                         // PCAP analysis: full layout
                         buildSections();
-                        if (eventTypes[0]) loadTabData(eventTypes[0]);
-                        
                         const sankeyPanel = document.getElementById('sankeyPanel');
-                        if (sankeyPanel) {
-                            sankeyPanel.style.display = '';
-                            updateSankeyDiagram();
+                        if (sankeyPanel) sankeyPanel.style.display = '';
+                        if (eventTypes[0]) {
+                            // Must be awaited: loadTabData's own fetchEventsPage call
+                            // captures the shared fetchGeneration counter, and the
+                            // updateSankeyDiagram() call below also bumps it - firing
+                            // loadTabData without awaiting it left the two racing,
+                            // silently dropping the row table's render (stuck on
+                            // "Loading..."). loadTabData already ends by updating the
+                            // Sankey diagram itself for this type, so no separate call
+                            // is needed here in this branch.
+                            await loadTabData(eventTypes[0]);
+                        } else if (sankeyPanel) {
+                            await updateSankeyDiagram();
                         }
                         
                         const aggContainer = document.getElementById('aggregations');
                         if (aggContainer) {
                             if (advancedMode) {
-                                buildAggregationsSectionAll();
+                                await buildAggregationsSectionAll();
                             } else {
                                 aggContainer.innerHTML = AGG_COLLAPSED_HTML;
                             }
@@ -3093,10 +7607,11 @@
                 const resp = await fetch('/api/load-url', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({url: url})
+                    body: JSON.stringify({url: url, maxUploadSize: getUserMaxUploadSizeMB() * 1024 * 1024})
                 });
                 const result = await resp.json();
                 clearInterval(downloadInterval);
+                notifyIfFilesSkipped(result);
 
                 if (result.status === 'processing') {
                     await checkStatus(result.md5, result.phase || 'network');
@@ -3134,6 +7649,7 @@
             try {
                 const resp = await fetch('/api/upload', {
                     method: 'POST',
+                    headers: {'X-Max-Upload-Size': String(getUserMaxUploadSizeMB() * 1024 * 1024)},
                     body: formData
                 });
                 const result = await resp.json();
@@ -3145,6 +7661,7 @@
                     fileInput.value = '';
                     return;
                 }
+                notifyIfFilesSkipped(result);
 
                 if (result.status === 'ready') {
                     hideLoading();
@@ -3260,6 +7777,12 @@
             document.getElementById('deleteConfirmModal').classList.remove('active');
         }
         
+        function handleDeleteBackdropClick(event) {
+            if (event.target.id === 'deleteConfirmModal') {
+                closeDeleteModal();
+            }
+        }
+        
         function showError(message) {
             document.getElementById('errorMessage').textContent = message;
             document.getElementById('errorModal').classList.add('active');
@@ -3268,7 +7791,7 @@
         function closeErrorModal() {
             document.getElementById('errorModal').classList.remove('active');
         }
-        
+
         async function confirmDelete() {
             if (!pendingDelete) return;
             
@@ -3284,6 +7807,13 @@
                 });
                 const result = await resp.json();
                 if (result.success) {
+                    if (currentMd5 === md5) {
+                        currentMd5 = '';
+                        eventStats = {};
+                        baseEventStats = {};
+                        tabDataCache = {};
+                    }
+                    bumpFetchGeneration();
                     showWelcome();
                 } else {
                     showError(result.error || 'Could not delete');
@@ -3292,32 +7822,89 @@
                 showError(err.message);
             }
         }
+
+        let pendingDeleteAllCount = 0;
+        
+        function openDeleteAllAnalyses(count) {
+            pendingDeleteAllCount = count;
+            document.getElementById('deleteAllCount').textContent = count;
+            document.getElementById('deleteAllConfirmModal').classList.add('active');
+        }
+        
+        function closeDeleteAllModal() {
+            pendingDeleteAllCount = 0;
+            document.getElementById('deleteAllConfirmModal').classList.remove('active');
+        }
+        
+        function handleDeleteAllBackdropClick(event) {
+            if (event.target.id === 'deleteAllConfirmModal') {
+                closeDeleteAllModal();
+            }
+        }
+        
+        async function confirmDeleteAll() {
+            if (!pendingDeleteAllCount) return;
+            pendingDeleteAllCount = 0;
+            document.getElementById('deleteAllConfirmModal').classList.remove('active');
+            
+            try {
+                const resp = await fetch('/api/delete-all-analyses', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    currentMd5 = '';
+                    eventStats = {};
+                    baseEventStats = {};
+                    tabDataCache = {};
+                    bumpFetchGeneration();
+                    showWelcome();
+                } else {
+                    showError(result.error || 'Could not delete analyses');
+                }
+            } catch(err) {
+                showError(err.message);
+            }
+        }
         
         async function openReanalyzeModal(md5, name) {
             let phase = 'files';
+            let hasRowNotes = false;
             try {
-                const resp = await fetch('/api/status?md5=' + md5 + '&t=' + Date.now());
+                const resp = await fetch('/api/status?md5=' + encodeURIComponent(md5) + '&t=' + Date.now());
                 const status = await resp.json();
-                const detectedType = status.meta?.detected_type ||
-                    (name && /\.(pcap|pcapng|cap|trace)$/i.test(name) ? 'pcap' :
-                     name && /\.(evtx|json|jsonl|csv|xml|log)$/i.test(name) ? 'log' : 'binary');
+                const detectedType = status.meta?.detected_type || detectFileType(name);
                 if (detectedType === 'log') phase = 'logs';
                 else if (detectedType === 'pcap') phase = 'network';
+                hasRowNotes = !!status.hasRowNotes;
             } catch(err) {
                 // Fallback to filename-based detection if status API fails
-                const isLogFile = /\.(evtx|json|jsonl|csv|xml|log)$/i.test(name);
-                const isPcapFile = /\.(pcap|pcapng|cap|trace)$/i.test(name);
-                if (isLogFile) phase = 'logs';
-                else if (isPcapFile) phase = 'network';
+                const detectedType = detectFileType(name);
+                if (detectedType === 'log') phase = 'logs';
+                else if (detectedType === 'pcap') phase = 'network';
             }
             pendingReanalyze = { md5, name, phase };
             document.getElementById('reanalyzeFileName').textContent = name;
+            // Only shown when the analysis actually has row-level notes to
+            // lose - matches this app's existing "hide irrelevant info
+            // rather than show it as a no-op" convention (e.g. zero-count
+            // stat cards).
+            document.getElementById('reanalyzeRowNotesWarning').style.display = hasRowNotes ? 'block' : 'none';
+            document.querySelector('.reanalyze-confirm-btn').classList.toggle('danger', hasRowNotes);
             document.getElementById('reanalyzeConfirmModal').classList.add('active');
         }
         
         function closeReanalyzeModal() {
             pendingReanalyze = null;
             document.getElementById('reanalyzeConfirmModal').classList.remove('active');
+        }
+        
+        function handleReanalyzeBackdropClick(event) {
+            if (event.target.id === 'reanalyzeConfirmModal') {
+                closeReanalyzeModal();
+            }
         }
         
         async function confirmReanalyze() {
@@ -3362,6 +7949,12 @@
 
         async function init() {
             try {
+                // Initialize theme state, code-rain background, and favicon.
+                updateThemeMenu();
+                updateCodeRain();
+                updateFavicon();
+                startThemeSync();
+
                 // Fetch and display version from server
                 try {
                     const verResp = await fetch('/api/version');
@@ -3375,6 +7968,8 @@
                 } catch(verErr) {
                     // Ignore version fetch errors — footer shows placeholder
                 }
+                checkForAppUpdate();
+                checkForMissingRules();
 
                 // Check for file query parameter (backward compatible with ?pcap=)
                 const urlParams = new URLSearchParams(window.location.search);

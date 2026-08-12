@@ -2,8 +2,12 @@
 import os
 import ipaddress
 import socket
+import threading
+import time
 from urllib.parse import urlparse
 import config
+
+DNS_RESOLUTION_TIMEOUT = 5  # seconds; see _resolve_and_validate_ips
 
 ALLOWED_URL_SCHEMES = ('http', 'https')
 BLOCKED_HOSTS = ('localhost', '127.0.0.1', '0.0.0.0', '::1')
@@ -15,6 +19,7 @@ BLOCKED_NETWORKS = [
     ipaddress.ip_network('127.0.0.0/8'),
     ipaddress.ip_network('::1/128'),
     ipaddress.ip_network('fd00::/8'),
+    ipaddress.ip_network('::/96'),  # IPv4-compatible (::127.0.0.1)
 ]
 
 
@@ -34,14 +39,84 @@ def validate_port(port_str):
         return False
 
 
+RESERVED_FILENAMES = {
+    'events.db', 'eve.json', 'name.txt', '.meta', '.phase', '.error',
+}
+
+
 def sanitize_filename(filename):
-    return os.path.basename(filename.replace('\\', '/'))
+    """Return a safe basename, or raise ValueError for unsafe names.
+
+    Unsafe names include:
+    - path traversal sequences (. / ..)
+    - empty names after stripping
+    - names that collide with internal analysis files.
+    """
+    safe = os.path.basename(filename.replace('\\', '/'))
+    if not safe or safe in ('.', '..') or safe.startswith('..'):
+        raise ValueError(f'Invalid filename: {filename!r}')
+    if safe in RESERVED_FILENAMES:
+        raise ValueError(f'Reserved filename not allowed: {safe}')
+    return safe
 
 
 def is_safe_path(base, path):
     real_base = os.path.realpath(base)
     real_path = os.path.realpath(path)
     return real_path.startswith(real_base + os.sep) or real_path == real_base
+
+
+def _resolve_and_validate_ips(hostname):
+    """Resolve hostname to its IP addresses and reject any that are blocked.
+
+    Returns the unique resolved IP address strings in the order getaddrinfo
+    returned them (the OS/resolver's preferred order, e.g. IPv6-before-IPv4
+    on dual-stack hosts) -- NOT sorted, since a plain alphabetical sort can
+    put an unreachable address family first (e.g. "2001:..." sorts before
+    "93.1.2.3" but the host may have no IPv6 route).
+    Raises ValueError if resolution fails, times out, or any address is blocked.
+    """
+    # socket.setdefaulttimeout() has NO effect here - getaddrinfo() is a
+    # thin wrapper directly around the C-extension resolver call and never
+    # constructs a Python socket object, so the default-timeout mechanism
+    # (which only applies to sockets created afterward) is never consulted.
+    # A slow/non-responding DNS server for an attacker-supplied hostname
+    # could otherwise hang this thread for as long as the OS resolver's own
+    # retry/timeout policy allows, which can be far longer than 5s. Run the
+    # lookup in a daemon thread and stop waiting after 5s instead - the
+    # thread is abandoned to finish resolving on its own if it's still
+    # running, which is harmless since it holds no locks/resources this
+    # process cares about once abandoned.
+    result = {}
+
+    def _do_resolve():
+        try:
+            result['addrinfo'] = socket.getaddrinfo(hostname, None)
+        except OSError as e:
+            # Covers both socket.gaierror (resolution failure) and
+            # socket.timeout (an OSError subclass) - either way, the
+            # caller just needs "resolution didn't succeed."
+            result['error'] = e
+
+    thread = threading.Thread(target=_do_resolve, daemon=True)
+    thread.start()
+    thread.join(timeout=DNS_RESOLUTION_TIMEOUT)
+    if thread.is_alive():
+        raise ValueError(f"DNS resolution timed out for hostname: {hostname}")
+    if 'error' in result:
+        raise ValueError(f"Could not resolve hostname: {hostname}")
+    addrinfo = result['addrinfo']
+
+    resolved_ips = list(dict.fromkeys(info[4][0] for info in addrinfo))
+    for addr in resolved_ips:
+        ip = ipaddress.ip_address(addr)
+        # Normalize IPv4-mapped IPv6 (::ffff:127.0.0.1) so it is checked against IPv4 blocklists.
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        for network in BLOCKED_NETWORKS:
+            if ip in network:
+                raise ValueError(f"Access to private/internal addresses is not allowed ({addr})")
+    return resolved_ips
 
 
 def validate_url_safety(url):
@@ -56,29 +131,52 @@ def validate_url_safety(url):
     if hostname.lower() in [h.lower() for h in BLOCKED_HOSTS]:
         raise ValueError("Access to localhost is not allowed")
 
-    try:
-        # Set a 5-second timeout to prevent hanging on slow/unresponsive DNS
-        old_timeout = socket.getdefaulttimeout()
-        socket.setdefaulttimeout(5)
-        try:
-            addrinfo = socket.getaddrinfo(hostname, None)
-        finally:
-            socket.setdefaulttimeout(old_timeout)
-        resolved_ips = set()
-        for info in addrinfo:
-            resolved_ips.add(info[4][0])
-        for addr in resolved_ips:
-            ip = ipaddress.ip_address(addr)
-            for network in BLOCKED_NETWORKS:
-                if ip in network:
-                    raise ValueError(f"Access to private/internal addresses is not allowed ({addr})")
-    except socket.gaierror:
-        raise ValueError(f"Could not resolve hostname: {hostname}")
-    except socket.timeout:
-        raise ValueError(f"DNS resolution timed out for hostname: {hostname}")
+    _resolve_and_validate_ips(hostname)
 
 
-def validate_zip_extraction(zip_ref, extract_path):
+def resolve_safe_ips(hostname):
+    """Resolve and validate hostname, returning all safe IPs to try.
+
+    Callers that fetch a user-supplied URL must connect directly to one of
+    these IPs (trying each in turn, like a normal hostname connect would)
+    rather than letting the HTTP client re-resolve the hostname. Otherwise a
+    DNS-rebinding attacker can return a public IP for validate_url_safety()'s
+    lookup and a private/internal IP for the connection's own lookup moments
+    later, bypassing the check entirely (TOCTOU). Returning every validated
+    address (not just one) preserves normal multi-address fallback -- e.g. a
+    dual-stack host whose IPv6 address isn't reachable but whose IPv4
+    address is.
+    """
+    return _resolve_and_validate_ips(hostname)
+
+
+def validate_zip_extraction(zip_ref, extract_path, max_size=None):
+    """Validate zip-slip safety and decompressed-size limits.
+
+    max_size defaults to config.MAX_UPLOAD_SIZE, but callers should pass the
+    caller's actual resolved per-request ceiling (see
+    socrates.py's _resolve_upload_size_limit) so a user who hasn't opted
+    into a higher personal upload limit doesn't get the full server hard
+    ceiling as their zip-bomb decompression budget.
+
+    NOT a real bypass, re-confirmed each time it's been raised in review: a
+    ZIP member with a spoofed/lying declared file_size (small metadata,
+    large real decompressed content) does NOT let zip_ref.extractall() (or
+    zip_ref.open().read()) silently write more bytes than declared before
+    this check would catch it. CPython's zipfile.ZipExtFile bounds every
+    read to the declared file_size internally (see _read1's
+    `data = data[:self._left]`, where self._left is initialized from
+    file_size) and then validates CRC32 against the *original* (untruncated)
+    checksum - a size lie produces a truncated read whose CRC provably
+    can't match, raising zipfile.BadZipFile before the mismatch could ever
+    be exploited. Verified directly against both zip_ref.extractall() and a
+    manual streaming read on a real spoofed-metadata ZipInfo (not just
+    read from source) - both raise BadZipFile identically, with or without
+    this function's own size check. Don't re-implement a streaming
+    extractor to "fix" this again without re-verifying that premise first.
+    """
+    if max_size is None:
+        max_size = config.MAX_UPLOAD_SIZE
     total_uncompressed = 0
     for member in zip_ref.namelist():
         member_path = os.path.realpath(os.path.join(extract_path, member))
@@ -86,21 +184,23 @@ def validate_zip_extraction(zip_ref, extract_path):
             raise ValueError(f"Zip slip detected: {member}")
         info = zip_ref.getinfo(member)
         total_uncompressed += info.file_size
-        if info.file_size > config.MAX_UPLOAD_SIZE:
+        if info.file_size > max_size:
             raise ValueError(f"ZIP member too large: {member}")
-    if total_uncompressed > config.MAX_UPLOAD_SIZE:
+    if total_uncompressed > max_size:
         raise ValueError("ZIP contents exceed maximum allowed size")
 
 
-def validate_pcap_content(data):
+def is_pcap_file(data):
+    """Detect if file data is a PCAP or PCAPNG by magic bytes."""
     if len(data) < 4:
         return False
     magic = data[:4]
-    if magic in (b'\xd4\xc3\xb2\xa1', b'\xa1\xb2\xc3\xd4'):
+    # Classic PCAP (microsecond or nanosecond timestamps), either endianness
+    if magic in (b'\xd4\xc3\xb2\xa1', b'\xa1\xb2\xc3\xd4',
+                 b'\x4d\x3c\xb2\xa1', b'\xa1\xb2\x3c\x4d'):
         return True
+    # PCAPNG
     if magic == b'\x0a\x0d\x0d\x0a':
-        return True
-    if magic in (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'):
         return True
     return False
 
@@ -111,10 +211,39 @@ def is_host_reachable(host, port, timeout=5):
     Returns True if connection succeeds, False otherwise.
     """
     try:
-        socket.create_connection((host, port), timeout=timeout)
-        return True
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
     except OSError:
         return False
+
+
+def is_epoch_stale(epoch, max_age_hours):
+    """Check if an already-known mtime/epoch is older than max_age_hours -
+    the actual staleness formula, factored out of is_file_stale() so a
+    caller that has already derived a timestamp another way (e.g.
+    get_suricata_rules_info()'s min mtime across several active rule
+    files) can reuse the exact same comparison instead of re-deriving it,
+    which would otherwise risk silently drifting from this definition."""
+    return (time.time() - epoch) > max_age_hours * 3600
+
+
+def is_file_stale(path, max_age_hours):
+    """Check if a file's mtime is older than max_age_hours.
+
+    mtime reflects the right thing either way a rules file gets to disk:
+    shutil.copy2() preserves the source's mtime (age of the rules content
+    itself, for a baked-in-image copy), and a fresh download naturally gets
+    "now" as its mtime (age of the last successful check).
+
+    Returns True if the file is older than the threshold, False if it's
+    fresh or the file doesn't exist (missing isn't "stale" -- callers
+    already handle "doesn't exist" as its own case).
+    """
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return False
+    return is_epoch_stale(mtime, max_age_hours)
 
 
 LOG_EXTENSIONS = ('.evtx', '.json', '.jsonl', '.csv', '.xml', '.log')

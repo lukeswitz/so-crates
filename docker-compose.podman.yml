@@ -1,7 +1,11 @@
 services:
   so-crates:
-    extends:
-      file: docker-compose.yml
-      service: so-crates
+    image: ghcr.io/dougburks/so-crates:main
+    container_name: so-crates
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./socrates-data:/data:Z
+    restart: unless-stopped
     user: "${UID}:${GID}"
     userns_mode: keep-id

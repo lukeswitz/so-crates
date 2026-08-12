@@ -14,7 +14,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 import config
 import sigma_analyzer
 import validators
-import yara_analyzer
 
 
 class TestLogTypeDetection(unittest.TestCase):
@@ -271,6 +270,24 @@ class TestImportZircoliteLogs(unittest.TestCase):
             os.unlink(zdb_path)
             os.unlink(edb_path)
 
+    @unittest.mock.patch('sqlite3.connect')
+    def test_import_handles_corrupt_db(self, mock_connect):
+        """If sqlite3.connect fails, import_zircolite_logs must return 0 cleanly."""
+        import sqlite3
+        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as zdb:
+            zdb_path = zdb.name
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as edb:
+                edb_path = edb.name
+            try:
+                mock_connect.side_effect = sqlite3.OperationalError('unable to open database file')
+                count = sigma_analyzer.import_zircolite_logs(zdb_path, edb_path)
+                self.assertEqual(count, 0)
+            finally:
+                os.unlink(edb_path)
+        finally:
+            os.unlink(zdb_path)
+
 
 class TestValidatorsLogDetection(unittest.TestCase):
     def test_is_log_file_evtx(self):
@@ -296,6 +313,100 @@ class TestValidatorsLogDetection(unittest.TestCase):
         self.assertTrue(validators.is_log_file_by_extension('test.json'))
         self.assertTrue(validators.is_log_file_by_extension('test.log'))
         self.assertFalse(validators.is_log_file_by_extension('test.exe'))
+
+
+class TestMacosLogDetection(unittest.TestCase):
+    """scripts/mac-collect-logs.sh output routes to the macOS ruleset."""
+
+    def _write(self, tmpdir, name, lines):
+        path = os.path.join(tmpdir, name)
+        with open(path, 'w') as f:
+            for line in lines:
+                f.write(json.dumps(line) + '\n')
+        return path
+
+    def test_collector_output_detected_as_macos(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write(tmpdir, 'macos-events.ndjson', [
+                {'UtcTime': '1', 'EventType': 'exec', 'Image': '/usr/bin/curl',
+                 'CommandLine': 'curl -s https://example.com', 'ParentImage': '/bin/zsh'},
+                {'UtcTime': '2', 'EventType': 'create',
+                 'TargetFilename': '/Users/x/Library/LaunchAgents/a.plist'},
+            ])
+            self.assertEqual(sigma_analyzer._detect_log_type(path), 'macos')
+
+    def test_windows_sysmon_json_is_not_misread_as_macos(self):
+        """REGRESSION: Sysmon exports carry Image/CommandLine/ParentImage
+        too - macOS detection must key on the collector's own EventType
+        marker, not on the Sigma field names alone, or every Windows
+        process_creation log would route to the 69-rule macOS ruleset
+        instead of the 4000-rule Windows one."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write(tmpdir, 'sysmon.json', [
+                {'EventID': 1, 'Channel': 'Microsoft-Windows-Sysmon/Operational',
+                 'Computer': 'WIN', 'Image': 'C:\\Windows\\powershell.exe',
+                 'CommandLine': 'powershell -enc AAAA', 'ParentImage': 'C:\\cmd.exe'},
+            ])
+            self.assertEqual(sigma_analyzer._detect_log_type(path), 'windows')
+
+    def test_marker_without_mapped_fields_is_not_macos(self):
+        self.assertFalse(sigma_analyzer._looks_like_macos_events('{"EventType": "exec"}'))
+
+    def test_mapped_fields_without_marker_are_not_macos(self):
+        self.assertFalse(sigma_analyzer._looks_like_macos_events(
+            '{"Image": "/usr/bin/curl", "CommandLine": "curl"}'))
+
+    def test_unrelated_event_type_value_is_not_macos(self):
+        self.assertFalse(sigma_analyzer._looks_like_macos_events(
+            '{"EventType": "login", "Image": "/usr/bin/curl"}'))
+
+
+class TestBundledMacosRuleset(unittest.TestCase):
+    def test_repo_ships_a_usable_macos_ruleset(self):
+        """The macOS ruleset is committed rather than downloaded -
+        Zircolite-Rules-v2 publishes windows and linux only."""
+        source = sigma_analyzer.BUNDLED_SIGMA_RULESETS['macos']
+        self.assertTrue(os.path.isfile(source), source)
+        with open(source) as f:
+            rules = json.load(f)
+        self.assertIsInstance(rules, list)
+        self.assertGreater(len(rules), 0)
+        for rule in rules:
+            self.assertIn('title', rule)
+            self.assertIn('rule', rule)
+
+    def test_bundled_rules_are_installed_into_the_data_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = sigma_analyzer.setup_sigma_rules(
+                tmpdir, on_progress=lambda m: None, network_allowed=False)
+            dest = os.path.join(tmpdir, config.SIGMA_RULES_SUBDIR, 'macos.json')
+            self.assertTrue(os.path.isfile(dest))
+            self.assertEqual(result['macos'], dest)
+
+    def test_bundled_rules_refresh_when_the_checkout_is_newer(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, config.SIGMA_RULES_SUBDIR)
+            os.makedirs(rules_dir, exist_ok=True)
+            dest = os.path.join(rules_dir, 'macos.json')
+            with open(dest, 'w') as f:
+                f.write('[]')
+            old = time.time() - 86400
+            os.utime(dest, (old, old))
+
+            sigma_analyzer.setup_sigma_rules(
+                tmpdir, on_progress=lambda m: None, network_allowed=False)
+            with open(dest) as f:
+                self.assertGreater(len(json.load(f)), 0, 'stale copy must be replaced')
+
+    def test_installing_bundled_rules_never_touches_the_network(self):
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             unittest.mock.patch('sigma_analyzer.is_host_reachable') as reachable, \
+             unittest.mock.patch('sigma_analyzer._download_rule_file') as download:
+            result = sigma_analyzer.setup_sigma_rules(
+                tmpdir, on_progress=lambda m: None, network_allowed=False)
+        reachable.assert_not_called()
+        download.assert_not_called()
+        self.assertIn('macos', result)
 
 
 class TestZircoliteDataDirResolution(unittest.TestCase):
@@ -347,32 +458,182 @@ class TestZircoliteDataDirResolution(unittest.TestCase):
             self.assertFalse(sigma_analyzer.is_zircolite_available(d))
 
 
-class TestRulesStale(unittest.TestCase):
-    """Age-based cache refresh gate for YARA + Sigma rule files."""
+class TestGetSigmaRulesInfoNeverRaises(unittest.TestCase):
+    def test_invalid_utf8_does_not_raise(self):
+        """REGRESSION: get_sigma_rules_info()'s docstring promises it never
+        raises, falling back to None fields if a cached rules file fails to
+        parse - but it opened its file in plain text mode (default
+        encoding), unlike get_yara_rules_info()/get_suricata_rules_info()
+        which both use errors='ignore'. Invalid UTF-8 bytes in a corrupted
+        cached windows.json/linux.json raised UnicodeDecodeError instead,
+        which - since GET /api/rules-info has no per-handler try/except -
+        broke the entire Rules-info response for all three rulesets, not
+        just the corrupted one."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, 'sigma-rules')
+            os.makedirs(rules_dir, exist_ok=True)
+            with open(os.path.join(rules_dir, 'windows.json'), 'wb') as f:
+                f.write(b'\xff\xfe[{"bad": "utf8"')
 
-    def test_fresh_file_not_stale(self):
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            path = f.name
-        try:
-            self.assertFalse(sigma_analyzer._rules_stale(path))
-            self.assertFalse(yara_analyzer._rules_stale(path))
-        finally:
-            os.unlink(path)
+            result = sigma_analyzer.get_sigma_rules_info(data_dir=tmpdir)
 
-    def test_aged_file_is_stale(self):
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            path = f.name
-        try:
-            old = time.time() - (config.RULE_REFRESH_DAYS + 1) * 86400
-            os.utime(path, (old, old))
-            self.assertTrue(sigma_analyzer._rules_stale(path))
-            self.assertTrue(yara_analyzer._rules_stale(path))
-        finally:
-            os.unlink(path)
+        self.assertEqual(result['windows'], {'count': None, 'updated': None, 'stale': None})
 
-    def test_missing_file_not_stale(self):
-        self.assertFalse(sigma_analyzer._rules_stale('/tmp/does-not-exist-xyz'))
-        self.assertFalse(yara_analyzer._rules_stale('/tmp/does-not-exist-xyz'))
+    def test_stale_field_reflects_file_age(self):
+        """'stale' must be False for a just-written file and True once its
+        mtime is older than config.RULES_MAX_AGE_HOURS - purely a local
+        os.path.getmtime() comparison via validators.is_file_stale(), no
+        network access."""
+        import config
+        import time
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = os.path.join(tmpdir, 'sigma-rules')
+            os.makedirs(rules_dir, exist_ok=True)
+            rules_file = os.path.join(rules_dir, 'windows.json')
+            with open(rules_file, 'w') as f:
+                json.dump([{'title': 'rule1'}], f)
+
+            fresh = sigma_analyzer.get_sigma_rules_info(data_dir=tmpdir)
+            self.assertFalse(fresh['windows']['stale'], 'a just-written rules file must not be stale')
+
+            old_time = time.time() - (config.RULES_MAX_AGE_HOURS + 1) * 3600
+            os.utime(rules_file, (old_time, old_time))
+            stale = sigma_analyzer.get_sigma_rules_info(data_dir=tmpdir)
+            self.assertTrue(stale['windows']['stale'], 'a rules file older than RULES_MAX_AGE_HOURS must be stale')
+
+
+class TestSetupSigmaRulesFreshness(unittest.TestCase):
+    def _make_stale_rules(self, tmpdir):
+        import time
+        import config
+        rules_dir = os.path.join(tmpdir, config.SIGMA_RULES_SUBDIR)
+        os.makedirs(rules_dir, exist_ok=True)
+        for name in ('windows', 'linux'):
+            path = os.path.join(rules_dir, f'{name}.json')
+            with open(path, 'w') as f:
+                f.write('{"old": "rules"}')
+            old_time = time.time() - (config.RULES_MAX_AGE_HOURS + 1) * 3600
+            os.utime(path, (old_time, old_time))
+        return rules_dir
+
+    @unittest.mock.patch('sigma_analyzer._download_rule_file')
+    @unittest.mock.patch('sigma_analyzer.is_host_reachable', return_value=True)
+    def test_stale_cached_rules_are_refreshed_when_online(self, mock_reachable, mock_download):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_stale_rules(tmpdir)
+            result = sigma_analyzer.setup_sigma_rules(tmpdir)
+        self.assertEqual(mock_download.call_count, 2, 'both rulesets should be refreshed')
+        self.assertIn('windows', result)
+        self.assertIn('linux', result)
+
+    @unittest.mock.patch('sigma_analyzer._download_rule_file')
+    @unittest.mock.patch('sigma_analyzer.is_host_reachable', return_value=False)
+    def test_stale_cached_rules_kept_when_offline(self, mock_reachable, mock_download):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = self._make_stale_rules(tmpdir)
+            result = sigma_analyzer.setup_sigma_rules(tmpdir)
+        mock_download.assert_not_called()
+        self.assertEqual(result['windows'], os.path.join(rules_dir, 'windows.json'))
+
+    @unittest.mock.patch('sigma_analyzer._download_rule_file')
+    @unittest.mock.patch('sigma_analyzer.is_host_reachable', return_value=True)
+    def test_fresh_cached_rules_are_not_refreshed(self, mock_reachable, mock_download):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            import config
+            rules_dir = os.path.join(tmpdir, config.SIGMA_RULES_SUBDIR)
+            os.makedirs(rules_dir, exist_ok=True)
+            with open(os.path.join(rules_dir, 'windows.json'), 'w') as f:
+                f.write('{"fresh": "rules"}')
+            with open(os.path.join(rules_dir, 'linux.json'), 'w') as f:
+                f.write('{"fresh": "rules"}')
+            sigma_analyzer.setup_sigma_rules(tmpdir)
+        mock_download.assert_not_called()
+
+    @unittest.mock.patch('sigma_analyzer._download_rule_file', side_effect=OSError('network error'))
+    @unittest.mock.patch('sigma_analyzer.is_host_reachable', return_value=True)
+    def test_refresh_failure_falls_back_to_stale_cached_rules(self, mock_reachable, mock_download):
+        """REGRESSION: a failed refresh attempt must not remove or break the
+        still-usable stale copy - setup must keep returning it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = self._make_stale_rules(tmpdir)
+            result = sigma_analyzer.setup_sigma_rules(tmpdir)
+            self.assertEqual(result['windows'], os.path.join(rules_dir, 'windows.json'))
+            with open(result['windows']) as f:
+                self.assertEqual(f.read(), '{"old": "rules"}')
+
+    @unittest.mock.patch('sigma_analyzer.urllib.request.urlopen')
+    def test_download_rule_file_writes_atomically(self, mock_urlopen):
+        """A partial/failed write must not corrupt an existing cached file
+        (_download_rule_file writes to a .new temp file and renames into
+        place instead of truncating dest_file directly)."""
+        mock_urlopen.side_effect = OSError('connection reset')
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dest = os.path.join(tmpdir, 'windows.json')
+            with open(dest, 'w') as f:
+                f.write('{"good": "cached rules"}')
+            with self.assertRaises(OSError):
+                sigma_analyzer._download_rule_file('http://example.com/rules.json', dest)
+            with open(dest) as f:
+                self.assertEqual(f.read(), '{"good": "cached rules"}')
+            self.assertFalse(os.path.exists(dest + '.new'), 'temp file must be cleaned up')
+
+    @unittest.mock.patch('sigma_analyzer.urllib.request.urlopen')
+    def test_download_rule_file_rejects_non_json_response(self, mock_urlopen):
+        """REGRESSION: a transient bad response (rate-limit page, outage
+        page, truncated-but-200 body) used to be written straight to disk
+        and atomically swapped in over a good cached ruleset with no
+        validation at all. Must be rejected before ever touching dest_file."""
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = b'<html>rate limited</html>'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dest = os.path.join(tmpdir, 'windows.json')
+            with open(dest, 'w') as f:
+                f.write('{"good": "cached rules"}')
+            with self.assertRaises(OSError):
+                sigma_analyzer._download_rule_file('http://example.com/rules.json', dest)
+            with open(dest) as f:
+                self.assertEqual(f.read(), '{"good": "cached rules"}')
+            self.assertFalse(os.path.exists(dest + '.new'), 'temp file must be cleaned up')
+
+
+class TestNetworkAllowedFalseDoesNotClaimNoInternet(unittest.TestCase):
+    """REGRESSION: with no cached copy and no baked-in file, the final
+    "not available" message per ruleset used to say "No internet access
+    detected" unconditionally - including when network_allowed=False
+    (e.g. server startup, which never checks reachability at all by
+    design). A real user on a machine WITH internet access saw this
+    exact message at startup and reasonably assumed something was
+    broken. The message must now distinguish "we checked and it failed"
+    from "we didn't check"."""
+
+    def test_network_allowed_false_does_not_say_no_internet(self):
+        messages = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sigma_analyzer.setup_sigma_rules(tmpdir, on_progress=messages.append, network_allowed=False)
+        self.assertFalse(any('no internet' in m.lower() for m in messages), messages)
+        self.assertIn('WARNING! No Sigma rules (windows) found', messages)
+        self.assertIn('WARNING! No Sigma rules (linux) found', messages)
+
+    def test_network_allowed_true_and_unreachable_still_says_no_internet(self):
+        messages = []
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             unittest.mock.patch('sigma_analyzer.is_host_reachable', return_value=False):
+            sigma_analyzer.setup_sigma_rules(tmpdir, on_progress=messages.append, network_allowed=True)
+        self.assertTrue(any('no internet' in m.lower() for m in messages), messages)
+
+
+class TestRunSigmaPipelineNeverAllowsNetworkRefresh(unittest.TestCase):
+    """REGRESSION: analyzing a log file must never silently phone home to
+    refresh Sigma rules as a side effect of just uploading it - that's now
+    an explicit, opt-in action (Rules modal, or the checkForStaleRules()
+    notification), not something the analysis path triggers on its own.
+    See AGENTS.md and setup_sigma_rules()'s network_allowed parameter."""
+
+    @unittest.mock.patch('sigma_analyzer.setup_sigma_rules', return_value=None)
+    @unittest.mock.patch('sigma_analyzer.is_zircolite_available', return_value=True)
+    def test_run_sigma_pipeline_calls_setup_with_network_allowed_false(self, mock_available, mock_setup):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sigma_analyzer.run_sigma_pipeline(tmpdir, os.path.join(tmpdir, 'events.evtx'), data_dir=tmpdir)
+        mock_setup.assert_called_once_with(tmpdir, network_allowed=False)
 
 
 if __name__ == '__main__':

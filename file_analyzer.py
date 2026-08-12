@@ -3,7 +3,8 @@
 
 Provides file type detection (via the `file` command), Shannon entropy
 calculation, and printable string extraction. Used to enrich fileinfo events
-when YARA produces no matches.
+extracted from a PCAP's filestore, and every standalone (non-PCAP) file
+upload regardless of whether YARA finds a match.
 """
 
 import math
@@ -32,18 +33,12 @@ def shannon_entropy(data):
     return round(entropy, 2)
 
 
-def extract_strings(file_path, min_len=4, max_count=50, max_len=100):
-    """Extract printable ASCII strings from a file.
+def _extract_strings_from(data, min_len=4, max_count=50, max_len=100):
+    """Extract printable ASCII strings from a bytes buffer.
 
     Returns a list of up to `max_count` strings, each truncated to `max_len`.
     """
     strings = []
-    try:
-        with open(file_path, 'rb') as f:
-            data = f.read(config.MAX_STRINGS_READ_SIZE)  # cap for speed
-    except OSError:
-        return strings
-
     # Find sequences of printable ASCII characters
     for match in re.finditer(rb'[\x20-\x7e]{' + str(min_len).encode() + rb',}', data):
         s = match.group().decode('ascii', errors='ignore')
@@ -62,6 +57,8 @@ def analyze_file(file_path):
         mime_type: MIME type from `file -b --mime-type`
         entropy: Shannon entropy (0.0–8.0)
         strings: List of top printable ASCII strings
+        exif: dict of curated ExifTool fields - only present when
+            _should_run_exiftool(mime_type) matches and exiftool found data
     """
     metadata = {
         'file_type': '',
@@ -94,12 +91,12 @@ def analyze_file(file_path):
     except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
         pass
 
-    # entropy and strings
+    # entropy and strings (single read; strings come from the same buffer)
     try:
         with open(file_path, 'rb') as f:
             data = f.read(config.MAX_ENTROPY_READ_SIZE)  # cap for entropy
         metadata['entropy'] = shannon_entropy(data)
-        metadata['strings'] = extract_strings(file_path)
+        metadata['strings'] = _extract_strings_from(data[:config.MAX_STRINGS_READ_SIZE])
     except OSError:
         pass
 
