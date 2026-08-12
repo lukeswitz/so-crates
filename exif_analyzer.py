@@ -7,7 +7,6 @@ files where our lightweight analyzer alone doesn't tell the full story.
 """
 
 import json
-import os
 import subprocess
 
 import config
@@ -118,19 +117,25 @@ def _determine_category(mime_type, file_type):
         return None
     mime_lower = mime_type.lower()
     file_lower = file_type.lower()
+    # Reliable mime_type-based categories first - the file_type substring
+    # heuristics below are loose enough that e.g. "JPEG".lower() contains
+    # "pe" (j-PE-g), which would otherwise misclassify JPEGs as PE
+    # executables and drop all of their image EXIF fields (GPS/Make/Model/etc).
+    if mime_lower.startswith('image/'):
+        return 'image'
+    if mime_lower == 'application/pdf':
+        return 'pdf'
+    if (mime_lower.startswith('application/vnd.ms-')
+            or mime_lower.startswith('application/vnd.openxmlformats')
+            or mime_lower in ('application/msword', 'application/rtf', 'application/x-ole-storage')):
+        return 'office'
     # PE executables
     if (mime_lower in ('application/x-dosexec', 'application/vnd.microsoft.portable-executable')
             or 'pe' in file_lower or 'exe' in file_lower or 'win32' in file_lower
             or 'win64' in file_lower or 'executable' in file_lower):
         return 'pe'
-    if mime_lower == 'application/pdf' or 'pdf' in file_lower:
+    if 'pdf' in file_lower:
         return 'pdf'
-    if mime_lower.startswith('image/'):
-        return 'image'
-    if (mime_lower.startswith('application/vnd.ms-')
-            or mime_lower.startswith('application/vnd.openxmlformats')
-            or mime_lower in ('application/msword', 'application/rtf', 'application/x-ole-storage')):
-        return 'office'
     return None
 
 
@@ -151,7 +156,7 @@ def extract_exif(file_path, mime_type=''):
     try:
         result = subprocess.run(
             ['exiftool', '-j', file_path],
-            capture_output=True, text=True, timeout=3
+            capture_output=True, text=True, timeout=config.FILE_COMMAND_TIMEOUT
         )
     except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as e:
         print(f'Warning: ExifTool failed for {file_path}: {e}')

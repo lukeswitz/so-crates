@@ -7,22 +7,29 @@ on first run if internet is available.
 """
 
 import config
+import gzip
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import tempfile
-import time
+import urllib.error
 import urllib.request
+import zipfile
 
 from file_analyzer import analyze_file
+from validators import is_host_reachable, is_file_stale
 
 YARA_FORGE_URL = (
     'https://github.com/YARAHQ/yara-forge/releases/latest/download/'
     'yara-forge-rules-full.zip'
 )
-BAKED_IN_YARA_FILE = '/usr/share/yara-rules/yara-rules-full.yar'
+# Baked in gzip-compressed (~19MB -> 3MB - see the Dockerfile's YARA Forge
+# bake step) and decompressed here into the plain .yar file every other
+# reader in this module already expects.
+BAKED_IN_YARA_FILE = '/usr/share/yara-rules/yara-rules-full.yar.gz'
 YARA_RULES_SUBDIR = 'yara-rules'
 YARA_FORGE_FILENAME = 'yara-rules-full.yar'
 
@@ -32,13 +39,66 @@ def check_yara_executable():
     return shutil.which('yara') is not None
 
 
-def setup_yara_rules(data_dir=None):
+def get_yara_rules_info(data_dir=None):
+    """Return {'count': int|None, 'updated': epoch|None, 'stale': bool|None}
+    for the current YARA Forge ruleset. Rules are declared as 'rule <name>
+    ...' at the start of a line (verified against the real file). 'stale'
+    is True once the rules file is older than config.RULES_MAX_AGE_HOURS -
+    purely a local mtime check, no network access, safe to call
+    unconditionally (see static/socrates.js's checkForStaleRules(), which
+    is opt-in). Never raises - returns None fields if the rules file
+    doesn't exist yet."""
+    if data_dir is None:
+        data_dir = os.path.expanduser('~/socrates-data')
+    rules_file = os.path.join(data_dir, YARA_RULES_SUBDIR, YARA_FORGE_FILENAME)
+    if not os.path.isfile(rules_file):
+        return {'count': None, 'updated': None, 'stale': None}
+    try:
+        count = 0
+        with open(rules_file, 'r', errors='ignore') as f:
+            for line in f:
+                if re.match(r'^\s*rule\s+', line):
+                    count += 1
+        return {
+            'count': count,
+            'updated': os.path.getmtime(rules_file),
+            'stale': is_file_stale(rules_file, config.RULES_MAX_AGE_HOURS),
+        }
+    except OSError:
+        return {'count': None, 'updated': None, 'stale': None}
+
+
+def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, force=False):
     """Ensure YARA Forge rules are available.
 
     Priority:
-    1. ~/socrates-data/yara-rules/yara-rules-full.yar (already downloaded)
+    1. ~/socrates-data/yara-rules/yara-rules-full.yar (already downloaded) --
+       refreshed in place if older than config.RULES_MAX_AGE_HOURS and
+       internet is reachable; falls back to the stale copy on any refresh
+       failure rather than leaving rules unavailable.
     2. Baked-in rules in /usr/share/yara-rules (Docker)
     3. Download latest YARA Forge release if internet is available
+
+    on_progress: callable receiving one progress-message string at a time
+    (defaults to print - callers that want to capture/stream progress
+    instead of just logging to stdout pass their own).
+
+    network_allowed: when False, skips reachability checks and any
+    download entirely, using only what's already cached/baked-in (used at
+    server startup so it never blocks on the network; callers that want
+    on-demand refresh pass True, the default).
+
+    force: when True, checks for an update even if the cached copy isn't
+    stale yet - used by the on-demand "check for rule updates" action,
+    where staying silent just because the 24h cache window hasn't expired
+    would defeat the point of the user explicitly asking for a check right
+    now. Has no effect if there's no cached copy to begin with (that path
+    always checks/downloads already). When network_allowed is False, force
+    also controls whether a "using cached" message is emitted: a plain
+    staleness check (server startup, per-file background scans) stays
+    silent since nothing changed, while an explicit forced check that
+    happens to run offline still reports the cached-copy outcome so the
+    action doesn't look like it did nothing.
 
     Returns the rules file path or None if no rules are available.
     """
@@ -48,80 +108,89 @@ def setup_yara_rules(data_dir=None):
 
     # Already downloaded/cached — refresh in place if stale and online
     if os.path.isfile(rules_file):
-        if _rules_stale(rules_file) and _has_internet_access():
-            print('YARA Forge rules are stale — refreshing...')
-            try:
-                _download_yara_forge_rules(rules_file)
-                print('YARA Forge rules refreshed')
-            except (OSError, urllib.error.URLError) as e:
-                print(f'Warning: could not refresh YARA rules, using cached: {e}')
-        else:
-            print('YARA Forge rules already present — using cached rules')
+        stale = is_file_stale(rules_file, config.RULES_MAX_AGE_HOURS)
+        if force or stale:
+            if network_allowed and is_host_reachable('github.com', 443, timeout=5):
+                on_progress('Checking for YARA Forge rule updates...')
+                try:
+                    _download_yara_forge_rules(rules_file)
+                    on_progress('YARA Forge rules refreshed successfully')
+                except (OSError, urllib.error.URLError, zipfile.BadZipFile, KeyError) as e:
+                    on_progress(f'Warning: could not refresh YARA Forge rules, using cached copy: {e}')
+            elif network_allowed:
+                on_progress('No internet access detected — using cached YARA Forge rules')
+            elif force:
+                on_progress('Using cached YARA Forge rules')
+        elif network_allowed:
+            on_progress('YARA Forge rules already present — using cached rules')
         return rules_file
 
     # Baked-in rules (Docker image)
     if os.path.isfile(BAKED_IN_YARA_FILE):
-        print('Copying baked-in YARA Forge rules...')
         os.makedirs(os.path.dirname(rules_file), exist_ok=True)
         try:
-            shutil.copy2(BAKED_IN_YARA_FILE, rules_file)
-            print('Baked-in YARA Forge rules ready')
+            with gzip.open(BAKED_IN_YARA_FILE, 'rb') as f_in, open(rules_file, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
             return rules_file
         except OSError as e:
-            print(f'Warning: could not copy baked-in rules: {e}')
+            on_progress(f'Warning: could not copy baked-in rules: {e}')
 
     # Try to download
-    if _has_internet_access():
-        print('Internet access detected — downloading YARA Forge rules...')
+    if network_allowed and is_host_reachable('github.com', 443, timeout=5):
+        on_progress('Internet access detected — downloading YARA Forge rules...')
         try:
             _download_yara_forge_rules(rules_file)
-            print('YARA Forge rules downloaded successfully')
+            on_progress('YARA Forge rules downloaded successfully')
             return rules_file
-        except (OSError, urllib.error.URLError) as e:
-            print(f'Warning: could not download YARA Forge rules: {e}')
+        except (OSError, urllib.error.URLError, zipfile.BadZipFile, KeyError) as e:
+            on_progress(f'Warning: could not download YARA Forge rules: {e}')
+    elif network_allowed:
+        on_progress('No internet access detected — YARA Forge rules not available')
     else:
-        print('No internet access detected — YARA Forge rules not available')
+        on_progress('WARNING! No YARA rules found')
 
     return None
 
 
-def _has_internet_access():
-    from validators import is_host_reachable
-    return is_host_reachable('github.com', 443, timeout=5)
-
-
-def _rules_stale(path, max_age_days=None):
-    """Return True if path is older than max_age_days (default config.RULE_REFRESH_DAYS)."""
-    if max_age_days is None:
-        max_age_days = config.RULE_REFRESH_DAYS
-    try:
-        age_seconds = time.time() - os.path.getmtime(path)
-    except OSError:
-        return False
-    return age_seconds > max_age_days * 86400
-
-
 def _download_yara_forge_rules(dest_file):
-    """Download latest YARA Forge full rules ZIP and extract the .yar file."""
+    """Download latest YARA Forge full rules ZIP and extract the .yar file.
+
+    Writes to a temp file and atomically renames into place, so a refresh
+    that overwrites an already-good cached copy (see setup_yara_rules)
+    never leaves a truncated/partial file behind if the download fails
+    partway through - the prior cached copy stays intact until the new
+    one is fully written.
+    """
     os.makedirs(os.path.dirname(dest_file), exist_ok=True)
     tmp_zip = dest_file + '.zip'
+    tmp_dest = dest_file + '.new'
 
-    req = urllib.request.Request(YARA_FORGE_URL, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=config.YARA_DOWNLOAD_TIMEOUT) as resp:
-        with open(tmp_zip, 'wb') as f:
-            f.write(resp.read())
+    try:
+        req = urllib.request.Request(YARA_FORGE_URL, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=config.RULES_DOWNLOAD_TIMEOUT) as resp:
+            with open(tmp_zip, 'wb') as f:
+                f.write(resp.read())
 
-    import zipfile
-    with zipfile.ZipFile(tmp_zip, 'r') as zf:
-        member = 'packages/full/yara-rules-full.yar'
-        with zf.open(member) as src, open(dest_file, 'wb') as dst:
-            dst.write(src.read())
+        with zipfile.ZipFile(tmp_zip, 'r') as zf:
+            member = 'packages/full/yara-rules-full.yar'
+            with zf.open(member) as src, open(tmp_dest, 'wb') as dst:
+                dst.write(src.read())
 
-    os.unlink(tmp_zip)
+        os.replace(tmp_dest, dest_file)
+    finally:
+        for tmp in (tmp_zip, tmp_dest):
+            if os.path.exists(tmp):
+                os.unlink(tmp)
 
 
-def _run_yara_with_index(rules_file, list_path, filestore_dir=None):
-    """Run YARA against a rules file and return parsed matches."""
+def _run_yara_with_index(rules_file, list_path, filestore_dir=None, known_paths=None):
+    """Run YARA against a rules file and return parsed matches.
+
+    known_paths, if provided, is the exact list of file paths written to
+    list_path (i.e. what --scan-list is scanning) - passed through to
+    _parse_yara_output() so it can resolve each match's file path reliably
+    even when a path contains whitespace.
+    """
     if not os.path.isfile(rules_file):
         return []
 
@@ -141,36 +210,34 @@ def _run_yara_with_index(rules_file, list_path, filestore_dir=None):
     except subprocess.TimeoutExpired:
         print(f'YARA scan timed out for {os.path.basename(rules_file)}')
         return []
-    except (subprocess.CalledProcessError, OSError) as e:
+    except OSError as e:
         print(f'YARA scan error for {os.path.basename(rules_file)}: {e}')
         return []
 
-    return _parse_yara_output(result.stdout, filestore_dir)
+    if result.returncode != 0:
+        # Without this check, a compile/scan failure (corrupted rules file,
+        # incompatible module, bad --scan-list entry) was indistinguishable
+        # from a clean scan that simply found nothing.
+        print(f'YARA scan error for {os.path.basename(rules_file)}: {result.stderr.strip()}')
+        return []
+
+    return _parse_yara_output(result.stdout, filestore_dir, known_paths=known_paths)
 
 
-def _scan_with_indexes(list_path, rules_file, dedup_key_fn, filestore_dir=None):
-    """Run YARA against the unified rule file and return deduplicated matches.
+def _dedup_matches(matches, key_fn):
+    """Deduplicate YARA matches, keeping the first occurrence of each key.
 
-    Args:
-        list_path: Path to the --scan-list file.
-        rules_file: Path to the YARA Forge rules file.
-        dedup_key_fn: Callable(match) -> hashable key for deduplication.
-        filestore_dir: Optional filestore directory for _run_yara_with_index.
-
-    Returns:
-        List of match dicts.
+    key_fn is applied to every match (including duplicates) so callers can
+    also normalize matches as a side effect.
     """
-    all_matches = []
     seen = set()
-
-    matches = _run_yara_with_index(rules_file, list_path, filestore_dir)
+    unique = []
     for m in matches:
-        key = dedup_key_fn(m)
+        key = key_fn(m)
         if key not in seen:
             seen.add(key)
-            all_matches.append(m)
-
-    return all_matches
+            unique.append(m)
+    return unique
 
 
 def run_yara_scan(filestore_dir, rules_file):
@@ -206,10 +273,9 @@ def run_yara_scan(filestore_dir, rules_file):
         list_path = list_file.name
 
     try:
-        return _scan_with_indexes(
-            list_path, rules_file,
-            dedup_key_fn=lambda m: (m['rule_name'], m['sha256']),
-            filestore_dir=filestore_dir
+        return _dedup_matches(
+            _run_yara_with_index(rules_file, list_path, filestore_dir, known_paths=target_files),
+            key_fn=lambda m: (m['rule_name'], m['sha256'])
         )
     finally:
         try:
@@ -218,7 +284,7 @@ def run_yara_scan(filestore_dir, rules_file):
             pass
 
 
-def _parse_yara_output(output, filestore_dir=None):
+def _parse_yara_output(output, filestore_dir=None, known_paths=None):
     """Parse YARA CLI output.
 
     YARA output formats (depending on flags):
@@ -229,19 +295,48 @@ def _parse_yara_output(output, filestore_dir=None):
 
     Tags contain only simple identifiers (no '=').
     Metadata contains key=value pairs.
+
+    known_paths, if provided, is the exact set of file paths --scan-list
+    was given - used to resolve each line's file path by longest-suffix
+    match against that known set, falling back to the last
+    whitespace-delimited token only if nothing matches. The naive
+    last-token split silently truncates any path containing whitespace
+    (e.g. a user-uploaded "My Invoice.pdf"), which matters here since rule
+    names never contain whitespace but arbitrary uploaded filenames do.
     """
+    known_paths_set = set(known_paths or ())
+    sorted_known_paths = sorted(known_paths_set, key=len, reverse=True)
+    # A last-whitespace-token match is only trustworthy on its own when no
+    # longer known path also ends with it - otherwise that longer path is
+    # the correct (and original algorithm's) answer, e.g. known paths "a
+    # b.txt" and "b.txt" both present: the naive last token for "a b.txt"
+    # is "b.txt", which is itself a distinct known path and must not
+    # shadow the real, longer match. Computed once per run (O(known_paths^2)
+    # worst case) rather than doing the full suffix scan on every line.
+    ambiguous_last_tokens = {
+        p for p in known_paths_set
+        if any(len(other) > len(p) and other.endswith(p) for other in known_paths_set)
+    }
     matches = []
     for line in output.strip().split('\n'):
         line = line.strip()
         if not line:
             continue
 
-        # Try to extract file path (last token)
         parts = line.split()
         if len(parts) < 2:
             continue
 
-        file_path = parts[-1]
+        # Fast path: the overwhelming majority of filenames contain no
+        # whitespace, so the last token is already the exact path - an O(1)
+        # set lookup confirms that without scanning every known path. Only
+        # a whitespace-containing filename (split across multiple tokens),
+        # or one whose last token collides with a shorter known path, needs
+        # the O(known_paths) suffix scan below.
+        if parts[-1] in known_paths_set and parts[-1] not in ambiguous_last_tokens:
+            file_path = parts[-1]
+        else:
+            file_path = next((p for p in sorted_known_paths if line.endswith(p)), None) or parts[-1]
         if filestore_dir:
             # Use commonpath to prevent directory traversal via path manipulation
             try:
@@ -386,8 +481,6 @@ def scan_single_file(file_path, rules_file):
         sha1: str
         metadata: dict from file_analyzer.analyze_file
     """
-    import hashlib
-
     if not os.path.isfile(file_path):
         return [], '', '', '', {}
 
@@ -418,7 +511,10 @@ def scan_single_file(file_path, rules_file):
             m['sha256'] = file_sha256
             return (m['rule_name'], file_sha256)
 
-        matches = _scan_with_indexes(list_path, rules_file, dedup_key_fn=dedup_and_fix)
+        matches = _dedup_matches(
+            _run_yara_with_index(rules_file, list_path, known_paths=[file_path]),
+            key_fn=dedup_and_fix
+        )
         return matches, file_sha256, file_md5, file_sha1, metadata
     finally:
         try:

@@ -28,6 +28,7 @@ htmlcov/
 # IDE
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
@@ -49,3 +50,10 @@ package-lock.json
 # (data directories are typically gitignored but the folder structure is created at runtime)
 tmp*.js
 .code-journal.md
+tmp-*
+
+# Local UID/GID for docker-compose.podman.yml (see README's podman compose instructions)
+.env
+
+# mkdocs build output (deployed by .github/workflows/docs.yml, not committed)
+site/
