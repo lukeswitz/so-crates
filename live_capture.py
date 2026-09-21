@@ -21,6 +21,7 @@ import sys
 import time
 
 import config
+import macos_sandbox
 
 # Pseudo-interfaces that never carry ordinary host traffic.
 _EXCLUDED_IFACE_PREFIXES = (
@@ -182,9 +183,10 @@ def capture_support():
 def _packet_count(pcap_path):
     """Packets in pcap_path per tcpdump's own reader, or None if unreadable."""
     try:
-        proc = subprocess.run(['tcpdump', '-r', pcap_path, '-nn'],
-                              capture_output=True, text=True,
-                              timeout=config.FILE_COMMAND_TIMEOUT)
+        proc = subprocess.run(
+            macos_sandbox.confine(['tcpdump', '-r', pcap_path, '-nn'], read=[pcap_path]),
+            capture_output=True, text=True,
+            timeout=config.FILE_COMMAND_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return None
     if proc.returncode != 0:

@@ -5,16 +5,21 @@ Requires: pip install -r requirements-screenshots.txt, plus a one-time
 `playwright install ffmpeg` (Playwright's video muxing needs its own bundled
 ffmpeg, separate from any system ffmpeg). Also needs a running server
 (default http://127.0.0.1:8000/socrates.html - override with --base-url).
-Uses the app's own built-in "Sample pcap file" (DEFAULT_SAMPLE_URL in
-static/socrates.js), same as scripts/capture_screenshots.py, so it needs no
-pre-existing local analysis or hardcoded MD5 - it works on a clean checkout
-with an empty DATA_DIR. Pointing the server's DATA_DIR at one that's already
-analyzed that same sample skips straight to the "ready" response (see
-_commit_file_or_return_ready in socrates.py) instead of re-running Suricata/
-Sigma/YARA, and is also the only way to get real Playbook/AI Summary
-content in the recording, since playbook_lookup.py/ai_summary_lookup.py
-read from PLAYBOOKS_DIR//usr/share/playbooks and AI_SUMMARIES_DIR//usr/
-share/ai-summaries (Docker-image-baked, not part of DATA_DIR).
+Uses the app's own default "Sample pcap file" (DEFAULT_SAMPLE_URL in
+static/socrates.js - a one-click convenience link to an external pcap on
+malware-traffic-analysis.net, not something bundled with the app), same as
+scripts/capture_screenshots.py, so it needs no pre-existing local analysis
+or hardcoded MD5 - it works on a clean checkout with an empty DATA_DIR.
+Before recording starts, main() pre-warms that exact sample via a plain
+/api/load-url POST (see _prewarm_sample_analysis) and blocks until it's
+ready - so the recorded click hits _commit_file_or_return_ready's dedup
+fast path (see socrates.py) instead of waiting through a real Suricata/
+YARA/Sigma run on camera. Running against a container's fresh volume (see
+AGENTS.md's Release Checklist) is also the only way to get real Playbook/
+AI Summary content in the recording, since playbook_lookup.py/
+ai_summary_lookup.py read from PLAYBOOKS_DIR//usr/share/playbooks and
+AI_SUMMARIES_DIR//usr/share/ai-summaries (Docker-image-baked, not part of
+DATA_DIR).
 
 Each caption() call can optionally take a target (a Playwright Locator) -
 see point_to()/DRAW_ARROW_JS - which draws an amber arrow from the caption
@@ -45,10 +50,14 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 
 from playwright.async_api import async_playwright
 
@@ -56,7 +65,19 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MP4_OUTPUT = os.path.join(REPO_ROOT, 'docs', 'videos', 'demo.mp4')
 WEBM_FALLBACK_OUTPUT = os.path.join(REPO_ROOT, 'docs', 'videos', 'demo.webm')
 POSTER_OUTPUT = os.path.join(REPO_ROOT, 'docs', 'videos', 'demo-poster.jpg')
-POSTER_TIMESTAMP_SECONDS = 62  # lands on the full merged All Events Sankey diagram, pointer arrow included
+POSTER_TIMESTAMP_SECONDS = 80  # lands on the full merged All Events Sankey diagram, pointer arrow included - re-tune this if the recorded workflow's timing shifts (e.g. steps added/removed/re-ordered)
+# Playwright's raw recording's very first frame can be captured before the
+# page has fully painted into the configured viewport - observed as a
+# corrupted frame 0 showing only a small upper-left region of real content
+# against an otherwise flat grey canvas, gone by the very next frame. Only
+# matters for demo.mp4 itself (not docs/index.md's <video> embed, which
+# uses POSTER_OUTPUT as its poster and never shows frame 0 at all) - but a
+# viewer who downloads/re-uploads demo.mp4 directly (e.g. to social media)
+# is at the mercy of whatever thumbnail that platform extracts from the
+# file's own first frame. Trimmed off the front of the published MP4 here
+# rather than relying on a manual release-checklist step to catch it by
+# hand each time.
+MP4_TRIM_START_SECONDS = 0.15
 VIEWPORT = {'width': 1920, 'height': 1400}
 
 # Solid on-brand blue (not translucent black) - a black/near-black caption
@@ -167,6 +188,16 @@ CAPTION_REMOVE_JS = ("() => { "
 # it already exists.
 CAPTION_INIT_JS_TEMPLATE = """
 (() => {
+    // page.add_init_script() runs in every frame, not just the top-level
+    // page - including the Themes modal's own #themePreviewFrame iframe
+    // (a real, separately-navigated document). Without this guard, that
+    // iframe gets its own "Welcome..." caption baked in at its own first
+    // paint, which nothing ever updates afterward (every caption()/point_to()
+    // call in this script only evaluates against the top-level `page`) - it
+    // would sit there frozen, visible any time the live theme preview shows
+    // through the modal later in the recording, long after the real
+    // top-level caption has moved on to something else entirely.
+    if (window.self !== window.top) return;
     function tryInit() {
         if (!document.documentElement) { setTimeout(tryInit, 0); return; }
         const el = document.createElement('div');
@@ -232,7 +263,66 @@ async def clear_pointer(page):
     await page.evaluate(REMOVE_ARROW_JS)
 
 
+def _default_sample_url():
+    """Read DEFAULT_SAMPLE_URL straight from static/socrates.js rather than
+    hardcoding a second copy here - a second copy would silently drift out
+    of sync with the real one if it ever changed, quietly pre-warming the
+    wrong sample (or none at all) while the recorded click below still
+    requests whatever the frontend's own constant actually says."""
+    js_path = os.path.join(REPO_ROOT, 'static', 'socrates.js')
+    with open(js_path, 'r') as f:
+        content = f.read()
+    match = re.search(r"const DEFAULT_SAMPLE_URL = '([^']+)'", content)
+    if not match:
+        raise RuntimeError('Could not find DEFAULT_SAMPLE_URL in static/socrates.js')
+    return match.group(1)
+
+
+def _prewarm_sample_analysis(base_url):
+    """Trigger the same /api/load-url request the recorded 'Sample pcap
+    file' click below will make, and block until Suricata/YARA/Sigma
+    finish, before recording starts - so that click hits
+    _commit_file_or_return_ready's dedup fast path (see socrates.py) and
+    resolves in a second or two instead of however long the real analysis
+    takes (real repro: several visible seconds of "Downloading file..."/
+    analysis-in-progress spinner in the recorded video, dominated by
+    Suricata parsing the sample and loading the full ruleset, not the
+    small pcap's own download time). The download itself still happens
+    twice - this request downloads the sample as a real prerequisite, and
+    the recorded click downloads it again, since _fetch_url_safely has no
+    cache - but a several-hundred-KB pcap download is fast; it's the
+    Suricata/YARA/Sigma run this actually saves.
+
+    Plain urllib, not Playwright - this must run before the recorded
+    browser context is even created (see main() below), so none of it
+    shows up in the video."""
+    origin = base_url.rsplit('/socrates.html', 1)[0]
+    sample_url = _default_sample_url()
+    body = json.dumps({'url': sample_url}).encode('utf-8')
+    req = urllib.request.Request(
+        origin + '/api/load-url', data=body,
+        headers={'Content-Type': 'application/json'}, method='POST')
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        result = json.loads(resp.read())
+    if result.get('status') == 'error':
+        raise RuntimeError(f"Pre-warm failed: {result.get('error')}")
+    md5 = result['md5']
+    print(f'Pre-warming sample analysis (md5={md5})...')
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        with urllib.request.urlopen(origin + '/api/status?md5=' + md5, timeout=10) as resp:
+            status = json.loads(resp.read())
+        if status.get('status') == 'ready':
+            print('Pre-warm complete - the recorded run will hit the dedup fast path.')
+            return
+        if status.get('status') == 'error':
+            raise RuntimeError(f"Pre-warm analysis failed: {status.get('message')}")
+        time.sleep(1)
+    raise RuntimeError('Pre-warm timed out waiting for analysis to become ready')
+
+
 async def main(base_url):
+    _prewarm_sample_analysis(base_url)
     os.makedirs(os.path.dirname(MP4_OUTPUT), exist_ok=True)
     tmp_video_dir = tempfile.mkdtemp(prefix='so-crates-demo-video-')
 
@@ -252,6 +342,7 @@ async def main(base_url):
         # Show the intro caption from the very first paint of the new
         # document, over the real page as it loads in behind it.
         welcome_caption = ("Welcome to the SO-CRATES recorded demo!\n\n"
+                           "https://so-crates.org\n\n"
                            "When you first connect to SO-CRATES, you'll be greeted by a welcome "
                            "window that gives you an overview of what you can do with SO-CRATES.")
         caption_init_script = CAPTION_INIT_JS_TEMPLATE.replace(
@@ -273,7 +364,7 @@ async def main(base_url):
 
         # Select the sample pcap file
         sample_card = page.locator(".sample-card:has-text('Sample pcap file')")
-        await caption(page, "Selecting the built-in sample pcap file", sample_card)
+        await caption(page, "Selecting the default sample pcap file", sample_card)
         await page.wait_for_timeout(2200)
         await sample_card.click()
         await page.wait_for_selector('#statsGrid .stat-card', timeout=60000)
@@ -351,7 +442,7 @@ async def main(base_url):
                     # extra wait needed before the caption itself, but the
                     # arrow still waits for the row to confirm visible before
                     # pointing, same defensive shape as the Playbook arrow.
-                    await caption(page, "SO-CRATES also shows an AI-generated summary "
+                    await caption(page, "SO-CRATES shows an AI-generated summary "
                                         "of what this rule detects")
                     ai_summary_label = page.locator(
                         '.detail-row.visible .detail-label', has_text='AI Summary'
@@ -381,26 +472,81 @@ async def main(base_url):
                     await alert_row.locator('.timestamp').click()
                     await page.wait_for_timeout(400)
 
+                    # Acknowledge this same alert to show how noisy,
+                    # already-triaged signatures can be cleared out of
+                    # view - re-open the pivot menu on the same row and
+                    # commit "Acknowledge this alert".
+                    await value_cell.click()
+                    await page.wait_for_timeout(700)
+                    acknowledge_btn = page.locator('[data-pivot-action="acknowledge"]')
+                    await caption(page, 'Acknowledging this alert removes it from view - '
+                                        'useful for noisy, already-triaged signatures', acknowledge_btn)
+                    await page.wait_for_timeout(2400)
+                    await acknowledge_btn.click()
+                    await page.wait_for_timeout(2000)  # refreshAnalysisData()'s own re-fetch/re-render
+
+                    # Acknowledged rows only reappear in the new
+                    # Acknowledged Alerts tab, for review or undo.
+                    acknowledged_card = page.locator(".stat-card:has-text('Acknowledged Alerts')").first
+                    if await acknowledged_card.count() > 0:
+                        await caption(page, "Acknowledged alerts move to their own "
+                                            "Acknowledged Alerts tab", acknowledged_card)
+                        await page.wait_for_timeout(2200)
+                        await acknowledged_card.click()
+                        await page.wait_for_timeout(1500)
+
+                        acknowledged_row = page.locator(
+                            '.section:not(.section-hidden):not(.agg-section) table tbody tr:not(.detail-row)'
+                        ).first
+                        if await acknowledged_row.count() > 0:
+                            await acknowledged_row.scroll_into_view_if_needed()
+                            ack_value_cell = acknowledged_row.locator('.mono-fixed').first
+                            await caption(page, "Un-acknowledging brings it right back", ack_value_cell)
+                            await page.wait_for_timeout(2200)
+                            await ack_value_cell.click()
+                            await page.wait_for_timeout(700)
+                            unacknowledge_btn = page.locator('[data-pivot-action="unacknowledge"]')
+                            await unacknowledge_btn.click()
+                            # Un-acknowledging the only acknowledged row
+                            # switches back to Network Alerts automatically
+                            # (see refreshAnalysisData in static/socrates.js)
+                            # - no explicit tab click needed here.
+                            await page.wait_for_timeout(2200)
+
         # All Events
         all_events_card = page.locator(".stat-card:has-text('All Events')").first
         await all_events_card.click()
         await caption(page, "Switching to the merged All Events view", all_events_card)
         await page.wait_for_timeout(2800)
 
-        # Collapse the Sankey Diagram so the Aggregation Tables and Data
-        # Table have room to show, now that we're ready to expand them.
+        # Collapse the Sankey Diagram via the keyboard, not a click - Down
+        # selects the toggle bar (getVerticalNavItems in static/socrates.js)
+        # and Enter activates it exactly like a click would
+        # (activateKeyboardSelection's plain verticalNavSelection.click()
+        # fallback for anything that isn't a data row/filter chip/previous-
+        # analysis row) - so the Aggregation Tables and Data Table have room
+        # to show, now that we're ready to expand them.
+        selected = page.locator('.keyboard-selected')
         sankey_toggle = page.locator('.section-toggle-bar', has_text='Sankey Diagram').first
         if await sankey_toggle.count() > 0:
-            await caption(page, "Collapsing the Sankey Diagram to make room to see the Data Table", sankey_toggle)
+            await page.keyboard.press('ArrowDown')
+            await page.wait_for_timeout(500)
+            await caption(page, "Arrow keys navigate the whole page too - Down selects the "
+                                "Sankey Diagram toggle, Enter collapses it to make room for "
+                                "the Data Table", selected)
             await page.wait_for_timeout(3800)
-            await sankey_toggle.click()
+            await page.keyboard.press('Enter')
             await page.wait_for_timeout(1400)
 
-        # Expand Aggregation Tables
-        agg_toggle = page.locator('.section-toggle-bar', has_text='Aggregation Tables').first
-        await agg_toggle.click()
-        await caption(page, "Expanding Aggregation Tables", agg_toggle)
+        # Expand Aggregation Tables the same way - Down moves to the next
+        # toggle bar, Enter expands it.
+        await page.keyboard.press('ArrowDown')
+        await page.wait_for_timeout(500)
+        await caption(page, "Down again, Enter again - expanding Aggregation Tables", selected)
         await page.wait_for_timeout(2800)
+        await page.keyboard.press('Enter')
+        await page.wait_for_timeout(600)
+        await clear_pointer(page)
 
         # Clicking an aggregation value now opens the pivot menu (Include/
         # Exclude/Only/Hunt/...) rather than applying a filter directly -
@@ -410,6 +556,21 @@ async def main(base_url):
         detail_value_row = page.locator(
             ".agg-row:has-text('STOR PW_tyler-DESKTOP-W7F98GR_2026_02_03_16_13_59.html')"
         ).first
+        # The Detail table pages 10 values at a time (deterministically
+        # ordered by count desc, then value - see db.py's aggregation
+        # tie-break), and this count-1 value sorts behind the digit-prefixed
+        # FTP responses, landing on page 2. Page the Detail table forward
+        # until the row is present rather than assuming page 1.
+        for _ in range(5):
+            if await detail_value_row.count() > 0:
+                break
+            next_btn = page.locator(
+                ".agg-table:has(.agg-header:has-text('Detail')) .agg-page-btn:has-text('Next')"
+            ).first
+            if await next_btn.count() == 0 or not await next_btn.is_enabled():
+                break
+            await next_btn.click()
+            await page.wait_for_timeout(900)
         await detail_value_row.scroll_into_view_if_needed()
         await caption(page, "Clicking a Detail value to filter down to a single matching event", detail_value_row)
         await page.wait_for_timeout(4200)
@@ -477,6 +638,57 @@ async def main(base_url):
             await page.wait_for_timeout(750)
         await page.wait_for_timeout(1500)
 
+        # Command Palette - typing any letter/digit outside a text field
+        # (isNavigableKeyContext/isAutocompleteTriggerKey in
+        # static/socrates.js) opens a searchable list of commands, themes,
+        # and data-type tabs. Closes out the tour with the newest
+        # keyboard-first way to drive the whole app. Scrolled back to the
+        # top first so the palette (a centered overlay) isn't shown against
+        # whatever mid-scroll hexdump content the previous step left behind.
+        await page.evaluate("window.scrollTo(0, 0)")
+        await page.wait_for_timeout(600)
+        await caption(page, "SO-CRATES also has a command palette - just "
+                            "start typing anywhere outside a text field")
+        await page.wait_for_timeout(2800)
+        # page.keyboard.type() sends real keydown events - the first one
+        # (isAutocompleteTriggerKey) opens the palette and seeds its input
+        # with that character (openAutocompleteModal), so every character
+        # after it lands as a normal keystroke in the now-focused input.
+        await page.keyboard.type('e', delay=150)
+        await page.wait_for_timeout(500)
+        palette_results = page.locator('#autocompleteResults')
+        await caption(page, 'Matching isn\'t limited to the start of a word - even a bare '
+                            'fragment like "eme" finds "Themes" and every individual theme '
+                            'by name', palette_results)
+        await page.keyboard.type('me', delay=150)
+        await page.wait_for_timeout(2800)
+        # "eme" now matches dozens of commands (see autocompleteMatchScore's
+        # own comment in static/socrates.js: every per-theme command's code
+        # deliberately ends in " theme" so a "theme" fragment surfaces them
+        # all) - Enter alone no longer commits with that many candidates
+        # still ambiguous (activateAutocompleteSelection requires exactly
+        # one match, or an explicit arrow-key selection first). "Themes"
+        # itself sorts first among the tied score-0 matches (stable sort
+        # preserves AUTOCOMPLETE_COMMANDS's own order, and "Themes" is
+        # declared before the generated per-theme entries), so one ArrowDown
+        # highlights it.
+        await page.keyboard.press('ArrowDown')
+        await page.wait_for_timeout(800)
+        await caption(page, 'Arrow keys highlight a result - Down lands on "Themes", '
+                            'first among the matches', palette_results)
+        await page.wait_for_timeout(1800)
+        await page.keyboard.press('Enter')
+        await page.wait_for_timeout(1000)
+        themes_modal = page.locator('#themesModal.active .modal-content')
+        await caption(page, "Enter commits the highlighted command immediately - "
+                            "here, opening the Themes modal", themes_modal)
+        await page.wait_for_timeout(4000)
+
+        # No target - the final sign-off caption describes nothing on
+        # screen in particular.
+        await caption(page, "Thanks for watching!\n\nhttps://so-crates.org")
+        await page.wait_for_timeout(4000)
+
         await page.evaluate(CAPTION_REMOVE_JS)
         await page.wait_for_timeout(1000)
 
@@ -507,8 +719,14 @@ async def main(base_url):
         # is UI content with crisp text, not natural video, so a deband
         # filter was deliberately not used instead - it would soften the
         # exact text edges crf 18 already keeps sharp.
+        # -ss placed after -i (output-seeking, not input-seeking) for
+        # frame-accurate trimming rather than snapping to the nearest
+        # keyframe - see MP4_TRIM_START_SECONDS's own comment for why this
+        # trim exists. No extra decode cost from output-seeking here since
+        # this is already a full re-encode (-c:v libx264), not a stream
+        # copy, so every frame gets decoded regardless of where -ss sits.
         subprocess.run(
-            [ffmpeg_path, '-y', '-i', raw_webm_path,
+            [ffmpeg_path, '-y', '-i', raw_webm_path, '-ss', str(MP4_TRIM_START_SECONDS),
              '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'slow', '-crf', '18',
              '-movflags', '+faststart', MP4_OUTPUT],
             check=True, capture_output=True,

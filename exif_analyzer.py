@@ -10,6 +10,7 @@ import json
 import subprocess
 
 import config
+import macos_sandbox
 
 # MIME type patterns that warrant ExifTool analysis
 EXIFTOOL_MIME_PATTERNS = (
@@ -155,10 +156,15 @@ def extract_exif(file_path, mime_type=''):
 
     try:
         result = subprocess.run(
-            ['exiftool', '-j', file_path],
+            macos_sandbox.confine(['exiftool', '-j', file_path], read=[file_path]),
             capture_output=True, text=True, timeout=config.FILE_COMMAND_TIMEOUT
         )
-    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as e:
+    except (OSError, subprocess.TimeoutExpired) as e:
+        # OSError (not just the FileNotFoundError/PermissionError subset)
+        # so a launch failure like ENOMEM/ENOSPC/"Text file busy" degrades
+        # the same way those two already did, consistent with how
+        # yara_analyzer/sigma_analyzer handle the equivalent-risk case of
+        # invoking an external CLI tool.
         print(f'Warning: ExifTool failed for {file_path}: {e}')
         return {}
 

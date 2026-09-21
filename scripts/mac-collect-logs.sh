@@ -1,6 +1,9 @@
 #!/bin/sh
 # Collect macOS Endpoint Security telemetry for SO-CRATES Sigma analysis.
 set -e
+# Endpoint Security records carry command lines, usernames and paths - 0600 so
+# no other local user can read the capture.
+umask 077
 
 ESLOGGER="${SOCRATES_ESLOGGER:-/usr/bin/eslogger}"
 

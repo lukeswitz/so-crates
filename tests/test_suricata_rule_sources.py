@@ -571,6 +571,55 @@ class TestSeedActiveFromLibrary(unittest.TestCase):
             shutil.rmtree(gz_dir, ignore_errors=True)
 
 
+class TestDefaultRulePathRewrite(unittest.TestCase):
+    """F3 regression: setup_suricata_config() must point default-rule-path at
+    $DATA_DIR/suricata/rules. The old substring .replace() matched inside the
+    Homebrew base path /opt/homebrew/var/lib/suricata/rules and stranded the
+    /opt/homebrew prefix, so native macOS loaded ZERO rules (silently)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.suricata_dir = os.path.join(self.tmpdir, 'suricata')
+        os.makedirs(os.path.join(self.suricata_dir, 'rules'), exist_ok=True)
+        self.cfg = os.path.join(self.suricata_dir, 'suricata.yaml')
+        self.expected = os.path.join(self.suricata_dir, 'rules')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _rule_path_after_setup(self, seeded_value):
+        with open(self.cfg, 'w') as f:
+            f.write(f'default-rule-path: {seeded_value}\n')
+        suricata_analyzer.setup_suricata_config(self.tmpdir, network_allowed=False)
+        with open(self.cfg) as f:
+            for line in f:
+                if line.startswith('default-rule-path:'):
+                    return line.split(':', 1)[1].strip()
+        return None
+
+    def test_apple_silicon_base_not_stranded(self):
+        self.assertEqual(
+            self._rule_path_after_setup('/opt/homebrew/var/lib/suricata/rules'),
+            self.expected)
+
+    def test_intel_base_not_stranded(self):
+        self.assertEqual(
+            self._rule_path_after_setup('/usr/local/var/lib/suricata/rules'),
+            self.expected)
+
+    def test_linux_base(self):
+        self.assertEqual(
+            self._rule_path_after_setup('/var/lib/suricata/rules'),
+            self.expected)
+
+    def test_already_corrupted_config_self_heals(self):
+        """A persisted config already carrying the stranded-prefix path must
+        recover on the next setup call, not stay broken forever."""
+        self.assertEqual(
+            self._rule_path_after_setup('/opt/homebrew' + self.expected),
+            self.expected)
+
+
 class TestSetupSuricataConfigEnabledSources(unittest.TestCase):
     """setup_suricata_config()'s enabled_sources kwarg triggers
     reconciliation regardless of network reachability (unlike the old

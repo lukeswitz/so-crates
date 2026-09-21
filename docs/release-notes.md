@@ -1,5 +1,373 @@
 # Release Notes
 
+## 4.2.0
+
+### DNS Heuristics fixes
+
+The DNS Heuristics card now always matches its own tab: it no longer
+shows a count left over from a previously viewed analysis, and no longer
+stays missing until a page reload when you open an analysis that's still
+processing. It also flags far fewer false positives - common
+update/telemetry domains (Microsoft, Google, Apple, Mozilla), Akamai CDN
+names, and long-but-ordinary subdomains no longer score as suspicious.
+
+### UX and accessibility
+
+- Uploading a too-large file now tells you the size limit and where to
+  raise it, instead of a cryptic server error
+- Important warnings stay on screen until dismissed, other toasts last
+  longer, and the analysis-timeout message notes the analysis may still
+  finish in the background - check Previous Analyses
+- In the Rules modal, clicking Update right after "Revert to Default"
+  works on the first click
+- Aggregation tables page consistently when values have tied counts
+- The keyboard now reaches everything: sample cards and the drop zone
+  respond to Tab and Enter/Space, theme tiles preview on focus, and
+  confirmation dialogs place focus sensibly
+- The Security Onion comparison fits a 1080p display without scrolling
+
+### Security hardening
+
+This release hardens SO-CRATES against malicious websites attacking your
+local instance from inside your browser, plus several smaller
+server-side issues found in a full security review. Most of it is
+invisible, but three changes might affect you:
+
+- Serving SO-CRATES behind a reverse proxy or a cloud hostname (e.g.
+  Killercoda) now requires the new `ALLOWED_HOSTS` environment variable,
+  e.g. `-e ALLOWED_HOSTS='*.killercoda.com'` - browsing by IP or
+  localhost needs nothing, and the error page tells you exactly what to
+  set
+- The Docker/Podman compose files now publish the port on localhost
+  only; to allow other machines on your network, change the port mapping
+  back to `"8000:8000"`
+- Scripts calling the JSON API must send `Content-Type: application/json`
+
+See the [Security](security.md) page for the full picture.
+
+### Documentation and website
+
+so-crates.org has a brand-new landing page - demo video, screenshot
+tour, and a live theme chooser using the app's own palettes. The Usage
+guide is reorganized into focused sub-pages (analyzing files, exploring
+results, filtering and drill-down, keyboard and menus), the Themes
+gallery loads much faster, and the docs went through a full accuracy
+review against the code.
+
+## 4.1.0
+
+### DNS Heuristics
+
+A new **DNS Heuristics** tab groups every DNS query in the capture by
+registrable domain and flags the ones that look like DNS tunneling or DGA
+(Domain Generation Algorithm) malware, sitting right before DNS Queries
+whenever anything trips a flag. Five independent signals feed a 0-100
+score: a high-entropy subdomain prefix under an otherwise ordinary parent
+domain (the classic tunneling shape); a high-entropy, low-vowel-ratio
+registrable domain itself (the DGA shape - vowel ratio, not entropy
+alone, is what actually separates a random-looking-but-real word mashup
+like `furtheringthemagic.com` from genuine DGA output, which lands at
+nearly identical raw entropy); 15 or more distinct subdomains queried
+under the same parent (fan-out, not just repeated lookups of the same
+name); an unusually long query name or label; and TXT/NULL record types,
+more associated with tunneling/exfil tooling than ordinary browsing.
+Known CDN suffixes are allowlisted out before scoring to cut noise.
+Clicking a flagged domain searches for it and jumps straight to DNS
+Queries to see the underlying events. A collapsible "About DNS
+Heuristics" info card explains the scoring up front, since this tab
+behaves nothing like any other data-type tab - rows are aggregated
+per-domain rather than raw events, and clicking one navigates away
+rather than expanding a detail panel in place.
+
+### Community ID correlation and TLS fingerprinting
+
+Suricata's `community-id` output is now force-enabled on every analysis
+(it ships off by default) - a single deterministic `community_id` field
+on flow/alert records that lets SO-CRATES's output correlate against
+Zeek and other community-id-aware tools without anyone needing to
+discover the setting exists. A new **Correlate** entry in the pivot
+menu puts that to use directly: click any field on a row that has a
+community ID and Correlate searches for every other log across the
+whole capture sharing that same flow, network protocol events and
+alerts alike. It's suppressed when the clicked value already *is* the
+community ID itself, since Hunt right above it already does the exact
+same whole-analysis search in that case. JA3/JA3S/JA4 TLS
+client/server fingerprinting is force-enabled the same way - Suricata
+only computes these when an active rule's signature keyword happens to
+require them, so without this the fields were silently absent from
+`tls` events whenever none of the currently-enabled curated rule
+sources referenced ja3/ja4. All three now show up as their own rows in
+a TLS row's detail panel whenever present.
+
+### Keyboard navigation refinements
+
+Several real gaps surfaced through actual use of 4.0.0's keyboard
+navigation, all fixed now. With a multi-row stat-card grid, Right/Down
+tracking follows whichever card is actually under the keyboard ring
+instead of always snapping back to the active tab's own column - Right
+into a different column, then Down, now continues straight down that
+column instead of jumping back to the original one. The filter bar's
+chips and Clear All button are a single Left/Right-cycled horizontal
+group now instead of separate Down/Up stops, so Down from a chip goes
+straight to the data-type cards rather than stepping through Clear All
+first. Opening a fresh analysis, applying a filter, or performing a
+search now seeds keyboard focus on the resulting position (the default
+tab's card, or the new filter chip) instead of requiring an extra,
+wasted first arrow press to "arrive" there - a typed search's own chip
+gets a visible ring immediately, matching how a deliberate action should
+read, while a passive rebuild (an acknowledge action, a query-limit
+change) seeds the same starting position invisibly. Clearing filters
+returns focus to the first data-type card once none remain, or stays on
+whatever chip is left after a partial clear. Log analysis and
+binary/file analysis now get all of the above too - they'd never gotten
+the same fresh-load seeding PCAP analysis had, and log analysis
+specifically had its own separate bug where a stat card could end up
+with no tab-active card at all whenever Sigma alerts were absent (the
+common case), silently breaking Down/Up navigation on the grid entirely.
+
+### Pivot menu: Include/Exclude/Only inside expanded rows
+
+A field clicked inside an expanded row's detail panel now gets the same
+Include/Exclude/Only menu a table-cell click on the identical
+underlying data already did, for far more fields than before. Most
+detail-panel labels are more descriptive prose than the terse column
+header a table cell uses for the same field (DNS's "Query Name" vs. the
+column "Query", HTTP's "User Agent" vs. "User-Agent", and a dozen more
+like it across other event types) - a verified label-to-column mapping
+now bridges the gap. Log analysis had its own, more pervasive version of
+the same mismatch: every detail field is labeled with the raw underlying
+JSON field name (e.g. "CommandLine"), not the human column label
+("Command Line") table headers use - now converted automatically. A
+Sigma alert's own "Matched Event" section goes further still, since none
+of its fields (e.g. Computer) have a fixed column at all - filtering on
+them now works via the same generic field lookup the underlying log
+extraction logic already supported internally, without guessing which
+fields are actually safe to allow through.
+
+### Aggregation Tables: pagination, page size, and keyboard navigation
+
+Aggregation Tables used to show only the top 10 values per column with no
+way to see more. Each table now pages through its values with Prev/Next
+controls instead of growing the page - so a table full of long,
+variable-width values (a DNS query column, say) never reflows the surrounding
+layout or shifts a Next button out from under your cursor as you click
+through it. An "Items per page" selector (10/25/50/100) applies to every
+table in the currently-open section at once and persists across
+sessions, matching how theme/collapse-state preferences already do.
+Pagination is keyboard-driven too: Left/Right jumps directly to a
+different table instead of stepping through every row to reach it; Down
+walks a table's own rows and, once it reaches the last one, its Prev/Next
+stop, then continues into the next *visual row* of tables (not just the
+next table in source order, which for a multi-column layout is usually a
+same-row sibling reachable via Left/Right instead) or the Data Table if
+there isn't one - Up retraces the same path in reverse, all the way back
+out through the Data Table if you page past the top. Left/Right toggles
+between Prev and Next once you've arrived at that stop, and Enter
+activates whichever one is highlighted without losing keyboard focus
+afterward.
+
+### Fixed while preparing this release
+
+- The command palette's "Open X"/"Go to Y" entries (Themes, Rules,
+  Settings, Notes, every data-type tab, Search) were trimmed to just
+  their target name, matching how every other entry already read -
+  "Go to Search bar" in particular shortened to just "Search".
+- A stray keyboard-selection ring could be left behind on a stat card
+  after a plain mouse click switched to a different tab, since nothing
+  previously cleared it outside the keyboard-driven navigation paths -
+  now cleared as part of the click itself.
+- Typing a theme's name into the command palette (e.g. `ethereal`)
+  matched the theme by name but not by "theme" itself, since only the
+  bare name was searchable text.
+
+## 4.0.0
+
+### Acknowledge alerts
+
+A noisy analysis - the same benign Suricata or Sigma signature firing
+hundreds of times - used to have no way to mark it "seen, not
+interesting" short of scrolling past it forever. The pivot menu on any
+Network Alert or Sigma Alert row now offers **Acknowledge this alert**
+and **Acknowledge all instances of this alert**: acknowledging removes
+the row from every view immediately (Network Alerts/Sigma Alerts, All
+Events, the Sankey diagram, and every count), not just a dimmed row
+still sitting in the list. A new **Acknowledged Alerts** stat-card tab
+is the only place they still show, for review or undo via
+**Un-acknowledge this alert** - grouped under separate Network Alerts
+and Sigma Alerts sub-sections when both have acknowledged rows, or
+displayed as a single sortable table (identical to that type's own tab)
+when only one does. Un-acknowledging the last remaining row switches
+back to Network Alerts automatically. Acknowledging is scoped to the
+current analysis only and persists in that analysis's own database, the
+same as a row note.
+
+### Full keyboard navigation
+
+Arrow keys now drive navigation across the whole app instead of just
+scrolling the page. On the welcome screen, Left/Right moves between the
+sample-file cards and Up/Down moves between rows in Previous Analyses; on
+an analysis page, Left/Right switches stat-card tabs and Up/Down moves
+through the visible data table's rows (including a binary/YARA analysis,
+whose table renders with no `.section` wrapper around it, unlike every
+pcap/log tab). Enter activates whatever's currently highlighted - opens a
+sample, jumps to a previous analysis, or expands/collapses a table row,
+the same as clicking it. Escape returns to the welcome screen from
+anywhere, closing one thing at a time (a modal, the gear menu, a pivot
+menu) before it ever leaves the current analysis.
+
+The Themes modal gets its own arrow-key grid navigation: all four arrows
+move a highlight through the tile grid and call the same live-preview
+hover uses on every move, Up/Down jump by a real detected row (read back
+from the grid's own `getComputedStyle`, not a hardcoded column count) so
+they behave like Up/Down instead of Left/Right, and the first press
+starts relative to whichever theme is currently active rather than always
+restarting from a corner of the grid.
+
+On an analysis page, keyboard reach now extends past the stat-card tabs
+and data table: the Sankey Diagram and Aggregation Tables section headers
+can be expanded/collapsed with Enter and stay selected afterward, so
+collapsing one back down after looking at something inside it means
+arrowing straight back to it rather than re-navigating from the top.
+Up/Down can also move onto aggregation table values, filter bar chips,
+and everything inside an expanded row's detail panel - Add Note, ASCII
+Transcript, Hexdump, Download PCAP, Expand All/Collapse All, and
+individual packets. Left/Right stays scoped to the stat-card tabs until
+Up/Down is pressed at least once, at which point it becomes
+context-sensitive to whichever section is currently selected instead -
+cycling ASCII Transcript/Hexdump/Download PCAP as one group, or Expand
+All/Collapse All as another, rather than always jumping stat-card tabs.
+Escape now closes an open pivot menu without also leaving the whole
+analysis, and arrow-key selection scrolling accounts for the fixed
+header and footer instead of occasionally landing a selection underneath
+one of them.
+
+Since theme-cycling used to be bound to the `t` key - colliding with
+typing several of the app's own theme cheat codes (`retro`, `digit` both
+contain a `t`) - it moved first to the arrow keys, then to `<`/`>` once
+arrow keys took on real in-app navigation duties instead.
+
+### Command Palette
+
+Typing any letter or digit outside a text field now opens a command
+palette pre-filled with what was typed, replacing the old theme
+cheat-code shortcuts entirely - keep typing to narrow the list, Up/Down
+to highlight a candidate, Enter to commit it, Escape to cancel without
+doing anything. A query matches anywhere in a candidate, not just its
+very first word - typing `alerts` finds both Network Alerts and File
+Alerts, `blue` finds every Fun theme with "Blue" in its name, and even a
+bare mid-word fragment like `eme` finds Open Themes. A match at the very
+start ranks above a word-boundary match, which ranks above a bare
+mid-word match, so a short, precise query never gets buried under
+mid-word noise. It matches every theme's own name (switching to it
+directly, same as picking it
+from the Themes modal), every data-type stat-card tab currently on
+screen, and a long list of shortcuts that used to require the gear menu
+or a page reload: `help`, `about`, `themes`, `rules`, `settings`,
+`notes`, `delete`, `re-analyze`, `search`, `clear`, `sankey`,
+`aggregation`, `advanced features`, `documentation`, `security onion`,
+`github repo`, `pcap samples`, `log samples`, `binary samples`,
+`upload`, `import`, `previous analyses`, `copy md5 hash to clipboard`,
+and `rename analysis`. The Themes modal keeps its own separate, lighter
+type-ahead - typing a theme's name there jumps the grid highlight
+straight to it without opening the palette at all, the same native
+`<select>`-style convention the grid's own arrow-key navigation already
+uses.
+
+### A cleaner main screen
+
+Re-analyze and Delete moved off the welcome screen's Previous Analyses
+list entirely, onto the analysis page header next to the existing Notes
+icon - a row on the main screen now shows just its name and, when
+present, a notes indicator. Delete All moved out of the welcome screen
+too, into a new Danger Zone section in Settings, which fetches a live
+count of previous analyses on every open rather than relying on a count
+handed in from an already-rendered list. Hacker theme's delete-related
+controls (the header delete icon, Delete All) no longer force themselves
+green to avoid clashing with the theme's monochrome CRT look - now that
+neither one sits inline in a scrolling list of other rows, they just use
+the theme's own red danger color like every other danger control does.
+
+### Every file in a ZIP gets analyzed, not just the first one
+
+Uploading (or loading from a URL) a `.zip` containing more than one
+supported file used to only ever analyze the first one found, silently
+dropping the rest - a real gap for sites like
+malware-traffic-analysis.net, which regularly ship ZIPs with two or more
+pcaps for a single incident. Every supported file extracted from a ZIP
+is now analyzed independently: each pcap gets its own network analysis,
+and each log/binary file gets its own log or file analysis, all in
+parallel. A byte-identical duplicate within the same ZIP is only
+analyzed once. Loading the ZIP still opens straight into the first file
+found, same as before, with a toast linking to Previous Analyses for
+anything else that was also analyzed alongside it - and, for a file that
+genuinely couldn't be analyzed (rather than one intentionally skipped),
+a separate toast reporting how many were skipped and why.
+
+### New ambient theme backgrounds, and a reshuffled theme list
+
+Breadbin Blue and CGA both traded their earlier sprite/starfield
+animations for a proper demoscene-style plasma field (four combined sine
+waves sampled on a coarse grid) - CGA's is additionally quantized through
+an ordered Bayer dither down to the real 4-color CGA palette, a
+period-authentic technique for simulating more colors than the palette
+actually has. Amber CRT's background now prints boot-log-style lines one
+at a time at randomized intervals instead of smoothly scrolling, closer
+to how a real terminal fills a screen. DOS Blue's Norton-Commander-style
+dual file panes now scale their name lists to fill the full viewport
+height instead of capping out partway down.
+
+A new **MP3 Player** fun theme joins the lineup - brushed-metal chrome
+grays, a soft LCD-green readout, a cyan bezel highlight, and a bouncing
+spectrum-analyzer background (cheat code `mp3`). The Daylight theme was
+removed (existing users on it fall back to White, close enough visually
+to not need a migration prompt), and Sguil moved from Fun Themes to Light
+Themes, keeping its `sguil` cheat code.
+
+Stat cards, sample cards, the pivot menu, and modals all switched from a
+2-corner (top-left/bottom-right) HUD bracket to a proper 4-corner one -
+still just two pseudo-elements per element, but each now paints two
+adjacent corners via a stack of background gradients instead of a single
+border-based L. Keyboard-selected sample cards and theme tiles now get
+the same corner-bracket glow/border feedback mouse hover already gave
+them, including each fun theme's own neon-glow treatment. Amber CRT was
+missing its own bracket glow entirely (every other neon theme had one) -
+now consistent.
+
+### Fixed while preparing this release
+
+- **A crafted filename could silently defeat YARA scanning entirely.**
+  Uploaded filenames were sanitized against path traversal but not
+  control characters - a filename containing an embedded newline became
+  the real on-disk filename, which YARA's `--scan-list` input (one path
+  per line) then split into two bogus entries, neither the real file. The
+  pipeline still reported a clean, completed scan. `sanitize_filename` now
+  rejects control characters (0x00-0x1F, 0x7F).
+- **A Suricata analysis could get stuck "in progress" forever.** The
+  background watchdog thread only caught a timeout; any other failure
+  (an `OSError` from `proc.wait()`, a problem inside the post-processing
+  phase) left the `.phase` lock file in place with nothing to clear it,
+  and `spawn_suricata()`'s own re-entry guard refuses to start a new run
+  while that lock exists. Every failure path now clears the lock and
+  records an error.
+- Several `/api/*` routes (`/api/events`, `/api/sigma-alerts`,
+  `/api/sigma-stats`) silently returned `200` with empty data for a
+  malformed or missing `md5`, unlike every sibling route, which returns a
+  clean `400` - now consistent. A handful of other routes had no
+  exception handling around their database queries at all; a DB error
+  there reset the connection instead of returning a JSON error like
+  everywhere else already did.
+- A corrupted/truncated `eve.json` line that was syntactically valid JSON
+  but not an object (a bare number, string, or array) aborted ingestion
+  of the whole analysis instead of just that one line.
+- The recorded demo video's very first frame could be captured before
+  the page had fully painted into the recording viewport - visible as a
+  small sliver of real content in the corner of an otherwise flat grey
+  frame, exactly the thumbnail X/LinkedIn/etc. auto-extract when the raw
+  file is uploaded directly. Trimmed automatically now. A caption in the
+  same recording also called the sample pcap "built-in," which it isn't -
+  it's a one-click link to a pcap hosted on malware-traffic-analysis.net,
+  not something bundled with the app.
+
 ## 3.2.0
 
 ### Per-row notes
@@ -25,8 +393,8 @@ value), **Exclude** (narrow it to hide this value), **Only** (start a new
 search scoped to just this value, clearing every other filter), and **Hunt**
 (a full-text search for this value across every field, replacing the whole
 search - the one action that also clears any active search/filters
-entirely). Each of Include/Exclude/Only carries a color-coded magnifying-
-glass icon (green/red/blue) and an explanatory hover tooltip spelling out
+entirely). Each of Include/Exclude/Only carries a color-coded
+magnifying-glass icon (green/red/blue) and an explanatory hover tooltip spelling out
 exactly what clicking it will do with the real column/value substituted in.
 
 The menu also offers **Copy to Clipboard** and one-click lookups against
@@ -222,8 +590,8 @@ particular can be dozens of lines) read as noisy for what's meant to be a
 simple progress indicator. The actual log is still there for anyone who
 wants it: a "View Log" toggle reveals it on demand, both while an update is
 running and after it finishes, and "Hide Log" collapses it again without
-losing the underlying output (still fetched via the same polling `/api/rule-
-update-status` calls either way). Once an update finishes, a green checkmark
+losing the underlying output (still fetched via the same polling
+`/api/rule-update-status` calls either way). Once an update finishes, a green checkmark
 or red X appears next to that ruleset's Update button reflecting whether it
 succeeded - a persistent complement to the existing completion toast, which
 is easy to miss if you're not looking right when it fires. The icon only
@@ -339,7 +707,7 @@ badge still links directly to the GitHub release).
 
 ### Smaller Docker image
 
-The Docker image is roughly 130MB smaller, from two fixes found by
+The Docker image is roughly 130MB smaller, from three fixes found by
 inspecting `podman history` and the actual contents of the Zircolite git
 clone:
 

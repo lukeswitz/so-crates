@@ -7,6 +7,7 @@ on first run if internet is available.
 """
 
 import config
+import macos_sandbox
 import gzip
 import hashlib
 import json
@@ -131,6 +132,12 @@ def setup_yara_rules(data_dir=None, on_progress=print, network_allowed=True, for
         try:
             with gzip.open(BAKED_IN_YARA_FILE, 'rb') as f_in, open(rules_file, 'wb') as f_out:
                 shutil.copyfileobj(f_in, f_out)
+            # Decompressing writes a brand-new file, so its mtime would
+            # otherwise be "now" (container start) rather than when the
+            # ruleset was actually baked into the image at build time -
+            # carry the compressed source's mtime over so the Rules modal's
+            # "updated" date reflects reality, not container uptime.
+            shutil.copystat(BAKED_IN_YARA_FILE, rules_file)
             return rules_file
         except OSError as e:
             on_progress(f'Warning: could not copy baked-in rules: {e}')
@@ -194,9 +201,14 @@ def _run_yara_with_index(rules_file, list_path, filestore_dir=None, known_paths=
     if not os.path.isfile(rules_file):
         return []
 
+    read = [rules_file, list_path]
+    if filestore_dir:
+        read.append(filestore_dir)
+    elif known_paths:
+        read.extend(known_paths)
     try:
         result = subprocess.run(
-            [
+            macos_sandbox.confine([
                 'yara', '-r', '-g', '-m', '-w',
                 '-d', 'filename=""',
                 '-d', 'filepath=""',
@@ -204,7 +216,7 @@ def _run_yara_with_index(rules_file, list_path, filestore_dir=None, known_paths=
                 '-d', 'filetype=""',
                 '-d', 'owner=""',
                 '--scan-list', rules_file, list_path
-            ],
+            ], read=read),
             capture_output=True, text=True, timeout=config.YARA_SCAN_TIMEOUT
         )
     except subprocess.TimeoutExpired:

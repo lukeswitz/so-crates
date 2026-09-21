@@ -128,6 +128,19 @@ document.head.appendChild(styleEl);
 // Make globals available
 window.document = document;
 
+// jsdom does not implement Element.prototype.scrollIntoView at all (it's
+// simply undefined, not a no-op) - every real browser has always had it as
+// a standard, always-present method that never throws under normal use, so
+// its absence here is purely a jsdom gap, not something socrates.js's own
+// code needs to guard against. Without this shim, any keyboard-navigation
+// function that calls .scrollIntoView() (there are several) throws
+// partway through - and since that throw happens inside a keydown event
+// listener, jsdom/the DOM spec swallows it silently rather than
+// propagating it to the dispatchEvent() call site, so test code sees no
+// error at all, just seemingly-inexplicable missing side effects from
+// whatever the function was supposed to do AFTER its scrollIntoView call.
+window.Element.prototype.scrollIntoView = window.Element.prototype.scrollIntoView || function() {{}};
+
 // Optionally load d3 / d3-sankey (order matters: d3 first) before socrates.js
 {d3_load_snippet}
 
@@ -174,8 +187,10 @@ window.eval(jsContent);
     env = os.environ.copy()
     env['NODE_PATH'] = NODE_MODULES
 
-    # Write script to temp file (avoids "Argument list too long" error)
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False, dir=PROJECT_ROOT) as f:
+    # Write script to temp file (avoids "Argument list too long" error).
+    # System temp dir, not PROJECT_ROOT: a hard-killed test run would
+    # otherwise strand ~840KB tmp*.js orphans in the repo root.
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
         f.write(node_script)
         script_path = f.name
 

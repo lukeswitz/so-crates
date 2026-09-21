@@ -13,6 +13,7 @@ import re
 import subprocess
 
 import config
+import macos_sandbox
 from exif_analyzer import extract_exif
 
 
@@ -73,22 +74,32 @@ def analyze_file(file_path):
     # file command for type and MIME
     try:
         result = subprocess.run(
-            ['file', '--brief', file_path],
+            macos_sandbox.confine(['file', '--brief', file_path], read=[file_path]),
             capture_output=True, text=True, timeout=config.FILE_COMMAND_TIMEOUT
         )
         if result.returncode == 0:
             metadata['file_type'] = result.stdout.strip()
-    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired):
+        # OSError (not just the FileNotFoundError/PermissionError subset)
+        # so a launch failure like ENOMEM/ENOSPC/"Text file busy" degrades
+        # the same way those two already did, consistent with how
+        # yara_analyzer/sigma_analyzer handle the equivalent-risk case of
+        # invoking an external CLI tool.
         pass
 
     try:
         result = subprocess.run(
-            ['file', '--brief', '--mime-type', file_path],
+            macos_sandbox.confine(['file', '--brief', '--mime-type', file_path], read=[file_path]),
             capture_output=True, text=True, timeout=config.FILE_COMMAND_TIMEOUT
         )
         if result.returncode == 0:
             metadata['mime_type'] = result.stdout.strip()
-    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired):
+        # OSError (not just the FileNotFoundError/PermissionError subset)
+        # so a launch failure like ENOMEM/ENOSPC/"Text file busy" degrades
+        # the same way those two already did, consistent with how
+        # yara_analyzer/sigma_analyzer handle the equivalent-risk case of
+        # invoking an external CLI tool.
         pass
 
     # entropy and strings (single read; strings come from the same buffer)

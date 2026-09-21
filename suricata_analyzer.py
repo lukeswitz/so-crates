@@ -10,6 +10,7 @@ import threading
 import time
 
 import config
+import macos_sandbox
 from db import create_sqlite_db
 from validators import is_host_reachable, is_epoch_stale
 from yara_analyzer import run_yara_pipeline
@@ -207,6 +208,63 @@ def _enable_eve_log_arp(config_content):
     return re.sub(
         r'(?m)(^        - arp:\s*\n            )enabled: no\b',
         r'\1enabled: yes',
+        config_content
+    )
+
+
+def _enable_ja3_ja4_fingerprints(config_content):
+    """Enable JA3/JA3S/JA4 TLS client/server fingerprinting, which ships
+    as `auto` (commented out) by default - Suricata only computes them
+    when an active rule's signature keyword requires it, so without this
+    the fields are silently absent from `tls` events whenever none of the
+    currently-enabled curated rule sources happen to reference ja3/ja4.
+
+    Forced on unconditionally, like community-id (see _enable_community_id)
+    rather than gated behind a parameter like arp - JA3/JA4 are core
+    malware-family/C2 TLS fingerprints analysts rely on for hunting and
+    threat-intel matching, and computing them is cheap (per-handshake, not
+    a new event type), so there's no real volume/signal tradeoff to weigh
+    the way arp's live-network packet volume is.
+
+    The regex must anchor on the commented-out `#...: auto` form
+    specifically, not just the key name, so a re-run against an
+    already-enabled config (this function runs on every
+    setup_suricata_config() call, including every server restart) is a
+    harmless no-op instead of re-matching and clobbering an explicit
+    operator override.
+    """
+    config_content = re.sub(
+        r'(?m)^(\s+)#ja3-fingerprints:\s*auto$',
+        r'\1ja3-fingerprints: yes',
+        config_content
+    )
+    config_content = re.sub(
+        r'(?m)^(\s+)#ja4-fingerprints:\s*auto$',
+        r'\1ja4-fingerprints: yes',
+        config_content
+    )
+    return config_content
+
+
+def _enable_community_id(config_content):
+    """Enable Suricata's community-id output, which ships disabled by
+    default (`community-id: false`).
+
+    Unlike the arp eve-log entry (a real volume/signal tradeoff, kept
+    opt-in - see _enable_eve_log_arp), community-id adds a single
+    deterministic `community_id` field to flow/alert records rather than
+    new events, so it's forced on unconditionally like the other five
+    file-store tweaks below rather than gated behind a parameter. It lets
+    so-crates' output correlate against Zeek/other community-id-aware
+    tools without a user ever discovering the setting exists.
+
+    The regex must anchor on the trailing `: false` value, not just the
+    `community-id` key name, so it can never also match the neighboring
+    `community-id-seed: 0` line.
+    """
+    return re.sub(
+        r'(?m)^(\s+community-id:\s*)false$',
+        r'\1true',
         config_content
     )
 
@@ -517,6 +575,13 @@ def _seed_active_from_library(baked_in_library_dir, data_dir, source_names, on_p
             if filename.endswith('.gz'):
                 with gzip.open(src, 'rb') as f_in, open(dest, 'wb') as f_out:
                     shutil.copyfileobj(f_in, f_out)
+                # Decompressing writes a brand-new file, so its mtime would
+                # otherwise be "now" (container start) rather than when the
+                # ruleset was actually baked into the image at build time -
+                # carry the compressed source's mtime over (as shutil.copy2
+                # already does for the uncompressed branch below) so the
+                # Rules modal's "updated" date reflects reality, not uptime.
+                shutil.copystat(src, dest)
             else:
                 shutil.copy2(src, dest)
     except OSError as e:
@@ -662,9 +727,14 @@ def setup_suricata_config(data_dir=None, enable_arp=False, on_progress=print, ne
     if os.path.exists(suricata_config):
         with open(suricata_config, 'r') as f:
             config_content = f.read()
-        config_content = config_content.replace('/var/lib/suricata/rules', suricata_rules_dir)
+        config_content = re.sub(
+            r'(?m)^(default-rule-path:[ \t]*).*$',
+            lambda m: m.group(1) + suricata_rules_dir,
+            config_content)
         config_content = _enable_app_layer_protocols(config_content)
         config_content = _enable_eve_log_protocol_types(config_content)
+        config_content = _enable_community_id(config_content)
+        config_content = _enable_ja3_ja4_fingerprints(config_content)
         if enable_arp:
             config_content = _enable_eve_log_arp(config_content)
         # Enable file-store output for extracted file analysis
@@ -837,10 +907,13 @@ def spawn_suricata(dir_path, pcap_path, suricata_config_path=None, data_dir=None
 
     try:
         proc = subprocess.Popen(
-            ['suricata', '-r', pcap_path, '-c', suricata_config_path,
-             '-l', dir_path,
-             '-k', 'none', '--runmode', 'single',
-             '--set', 'outputs.1.eve-log.types.0.alert.metadata.rule.raw=true'],
+            macos_sandbox.confine(
+                ['suricata', '-r', pcap_path, '-c', suricata_config_path,
+                 '-l', dir_path,
+                 '-k', 'none', '--runmode', 'single',
+                 '--set', 'outputs.1.eve-log.types.0.alert.metadata.rule.raw=true'],
+                read=[pcap_path, os.path.dirname(suricata_config_path)],
+                write=[dir_path]),
             cwd=dir_path,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
@@ -849,14 +922,28 @@ def spawn_suricata(dir_path, pcap_path, suricata_config_path=None, data_dir=None
         def _suricata_watchdog():
             """Kill Suricata if it runs longer than the configured timeout."""
             try:
-                proc.wait(timeout=config.SURICATA_RUN_TIMEOUT)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-                _set_error(dir_path, f'Suricata timed out after {config.SURICATA_RUN_TIMEOUT}s')
+                try:
+                    proc.wait(timeout=config.SURICATA_RUN_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                    _set_error(dir_path, f'Suricata timed out after {config.SURICATA_RUN_TIMEOUT}s')
+                    _clear_phase(dir_path)
+                    return
+                on_suricata_done()
+            except Exception as e:
+                # This runs in a daemon thread, where an uncaught exception
+                # is silently swallowed (never surfaced to the user or to
+                # spawn_suricata()'s caller) rather than propagated - and
+                # without this, any failure here besides a timeout (e.g. an
+                # OSError from proc.wait() itself, or from _set_phase/
+                # _clear_phase's own file I/O) would leave .phase in place
+                # forever. spawn_suricata()'s own re-entry guard refuses to
+                # start a new run while .phase exists, so this analysis
+                # directory would become permanently stuck "in progress"
+                # with no way to recover except deleting it outright.
+                _set_error(dir_path, f'Suricata analysis failed unexpectedly: {e}')
                 _clear_phase(dir_path)
-                return
-            on_suricata_done()
 
         threading.Thread(target=_suricata_watchdog, daemon=True).start()
         return True

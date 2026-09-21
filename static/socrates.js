@@ -3,21 +3,13 @@
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
-        function escapeJsString(str) {
-            if (str == null) return '';
-            // Every call site embeds the result inside a single-quoted JS
-            // string literal within a double-quoted HTML onclick="..."
-            // attribute. Escaping only backslash/quote protects the JS
-            // string boundary but leaves the attribute boundary open (a
-            // raw '"' or '<'/'>' would still break out of the attribute),
-            // so also HTML-escape after JS-escaping.
-            const jsEscaped = String(str)
-                .replace(/\\/g, '\\\\')
-                .replace(/'/g, "\\'")
-                .replace(/\n/g, '\\n')
-                .replace(/\r/g, '\\r');
-            return escapeHtml(jsEscaped);
-        }
+        // escapeJsString (JS-string-then-HTML escaping for values embedded
+        // in inline handler attributes) is gone: no generated HTML carries
+        // inline on*= handlers anymore (CSP: script-src without
+        // 'unsafe-inline'). Dynamic values now ride in data-* attributes -
+        // escapeHtml'd scalars, or percent-encoded JSON for structured
+        // payloads (see pivotDataAttrsHtml) - decoded by the delegated
+        // listeners at the bottom of this file.
 
         // Shared by loadAnalysis() (the analysis header) and showWelcome()
         // (the Previous Analyses list) so both render a sample's own event
@@ -104,8 +96,7 @@
 
         const THEMES = {
             dark: { label: 'Midnight', group: 'dark' },
-            light: { label: 'Daylight', group: 'light' },
-            sguil: { label: 'Sguil', group: 'fun' },
+            sguil: { label: 'Sguil', group: 'light' },
             hacker: { label: 'Hacker', group: 'fun' },
             cga: { label: 'CGA', group: 'fun' },
             'breadbin-blue': { label: 'Breadbin Blue', group: 'fun' },
@@ -138,24 +129,7 @@
             'dracula': { label: 'Dracula', group: 'dark' },
             'solarized-dark': { label: 'Solarized Dark', group: 'dark' },
             'monokai': { label: 'Monokai', group: 'dark' },
-        };
-
-        // Mirrors the keydown easter-egg checks below (kept separate rather
-        // than driving both from one loop, since the keydown handler is
-        // already tested against its literal source text) - used only to
-        // display each Fun theme's code while hovering it in the themes
-        // modal, not to detect the codes themselves.
-        const THEME_CHEAT_CODES = {
-            hacker: '31337',
-            sguil: 'sguil',
-            cga: 'cga',
-            'breadbin-blue': 'bread',
-            vaporwave: 'vapor',
-            'luna-blue': 'luna',
-            amber: 'amber',
-            'dos-blue': 'dos',
-            'digital-frontier': 'digit',
-            'retro-handheld': 'retro',
+            'mp3-player': { label: 'MP3 Player', group: 'fun' },
         };
 
         const THEME_GROUP_LABELS = { dark: 'Dark Themes', fun: 'Fun Themes', light: 'Light Themes' };
@@ -210,7 +184,8 @@
             }
             safeStorageSet(localStorage, 'socrates-theme', themeName);
             updateThemeMenu();
-            updateCodeRain();
+            updateFunThemeClass();
+            updateAllAmbientThemes();
             updateFavicon();
             // If the themes modal is open, treat this as the new baseline so
             // a later close/revert does not undo the change, and keep the
@@ -241,7 +216,8 @@
                 html.style.setProperty(name, colors[name]);
             });
             updateThemeMenu();
-            updateCodeRain();
+            updateFunThemeClass();
+            updateAllAmbientThemes();
             updateFavicon();
         }
 
@@ -317,28 +293,19 @@
             if (frameDoc && frameDoc.documentElement) {
                 frameDoc.documentElement.setAttribute('data-theme', themeName);
             }
-            updateThemeCheatCodeHint(themeName);
+            updatePreviewingLabel(themeName);
         }
 
         // "Previewing <name>" always shows, confirming what the preview
         // panel currently displays (hover target, or the resting/baseline
-        // theme once nothing is hovered). The trailing "- Cheat code: X"
-        // part only applies to Fun themes, so its own space is reserved via
-        // visibility (not display) rather than the whole line, so the
-        // modal doesn't jump as that part appears/disappears while hovering
-        // across Fun vs. other themes.
-        function updateThemeCheatCodeHint(themeName) {
+        // theme once nothing is hovered). Any theme's name can be typed
+        // into the command palette (see AUTOCOMPLETE_COMMANDS) to jump to
+        // it directly, so there's no separate per-theme code to show here
+        // any more.
+        function updatePreviewingLabel(themeName) {
             const label = document.getElementById('themePreviewingLabel');
-            const codePart = document.getElementById('themeCheatCodePart');
-            if (!label || !codePart) return;
+            if (!label) return;
             label.textContent = THEMES[themeName].label;
-            const code = THEME_CHEAT_CODES[themeName];
-            if (code) {
-                codePart.querySelector('code').textContent = code;
-                codePart.style.visibility = 'visible';
-            } else {
-                codePart.style.visibility = 'hidden';
-            }
         }
 
         function revertTheme() {
@@ -448,6 +415,15 @@
             showToast('Switched to ' + THEMES[nextTheme].label + ' theme');
         }
 
+        function toggleThemeReverse() {
+            const order = THEME_MENU_ORDER;
+            const current = getCurrentTheme();
+            const prevIndex = (order.indexOf(current) - 1 + order.length) % order.length;
+            const prevTheme = order[prevIndex];
+            setTheme(prevTheme);
+            showToast('Switched to ' + THEMES[prevTheme].label + ' theme');
+        }
+
         function updateThemeMenu() {
             // Mark the menu item for the currently applied theme. Tracks
             // hover previews too (setTheme/previewTheme both call this), so
@@ -470,27 +446,27 @@
         function renderGearMenu() {
             return `
                 <div class="app-header-menu">
-                    <button class="app-header-menu-btn" onclick="toggleMenu()" title="Menu" id="appHeaderMenuBtn">
+                    <button class="app-header-menu-btn" data-action="toggle-menu" title="Menu" id="appHeaderMenuBtn">
                         ${GEAR_ICON_SVG}
                     </button>
                     <div class="app-header-menu-dropdown" id="appHeaderMenuDropdown">
-                        <button class="app-header-menu-item" onclick="showHelpModal(); closeMenu();">
+                        <button class="app-header-menu-item" data-action="menu-help">
                             <span><svg class="theme-icon-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
                             <span>Help</span>
                         </button>
-                        <button class="app-header-menu-item" onclick="showSettingsModal(); closeMenu();">
+                        <button class="app-header-menu-item" data-action="menu-settings">
                             <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.17 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.17a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></span>
                             <span>Settings</span>
                         </button>
-                        <button class="app-header-menu-item" onclick="showThemesModal(); closeMenu();">
+                        <button class="app-header-menu-item" data-action="menu-themes">
                             <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg></span>
                             <span>Themes</span>
                         </button>
-                        <button class="app-header-menu-item" onclick="showRulesModal(); closeMenu();">
+                        <button class="app-header-menu-item" data-action="menu-rules">
                             <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></span>
                             <span>Rules</span>
                         </button>
-                        <button class="app-header-menu-item" onclick="showAboutModal(); closeMenu();">
+                        <button class="app-header-menu-item" data-action="menu-about">
                             <span><svg class="theme-icon-help" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
                             <span>About</span>
                         </button>
@@ -503,11 +479,15 @@
             for (const group of THEME_GROUP_ORDER) {
                 html += `<div class="app-header-menu-header">${THEME_GROUP_LABELS[group]}</div><div class="theme-tile-grid">`;
                 for (const key of THEME_MENU_ORDER.filter(k => THEMES[k].group === group)) {
+                    // Hover/focus preview and click-to-commit are delegated
+                    // (see the theme-tile mouseover/mouseout/focusin/focusout
+                    // listeners and the 'commit-theme' STATIC_ACTIONS entry
+                    // near the end of this file), keyed off the same
+                    // data-theme-option attribute the keyboard nav already
+                    // uses - no inline on*= handlers (CSP: script-src
+                    // without 'unsafe-inline' blocks them).
                     html += `
-                        <button class="theme-tile" data-theme-option="${key}"
-                                onmouseenter="previewTheme('${key}')"
-                                onmouseleave="revertTheme()"
-                                onclick="commitTheme('${key}')">
+                        <button class="theme-tile" data-theme-option="${key}" data-action="commit-theme">
                             <span>${THEMES[key].label}</span>
                         </button>`;
                 }
@@ -606,12 +586,1152 @@
             }
         }
 
+        // Subtle falling-tetromino background for Retro Handheld theme -
+        // same fixed-canvas/rAF technique as the code rain above, on its
+        // own separate #blockRain canvas (see .block-rain-canvas's CSS
+        // comment for why a second canvas rather than a shared,
+        // theme-branching one). No rotation, stacking, or collision -
+        // just axis-aligned tetromino shapes drifting straight down and
+        // respawning once off-screen, the same ambient-texture role rain
+        // plays for Hacker.
+        let blockRainCtx = null;
+        let blockRainPieces = [];
+        const fallingBlockSize = 16;
+        let blockRainAnimationId = null;
+        let blockRainLastDraw = 0;
+        const FALLING_BLOCK_SHAPES = [
+            [[0, 0], [1, 0], [2, 0], [3, 0]], // I
+            [[0, 0], [1, 0], [0, 1], [1, 1]], // O
+            [[1, 0], [0, 1], [1, 1], [2, 1]], // T
+            [[1, 0], [2, 0], [0, 1], [1, 1]], // S
+            [[0, 0], [1, 0], [1, 1], [2, 1]], // Z
+            [[0, 0], [0, 1], [1, 1], [2, 1]], // J
+            [[2, 0], [0, 1], [1, 1], [2, 1]]  // L
+        ];
+        // The theme's own darkest palette shades (see [data-theme=
+        // "retro-handheld"]'s --text-primary/--accent/--text-muted) -
+        // reads as the real 4-shade Game Boy LCD palette rather than an
+        // arbitrary green, and needs no separate light/dark handling
+        // since this canvas only ever renders for this one theme.
+        const BLOCK_RAIN_COLORS = ['#0f380f', '#1f5c1f', '#306230'];
+
+        function makeFallingBlock(width) {
+            const cols = Math.max(1, Math.floor(width / fallingBlockSize) - 4);
+            return {
+                shape: FALLING_BLOCK_SHAPES[Math.floor(Math.random() * FALLING_BLOCK_SHAPES.length)],
+                col: Math.floor(Math.random() * cols),
+                y: Math.random() * -window.innerHeight,
+                speed: 3 + Math.random() * 3,
+                color: BLOCK_RAIN_COLORS[Math.floor(Math.random() * BLOCK_RAIN_COLORS.length)]
+            };
+        }
+
+        function resizeBlockRain() {
+            const canvas = document.getElementById('blockRain');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            blockRainCtx = ctx;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            blockRainCtx.scale(dpr, dpr);
+            const pieceCount = Math.max(14, Math.ceil(window.innerWidth / 90));
+            blockRainPieces = [];
+            for (let i = 0; i < pieceCount; i++) {
+                blockRainPieces.push(makeFallingBlock(window.innerWidth));
+            }
+        }
+
+        function drawBlockRain(timestamp) {
+            const canvas = document.getElementById('blockRain');
+            if (!canvas || getCurrentTheme() !== 'retro-handheld') return;
+            if (!blockRainCtx) resizeBlockRain();
+            if (!blockRainCtx) return;
+
+            const dt = timestamp - blockRainLastDraw;
+            if (dt < 50) {
+                blockRainAnimationId = requestAnimationFrame(drawBlockRain);
+                return;
+            }
+            blockRainLastDraw = timestamp;
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            // Fades the previous frame's blocks out against the theme's
+            // own light background color (--bg-primary: #9bbc0f) rather
+            // than black, which the code rain above clears with - that
+            // theme's page is dark so a black fade is invisible; this
+            // one's page is pale yellow-green, so fading to black would
+            // paint a visible dark smear behind every piece instead of a
+            // clean fade. Higher alpha than code rain's 0.08 (which
+            // suits sparse, thin text glyphs) - these are solid blocks,
+            // so the same low alpha left a long, still-fairly-opaque
+            // smear behind each one that was genuinely hard to tell from
+            // the actual piece. This clears each old frame in 2-3 draws
+            // instead of a dozen+, leaving just a short Game-Boy-LCD-
+            // ghosting hint rather than a confusing trail.
+            blockRainCtx.fillStyle = 'rgba(155, 188, 15, 0.35)';
+            blockRainCtx.fillRect(0, 0, width, height);
+
+            for (const piece of blockRainPieces) {
+                blockRainCtx.fillStyle = piece.color;
+                for (const block of piece.shape) {
+                    const x = (piece.col + block[0]) * fallingBlockSize;
+                    const y = piece.y + block[1] * fallingBlockSize;
+                    if (y > -fallingBlockSize && y < height) {
+                        blockRainCtx.fillRect(x + 1, y + 1, fallingBlockSize - 2, fallingBlockSize - 2);
+                    }
+                }
+                piece.y += piece.speed;
+                if (piece.y > height) {
+                    Object.assign(piece, makeFallingBlock(width));
+                }
+            }
+
+            blockRainAnimationId = requestAnimationFrame(drawBlockRain);
+        }
+
+        function startBlockRain() {
+            if (blockRainAnimationId) return;
+            resizeBlockRain();
+            if (!blockRainCtx) return;
+            blockRainLastDraw = performance.now();
+            blockRainAnimationId = requestAnimationFrame(drawBlockRain);
+        }
+
+        function stopBlockRain() {
+            if (blockRainAnimationId) {
+                cancelAnimationFrame(blockRainAnimationId);
+                blockRainAnimationId = null;
+            }
+            const canvas = document.getElementById('blockRain');
+            if (canvas && blockRainCtx) {
+                blockRainCtx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function updateBlockRain() {
+            if (getCurrentTheme() === 'retro-handheld') {
+                startBlockRain();
+            } else {
+                stopBlockRain();
+            }
+        }
+
+        // Synthwave grid-horizon ambient background for Vaporwave - on
+        // its own #vaporwaveGrid canvas, same fixed/behind-everything
+        // positioning as the two effects above, but a single static
+        // draw rather than a continuous rAF loop (tried animated first,
+        // then made static - see git history). A composed scene like
+        // this (converging grid + a sun sitting on the horizon) needs to
+        // be recognizable even glimpsed only in the thin slivers of page
+        // not covered by real content - continuous motion in those
+        // small, disconnected slivers read as flicker rather than a
+        // coherent "flying over the grid" feel, and a still image both
+        // avoids that and costs nothing once drawn (no ongoing rAF work,
+        // no timers). Only redrawn on theme activation and window
+        // resize - resizeVaporwaveGrid() itself does the (re)draw, so it
+        // stays the single place both "wire up the canvas" and "put
+        // pixels on it" happen, the same function the window resize
+        // listener already calls.
+        let vaporwaveCtx = null;
+        const VAPORWAVE_H_LINE_COUNT = 24;
+        const VAPORWAVE_V_LINE_COUNT = 16;
+
+        function drawVaporwaveGrid() {
+            if (!vaporwaveCtx) return;
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const horizonY = height * 0.58;
+            const centerX = width / 2;
+            vaporwaveCtx.clearRect(0, 0, width, height);
+
+            // Sun sitting exactly on the horizon - clipping to its upper
+            // half (rather than drawing a full circle) is what makes it
+            // read as "sitting on" rather than "floating above" the
+            // horizon. A few horizontal bands are cut out of the lower
+            // portion (the classic retro sun stripes) via clearRect,
+            // which - on a low-opacity overlay canvas like this one -
+            // correctly reveals whatever real page content is
+            // underneath, the same way the rest of the canvas's
+            // transparent background already does.
+            const sunRadius = Math.min(width, height) * 0.14;
+            vaporwaveCtx.save();
+            vaporwaveCtx.beginPath();
+            vaporwaveCtx.rect(centerX - sunRadius, horizonY - sunRadius, sunRadius * 2, sunRadius);
+            vaporwaveCtx.clip();
+            const sunGradient = vaporwaveCtx.createRadialGradient(centerX, horizonY, 0, centerX, horizonY, sunRadius);
+            sunGradient.addColorStop(0, 'rgba(255, 113, 206, 1)');
+            sunGradient.addColorStop(1, 'rgba(255, 113, 206, 0)');
+            vaporwaveCtx.fillStyle = sunGradient;
+            vaporwaveCtx.beginPath();
+            vaporwaveCtx.arc(centerX, horizonY, sunRadius, 0, Math.PI * 2);
+            vaporwaveCtx.fill();
+            for (let band = 0; band < 4; band++) {
+                const bandY = horizonY - sunRadius * (0.08 + band * 0.09);
+                vaporwaveCtx.clearRect(centerX - sunRadius, bandY, sunRadius * 2, sunRadius * 0.035);
+            }
+            vaporwaveCtx.restore();
+
+            // Converging verticals, evenly spaced along the bottom edge
+            // and spreading past the viewport's left/right edges so the
+            // grid still fills the corners.
+            vaporwaveCtx.strokeStyle = 'rgba(1, 205, 254, 0.65)';
+            vaporwaveCtx.lineWidth = 1;
+            for (let i = 0; i < VAPORWAVE_V_LINE_COUNT; i++) {
+                const spread = (i / (VAPORWAVE_V_LINE_COUNT - 1) - 0.5) * width * 1.6;
+                vaporwaveCtx.beginPath();
+                vaporwaveCtx.moveTo(centerX, horizonY);
+                vaporwaveCtx.lineTo(centerX + spread, height);
+                vaporwaveCtx.stroke();
+            }
+
+            // Horizontal lines at fixed, evenly-spaced depths - t eases
+            // with t*t so they bunch up near the horizon and spread
+            // apart near the bottom, the standard cheap trick for
+            // perspective depth without real 3D projection math. No
+            // longer incremented over time (see this function's own
+            // comment above for why) - each line just sits at its own
+            // fixed t forever.
+            for (let i = 0; i < VAPORWAVE_H_LINE_COUNT; i++) {
+                const t = i / VAPORWAVE_H_LINE_COUNT;
+                const y = horizonY + (height - horizonY) * t * t;
+                const alpha = 0.25 + 0.6 * t;
+                vaporwaveCtx.strokeStyle = `rgba(1, 205, 254, ${alpha})`;
+                vaporwaveCtx.beginPath();
+                vaporwaveCtx.moveTo(0, y);
+                vaporwaveCtx.lineTo(width, y);
+                vaporwaveCtx.stroke();
+            }
+        }
+
+        function resizeVaporwaveGrid() {
+            const canvas = document.getElementById('vaporwaveGrid');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            vaporwaveCtx = ctx;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            vaporwaveCtx.scale(dpr, dpr);
+            if (getCurrentTheme() === 'vaporwave') drawVaporwaveGrid();
+        }
+
+        function startVaporwaveGrid() {
+            resizeVaporwaveGrid();
+        }
+
+        function stopVaporwaveGrid() {
+            const canvas = document.getElementById('vaporwaveGrid');
+            if (canvas && vaporwaveCtx) {
+                vaporwaveCtx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function updateVaporwaveGrid() {
+            if (getCurrentTheme() === 'vaporwave') {
+                startVaporwaveGrid();
+            } else {
+                stopVaporwaveGrid();
+            }
+        }
+
+        // Norton Commander dual-pane ambient background for DOS Blue - on
+        // its own #dosDefrag canvas (id/class kept from the earlier
+        // defrag/prompt/QBasic-dialog effects this replaced, to avoid an
+        // unrelated HTML/CSS rename). One bordered file-list pane in each
+        // side margin (the app's own central content column already
+        // occupies the middle, so a real side-by-side dual pane wouldn't
+        // fit in either margin alone). Row count is computed from the
+        // available margin height on each resize (not a fixed count) so
+        // the panes stretch to fill most of the margin - real Norton
+        // Commander panes span nearly the full screen, unlike a QBasic
+        // dialog box, which is inherently compact and would look wrong
+        // stretched that tall. Each pane's yellow selection bar steps
+        // down the list on its own timer - a mostly-static composed scene
+        // plus one small moving element per pane, same recipe as Luna
+        // Blue's clouds.
+        let dosDefragCtx = null;
+        let dosDefragAnimationId = null;
+        let dosDefragLastDraw = 0;
+        let ncLeftFiles = [];
+        let ncRightFiles = [];
+        let ncLeftHighlight = 0;
+        let ncRightHighlight = 0;
+        let ncLeftNextMove = 0;
+        let ncRightNextMove = 0;
+        let ncVisibleRows = 10;
+        const NC_FILES_LEFT = [
+            'AUTOEXEC.BAT', 'CONFIG.SYS', 'COMMAND.COM', 'IO.SYS', 'MSDOS.SYS',
+            'WIN386.SWP', 'HIMEM.SYS', 'EMM386.EXE', 'MOUSE.COM', 'DOSKEY.COM',
+            'EDIT.COM', 'QBASIC.EXE', 'FORMAT.COM', 'FDISK.EXE', 'SCANDISK.EXE',
+            'DEFRAG.EXE', 'SHARE.EXE', 'SMARTDRV.EXE', 'ANSI.SYS', 'XCOPY.EXE',
+            'SYSTEM.INI', 'WIN.INI', 'PROTOCOL.INI', 'NET.CFG', 'STARTUP.CMD',
+            'DBLSPACE.BIN', 'DRVSPACE.BIN', 'RAMDRIVE.SYS', 'SETVER.EXE', 'APPEND.EXE',
+            'ATTRIB.EXE', 'LABEL.EXE', 'SYS.COM', 'TREE.COM', 'SORT.EXE',
+            'FIND.EXE', 'MORE.COM', 'PRINT.EXE', 'RECOVER.EXE', 'RESTORE.EXE'
+        ];
+        const NC_FILES_RIGHT = [
+            'README.TXT', 'SETUP.EXE', 'GAME.EXE', 'SAVE001.DAT', 'SAVE002.DAT',
+            'MANUAL.TXT', 'SOUND.DRV', 'VGA.DRV', 'CONFIG.CFG', 'HISCORE.DAT',
+            'LEVEL1.DAT', 'PATCH.EXE', 'INSTALL.EXE', 'SOUND.CFG', 'JOYSTICK.CFG',
+            'INTRO.DAT', 'CREDITS.TXT', 'MUSIC.DAT', 'SPRITES.DAT', 'LEVEL2.DAT',
+            'DEMO.EXE', 'TUTORIAL.DAT', 'OPTIONS.CFG', 'KEYS.CFG', 'FONTS.DAT',
+            'PALETTE.DAT', 'MAP01.DAT', 'MAP02.DAT', 'ENEMY.DAT', 'WEAPONS.DAT',
+            'TEXTURE.DAT', 'AUDIO.DAT', 'VOICE.DAT', 'ENDING.DAT', 'BACKUP.DAT',
+            'TEMP.DAT', 'CACHE.DAT', 'LOG.TXT', 'ERROR.LOG', 'STATS.DAT'
+        ];
+        const NC_ROW_HEIGHT = 18;
+        const NC_PANE_WIDTH = 180;
+        const NC_PANE_Y = 100;
+        const NC_BOTTOM_CLEARANCE = 90;
+
+        // Cycles through fresh shuffles of the pool rather than capping at
+        // the pool's own length - a pane taller than the pool (a large
+        // monitor's margin can easily need 40+ rows) still fills
+        // completely instead of leaving blank space below a short list,
+        // at the cost of eventually repeating names further down.
+        function makeNcFileList(pool) {
+            let names = [];
+            while (names.length < ncVisibleRows) {
+                names = names.concat([...pool].sort(() => Math.random() - 0.5));
+            }
+            names = names.slice(0, ncVisibleRows);
+            return names.map(name => ({ name, size: 128 + Math.floor(Math.random() * 98000) }));
+        }
+
+        function drawNcPane(ctx, x, y, title, files, highlightRow) {
+            const width = NC_PANE_WIDTH;
+            const height = NC_ROW_HEIGHT * (1 + files.length);
+
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = '#55FFFF';
+            ctx.strokeRect(x, y, width, height);
+
+            ctx.fillStyle = '#55FFFF';
+            ctx.fillRect(x, y, width, NC_ROW_HEIGHT);
+            ctx.fillStyle = '#0000AA';
+            ctx.font = 'bold 12px "Courier New", monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(title, x + width / 2, y + NC_ROW_HEIGHT / 2 + 1);
+
+            ctx.font = '12px "Courier New", monospace';
+            files.forEach((file, i) => {
+                const rowY = y + NC_ROW_HEIGHT * (1 + i);
+                if (i === highlightRow) {
+                    ctx.fillStyle = '#FFFF55';
+                    ctx.fillRect(x + 1, rowY, width - 2, NC_ROW_HEIGHT);
+                    ctx.fillStyle = '#0000AA';
+                } else {
+                    ctx.fillStyle = '#FFFFFF';
+                }
+                ctx.textAlign = 'left';
+                ctx.fillText(file.name, x + 8, rowY + NC_ROW_HEIGHT / 2 + 1);
+                ctx.textAlign = 'right';
+                ctx.fillText(String(file.size), x + width - 8, rowY + NC_ROW_HEIGHT / 2 + 1);
+            });
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+        }
+
+        function drawDosDefrag(timestamp) {
+            const canvas = document.getElementById('dosDefrag');
+            if (!canvas || getCurrentTheme() !== 'dos-blue') return;
+            if (!dosDefragCtx) resizeDosDefrag();
+            if (!dosDefragCtx) return;
+
+            const dt = timestamp - dosDefragLastDraw;
+            if (dt < 50) {
+                dosDefragAnimationId = requestAnimationFrame(drawDosDefrag);
+                return;
+            }
+            dosDefragLastDraw = timestamp;
+
+            if (timestamp >= ncLeftNextMove) {
+                ncLeftHighlight = (ncLeftHighlight + 1) % ncLeftFiles.length;
+                ncLeftNextMove = timestamp + 1200 + Math.random() * 700;
+            }
+            if (timestamp >= ncRightNextMove) {
+                ncRightHighlight = (ncRightHighlight + 1) % ncRightFiles.length;
+                ncRightNextMove = timestamp + 1200 + Math.random() * 700;
+            }
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            dosDefragCtx.clearRect(0, 0, width, height);
+
+            drawNcPane(dosDefragCtx, 20, NC_PANE_Y, 'C:\\DOS', ncLeftFiles, ncLeftHighlight);
+            drawNcPane(dosDefragCtx, width - NC_PANE_WIDTH - 20, NC_PANE_Y, 'A:\\DATA', ncRightFiles, ncRightHighlight);
+
+            dosDefragAnimationId = requestAnimationFrame(drawDosDefrag);
+        }
+
+        function resizeDosDefrag() {
+            const canvas = document.getElementById('dosDefrag');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            dosDefragCtx = ctx;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            dosDefragCtx.scale(dpr, dpr);
+
+            const availableHeight = window.innerHeight - NC_PANE_Y - NC_BOTTOM_CLEARANCE;
+            ncVisibleRows = Math.max(5, Math.floor(availableHeight / NC_ROW_HEIGHT) - 1);
+            ncLeftFiles = makeNcFileList(NC_FILES_LEFT);
+            ncRightFiles = makeNcFileList(NC_FILES_RIGHT);
+            ncLeftHighlight = 0;
+            ncRightHighlight = 0;
+        }
+
+        function startDosDefrag() {
+            if (dosDefragAnimationId) return;
+            resizeDosDefrag();
+            if (!dosDefragCtx) return;
+            dosDefragLastDraw = performance.now();
+            ncLeftNextMove = dosDefragLastDraw + 1200;
+            ncRightNextMove = dosDefragLastDraw + 1200;
+            dosDefragAnimationId = requestAnimationFrame(drawDosDefrag);
+        }
+
+        function stopDosDefrag() {
+            if (dosDefragAnimationId) {
+                cancelAnimationFrame(dosDefragAnimationId);
+                dosDefragAnimationId = null;
+            }
+            const canvas = document.getElementById('dosDefrag');
+            if (canvas && dosDefragCtx) {
+                dosDefragCtx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function updateDosDefrag() {
+            if (getCurrentTheme() === 'dos-blue') {
+                startDosDefrag();
+            } else {
+                stopDosDefrag();
+            }
+        }
+
+        // Dithered plasma ambient background for CGA - on its own
+        // #cgaStarfield canvas (id/class kept from the earlier
+        // twinkling-starfield effect this replaced, to avoid an unrelated
+        // HTML/CSS rename). The same flowing sine-wave plasma field as
+        // Breadbin Blue's, but quantized down to CGA's real 4-color
+        // high-intensity palette (black/cyan/magenta/white) through an
+        // ordered Bayer dither pattern - the actual period technique CGA
+        // software used to fake more colors/shades than the hardware
+        // could really display. Small dither cells (not Breadbin's larger
+        // ones) to read as properly blocky/low-res CGA pixels.
+        let cgaStarfieldCtx = null;
+        const CGA_DITHER_COLORS = ['#000000', '#55ffff', '#ff55ff', '#ffffff'];
+        const CGA_DITHER_MATRIX = [
+            [0, 8, 2, 10],
+            [12, 4, 14, 6],
+            [3, 11, 1, 9],
+            [15, 7, 13, 5]
+        ];
+        const CGA_DITHER_CELL = 4;
+        let cgaStarfieldAnimationId = null;
+        let cgaStarfieldLastDraw = 0;
+
+        function drawCgaStarfield(timestamp) {
+            const canvas = document.getElementById('cgaStarfield');
+            if (!canvas || getCurrentTheme() !== 'cga') return;
+            if (!cgaStarfieldCtx) resizeCgaStarfield();
+            if (!cgaStarfieldCtx) return;
+
+            const dt = timestamp - cgaStarfieldLastDraw;
+            if (dt < 50) {
+                cgaStarfieldAnimationId = requestAnimationFrame(drawCgaStarfield);
+                return;
+            }
+            cgaStarfieldLastDraw = timestamp;
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const t = timestamp * 0.0006;
+            for (let y = 0; y < height; y += CGA_DITHER_CELL) {
+                for (let x = 0; x < width; x += CGA_DITHER_CELL) {
+                    const value = Math.sin(x * 0.03 + t)
+                        + Math.sin(y * 0.035 + t * 1.2)
+                        + Math.sin((x + y) * 0.02 + t * 0.8)
+                        + Math.sin(Math.sqrt(x * x + y * y) * 0.025 - t * 1.4);
+                    const normalized = (value + 4) / 8;
+                    const scaled = normalized * CGA_DITHER_COLORS.length;
+                    const level = Math.floor(scaled);
+                    const frac = scaled - level;
+                    const dx = (x / CGA_DITHER_CELL) % 4;
+                    const dy = (y / CGA_DITHER_CELL) % 4;
+                    const threshold = CGA_DITHER_MATRIX[dy][dx] / 16;
+                    const ditheredLevel = frac > threshold ? level + 1 : level;
+                    const clamped = Math.max(0, Math.min(CGA_DITHER_COLORS.length - 1, ditheredLevel));
+                    cgaStarfieldCtx.fillStyle = CGA_DITHER_COLORS[clamped];
+                    cgaStarfieldCtx.fillRect(x, y, CGA_DITHER_CELL, CGA_DITHER_CELL);
+                }
+            }
+
+            cgaStarfieldAnimationId = requestAnimationFrame(drawCgaStarfield);
+        }
+
+        function resizeCgaStarfield() {
+            const canvas = document.getElementById('cgaStarfield');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            cgaStarfieldCtx = ctx;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            cgaStarfieldCtx.scale(dpr, dpr);
+        }
+
+        function startCgaStarfield() {
+            if (cgaStarfieldAnimationId) return;
+            resizeCgaStarfield();
+            if (!cgaStarfieldCtx) return;
+            cgaStarfieldLastDraw = performance.now();
+            cgaStarfieldAnimationId = requestAnimationFrame(drawCgaStarfield);
+        }
+
+        function stopCgaStarfield() {
+            if (cgaStarfieldAnimationId) {
+                cancelAnimationFrame(cgaStarfieldAnimationId);
+                cgaStarfieldAnimationId = null;
+            }
+            const canvas = document.getElementById('cgaStarfield');
+            if (canvas && cgaStarfieldCtx) {
+                cgaStarfieldCtx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function updateCgaStarfield() {
+            if (getCurrentTheme() === 'cga') {
+                startCgaStarfield();
+            } else {
+                stopCgaStarfield();
+            }
+        }
+
+        // Classic demoscene plasma field for Breadbin Blue - on the same
+        // #breadbinSprites canvas (id/class kept from the earlier
+        // blinking-sprite effect this replaced, to avoid an unrelated
+        // HTML/CSS rename). Four combined sine waves sampled on a coarse
+        // grid (not per-pixel - far too much trig for 60fps) and mapped
+        // through a lookup table built from the theme's own palette, so
+        // it's cheap to redraw in full every tick. Unlike the sprite
+        // field or the raster-bars/scrolltext combo tried before it, this
+        // is a soft continuous field with no hard edges, so it doesn't
+        // need to dodge the header/footer/panels the way those did - it
+        // just runs across the whole canvas at low opacity and reads
+        // fine wherever it happens to peek through.
+        let breadbinSpriteCtx = null;
+        let breadbinSpriteAnimationId = null;
+        let breadbinSpriteLastDraw = 0;
+        let breadbinPlasmaPalette = null;
+        const BREADBIN_SPRITE_COLORS = ['#7869C4', '#67B6BD', '#94E089', '#BFCE72', '#d19a5a', '#B86962', '#ffffff'];
+        const BREADBIN_PLASMA_CELL = 10;
+
+        function breadbinHexToRgb(hex) {
+            const n = parseInt(hex.slice(1), 16);
+            return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+        }
+
+        function makeBreadbinPlasmaPalette() {
+            const stops = BREADBIN_SPRITE_COLORS.map(breadbinHexToRgb);
+            const palette = new Array(256);
+            for (let i = 0; i < 256; i++) {
+                const t = (i / 256) * stops.length;
+                const idx = Math.floor(t) % stops.length;
+                const nextIdx = (idx + 1) % stops.length;
+                const frac = t - Math.floor(t);
+                const a = stops[idx], b = stops[nextIdx];
+                const r = Math.round(a[0] + (b[0] - a[0]) * frac);
+                const g = Math.round(a[1] + (b[1] - a[1]) * frac);
+                const bl = Math.round(a[2] + (b[2] - a[2]) * frac);
+                palette[i] = `rgb(${r},${g},${bl})`;
+            }
+            return palette;
+        }
+
+        function drawBreadbinSprites(timestamp) {
+            const canvas = document.getElementById('breadbinSprites');
+            if (!canvas || getCurrentTheme() !== 'breadbin-blue') return;
+            if (!breadbinSpriteCtx) resizeBreadbinSprites();
+            if (!breadbinSpriteCtx) return;
+
+            const dt = timestamp - breadbinSpriteLastDraw;
+            if (dt < 60) {
+                breadbinSpriteAnimationId = requestAnimationFrame(drawBreadbinSprites);
+                return;
+            }
+            breadbinSpriteLastDraw = timestamp;
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const t = timestamp * 0.0006;
+            for (let y = 0; y < height; y += BREADBIN_PLASMA_CELL) {
+                for (let x = 0; x < width; x += BREADBIN_PLASMA_CELL) {
+                    const value = Math.sin(x * 0.02 + t)
+                        + Math.sin(y * 0.025 + t * 1.3)
+                        + Math.sin((x + y) * 0.015 + t * 0.7)
+                        + Math.sin(Math.sqrt(x * x + y * y) * 0.02 - t * 1.5);
+                    const normalized = Math.floor(((value + 4) / 8) * 255) & 255;
+                    breadbinSpriteCtx.fillStyle = breadbinPlasmaPalette[normalized];
+                    breadbinSpriteCtx.fillRect(x, y, BREADBIN_PLASMA_CELL, BREADBIN_PLASMA_CELL);
+                }
+            }
+
+            breadbinSpriteAnimationId = requestAnimationFrame(drawBreadbinSprites);
+        }
+
+        function resizeBreadbinSprites() {
+            const canvas = document.getElementById('breadbinSprites');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            breadbinSpriteCtx = ctx;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            breadbinSpriteCtx.scale(dpr, dpr);
+            if (!breadbinPlasmaPalette) breadbinPlasmaPalette = makeBreadbinPlasmaPalette();
+        }
+
+        function startBreadbinSprites() {
+            if (breadbinSpriteAnimationId) return;
+            resizeBreadbinSprites();
+            if (!breadbinSpriteCtx) return;
+            breadbinSpriteLastDraw = performance.now();
+            breadbinSpriteAnimationId = requestAnimationFrame(drawBreadbinSprites);
+        }
+
+        function stopBreadbinSprites() {
+            if (breadbinSpriteAnimationId) {
+                cancelAnimationFrame(breadbinSpriteAnimationId);
+                breadbinSpriteAnimationId = null;
+            }
+            const canvas = document.getElementById('breadbinSprites');
+            if (canvas && breadbinSpriteCtx) {
+                breadbinSpriteCtx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function updateBreadbinSprites() {
+            if (getCurrentTheme() === 'breadbin-blue') {
+                startBreadbinSprites();
+            } else {
+                stopBreadbinSprites();
+            }
+        }
+
+        let digitalFrontierCtx = null;
+        let dfStreaks = [];
+        let dfAnimationId = null;
+        let dfLastDraw = 0;
+        let dfLastSpawn = 0;
+        let dfNextSpawnDelay = 0;
+        const DF_STREAK_COLORS = ['#00d9ff', '#00d9ff', '#00d9ff', '#ff9d4d'];
+        const DF_STREAK_DURATION = 2200;
+        const DF_STREAK_TRAIL_LENGTH = 220;
+        const DF_MAX_STREAKS = 3;
+
+        function makeDigitalFrontierStreak(width, height, timestamp) {
+            const axis = Math.random() < 0.5 ? 'h' : 'v';
+            return {
+                axis,
+                cross: axis === 'h' ? Math.random() * height : Math.random() * width,
+                start: timestamp,
+                duration: DF_STREAK_DURATION * (0.8 + Math.random() * 0.5),
+                color: DF_STREAK_COLORS[Math.floor(Math.random() * DF_STREAK_COLORS.length)]
+            };
+        }
+
+        function drawDigitalFrontier(timestamp) {
+            const canvas = document.getElementById('digitalFrontierStreaks');
+            if (!canvas || getCurrentTheme() !== 'digital-frontier') return;
+            if (!digitalFrontierCtx) resizeDigitalFrontier();
+            if (!digitalFrontierCtx) return;
+
+            const dt = timestamp - dfLastDraw;
+            if (dt < 50) {
+                dfAnimationId = requestAnimationFrame(drawDigitalFrontier);
+                return;
+            }
+            dfLastDraw = timestamp;
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            digitalFrontierCtx.clearRect(0, 0, width, height);
+
+            if (timestamp - dfLastSpawn > dfNextSpawnDelay && dfStreaks.length < DF_MAX_STREAKS) {
+                dfStreaks.push(makeDigitalFrontierStreak(width, height, timestamp));
+                dfLastSpawn = timestamp;
+                dfNextSpawnDelay = 1500 + Math.random() * 2500;
+            }
+            dfStreaks = dfStreaks.filter(s => timestamp - s.start < s.duration);
+
+            for (const streak of dfStreaks) {
+                const t = (timestamp - streak.start) / streak.duration;
+                const travel = streak.axis === 'h' ? width : height;
+                const headPos = t * (travel + DF_STREAK_TRAIL_LENGTH) - DF_STREAK_TRAIL_LENGTH;
+                const tailPos = headPos - DF_STREAK_TRAIL_LENGTH;
+                if (headPos < 0 || tailPos > travel) continue;
+
+                const x1 = streak.axis === 'h' ? Math.max(0, tailPos) : streak.cross;
+                const y1 = streak.axis === 'h' ? streak.cross : Math.max(0, tailPos);
+                const x2 = streak.axis === 'h' ? Math.min(width, headPos) : streak.cross;
+                const y2 = streak.axis === 'h' ? streak.cross : Math.min(height, headPos);
+
+                const grad = streak.axis === 'h'
+                    ? digitalFrontierCtx.createLinearGradient(tailPos, streak.cross, headPos, streak.cross)
+                    : digitalFrontierCtx.createLinearGradient(streak.cross, tailPos, streak.cross, headPos);
+                grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                grad.addColorStop(1, streak.color);
+
+                digitalFrontierCtx.strokeStyle = grad;
+                digitalFrontierCtx.lineWidth = 2;
+                digitalFrontierCtx.shadowColor = streak.color;
+                digitalFrontierCtx.shadowBlur = 8;
+                digitalFrontierCtx.beginPath();
+                digitalFrontierCtx.moveTo(x1, y1);
+                digitalFrontierCtx.lineTo(x2, y2);
+                digitalFrontierCtx.stroke();
+            }
+            digitalFrontierCtx.shadowBlur = 0;
+
+            dfAnimationId = requestAnimationFrame(drawDigitalFrontier);
+        }
+
+        function resizeDigitalFrontier() {
+            const canvas = document.getElementById('digitalFrontierStreaks');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            digitalFrontierCtx = ctx;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            digitalFrontierCtx.scale(dpr, dpr);
+            dfStreaks = [];
+        }
+
+        function startDigitalFrontier() {
+            if (dfAnimationId) return;
+            resizeDigitalFrontier();
+            if (!digitalFrontierCtx) return;
+            dfLastDraw = performance.now();
+            dfLastSpawn = dfLastDraw;
+            dfNextSpawnDelay = 400 + Math.random() * 800;
+            dfAnimationId = requestAnimationFrame(drawDigitalFrontier);
+        }
+
+        function stopDigitalFrontier() {
+            if (dfAnimationId) {
+                cancelAnimationFrame(dfAnimationId);
+                dfAnimationId = null;
+            }
+            const canvas = document.getElementById('digitalFrontierStreaks');
+            if (canvas && digitalFrontierCtx) {
+                digitalFrontierCtx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+            dfStreaks = [];
+        }
+
+        function updateDigitalFrontier() {
+            if (getCurrentTheme() === 'digital-frontier') {
+                startDigitalFrontier();
+            } else {
+                stopDigitalFrontier();
+            }
+        }
+
+        // "Bliss" homage for Luna Blue - the rolling-hill-under-blue-sky
+        // scene, a nod to Windows XP's default wallpaper (its Luna visual
+        // style is this theme's namesake). Mostly a static composed
+        // scene like Vaporwave's horizon, plus a handful of clouds
+        // drifting slowly across the sky - the one animated element,
+        // small and diffuse like the other continuously-animated themes.
+        let lunaBlissCtx = null;
+        let lunaClouds = [];
+        let lunaBlissAnimationId = null;
+        let lunaBlissLastDraw = 0;
+        const LUNA_CLOUD_COUNT = 5;
+
+        function makeLunaClouds(width, height) {
+            const clouds = new Array(LUNA_CLOUD_COUNT);
+            for (let i = 0; i < LUNA_CLOUD_COUNT; i++) {
+                clouds[i] = {
+                    x: Math.random() * width,
+                    y: height * (0.08 + Math.random() * 0.4),
+                    scale: 0.6 + Math.random() * 0.9,
+                    speed: 4 + Math.random() * 10,
+                    alpha: 0.55 + Math.random() * 0.35
+                };
+            }
+            return clouds;
+        }
+
+        function drawLunaCloud(ctx, cloud) {
+            const { x, y, scale, alpha } = cloud;
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.ellipse(x, y, 40 * scale, 16 * scale, 0, 0, Math.PI * 2);
+            ctx.ellipse(x - 30 * scale, y + 6 * scale, 26 * scale, 14 * scale, 0, 0, Math.PI * 2);
+            ctx.ellipse(x + 32 * scale, y + 5 * scale, 28 * scale, 15 * scale, 0, 0, Math.PI * 2);
+            ctx.ellipse(x - 10 * scale, y - 10 * scale, 24 * scale, 16 * scale, 0, 0, Math.PI * 2);
+            ctx.ellipse(x + 14 * scale, y - 8 * scale, 22 * scale, 14 * scale, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawLunaBliss(timestamp) {
+            const canvas = document.getElementById('lunaBliss');
+            if (!canvas || getCurrentTheme() !== 'luna-blue') return;
+            if (!lunaBlissCtx) resizeLunaBliss();
+            if (!lunaBlissCtx) return;
+
+            const dt = timestamp - lunaBlissLastDraw;
+            if (dt < 50) {
+                lunaBlissAnimationId = requestAnimationFrame(drawLunaBliss);
+                return;
+            }
+            const elapsedSeconds = dt / 1000;
+            lunaBlissLastDraw = timestamp;
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const horizonY = height * 0.8;
+
+            const sky = lunaBlissCtx.createLinearGradient(0, 0, 0, horizonY);
+            sky.addColorStop(0, '#173F8C');
+            sky.addColorStop(0.55, '#5C93EE');
+            sky.addColorStop(1, '#DCEFFF');
+            lunaBlissCtx.globalAlpha = 1;
+            lunaBlissCtx.fillStyle = sky;
+            lunaBlissCtx.fillRect(0, 0, width, height);
+
+            for (const cloud of lunaClouds) {
+                cloud.x += cloud.speed * elapsedSeconds;
+                const cloudWidth = 90 * cloud.scale;
+                if (cloud.x - cloudWidth > width) {
+                    cloud.x = -cloudWidth;
+                    cloud.y = height * (0.08 + Math.random() * 0.4);
+                }
+                drawLunaCloud(lunaBlissCtx, cloud);
+            }
+            lunaBlissCtx.globalAlpha = 1;
+
+            const hill = lunaBlissCtx.createLinearGradient(0, horizonY - height * 0.12, 0, height);
+            hill.addColorStop(0, '#8ED43C');
+            hill.addColorStop(1, '#3F8A12');
+            lunaBlissCtx.fillStyle = hill;
+            lunaBlissCtx.beginPath();
+            lunaBlissCtx.moveTo(0, horizonY);
+            lunaBlissCtx.bezierCurveTo(width * 0.22, horizonY - height * 0.12, width * 0.38, horizonY + height * 0.05, width * 0.58, horizonY - height * 0.03);
+            lunaBlissCtx.bezierCurveTo(width * 0.78, horizonY - height * 0.1, width * 0.9, horizonY + height * 0.03, width, horizonY - height * 0.02);
+            lunaBlissCtx.lineTo(width, height);
+            lunaBlissCtx.lineTo(0, height);
+            lunaBlissCtx.closePath();
+            lunaBlissCtx.fill();
+
+            lunaBlissAnimationId = requestAnimationFrame(drawLunaBliss);
+        }
+
+        function resizeLunaBliss() {
+            const canvas = document.getElementById('lunaBliss');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            lunaBlissCtx = ctx;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            lunaBlissCtx.scale(dpr, dpr);
+            lunaClouds = makeLunaClouds(window.innerWidth, window.innerHeight);
+        }
+
+        function startLunaBliss() {
+            if (lunaBlissAnimationId) return;
+            resizeLunaBliss();
+            if (!lunaBlissCtx) return;
+            lunaBlissLastDraw = performance.now();
+            lunaBlissAnimationId = requestAnimationFrame(drawLunaBliss);
+        }
+
+        function stopLunaBliss() {
+            if (lunaBlissAnimationId) {
+                cancelAnimationFrame(lunaBlissAnimationId);
+                lunaBlissAnimationId = null;
+            }
+            const canvas = document.getElementById('lunaBliss');
+            if (canvas && lunaBlissCtx) {
+                lunaBlissCtx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function updateLunaBliss() {
+            if (getCurrentTheme() === 'luna-blue') {
+                startLunaBliss();
+            } else {
+                stopLunaBliss();
+            }
+        }
+
+        // Boot-log ambient background for Amber - lines of fake
+        // kernel/system boot messages printed one at a time, like a real
+        // terminal rather than a smooth-scrolling ticker: each new line
+        // appears at a randomized interval (sometimes in rapid
+        // succession, sometimes with a short pause, like a real boot
+        // sequence moving through fast and slow steps), snapping the
+        // existing lines up by one row rather than continuously scrolling
+        // pixel-by-pixel. Brightness fades toward the top (bottom =
+        // newest = full opacity) to mimic CRT phosphor persistence.
+        let amberBootLogCtx = null;
+        let amberLogLines = [];
+        let amberVisibleRows = 0;
+        let amberNextLineTime = 0;
+        let amberBootLogAnimationId = null;
+        let amberBootLogLastDraw = 0;
+        const AMBER_LINE_HEIGHT = 16;
+        const AMBER_BOOT_LOG_MESSAGES = [
+            '[  OK  ] Initializing memory subsystem...',
+            '[  OK  ] Mounting /dev/sda1 on /...',
+            '[  OK  ] Loading kernel modules...',
+            '[  OK  ] Starting network interface eth0...',
+            '[  OK  ] Detecting hardware devices...',
+            '[  OK  ] Starting system logger...',
+            '[  OK  ] Checking filesystem integrity...',
+            '[  OK  ] Loading device drivers...',
+            '[  OK  ] Starting cron daemon...',
+            '[  OK  ] Initializing swap space...',
+            '[ WARN ] Clock skew detected, adjusting...',
+            '[  OK  ] Starting SSH daemon...',
+            '[  OK  ] Bringing up loopback interface...',
+            '[  OK  ] Calibrating delay loop...',
+            '[  OK  ] Starting local services...',
+            'Kernel command line: root=/dev/sda1 ro quiet',
+            'CPU0: base frequency 100MHz, cache 512KB',
+            'Total memory: 640K conventional, 15360K extended'
+        ];
+
+        function drawAmberBootLog(timestamp) {
+            const canvas = document.getElementById('amberBootLog');
+            if (!canvas || getCurrentTheme() !== 'amber') return;
+            if (!amberBootLogCtx) resizeAmberBootLog();
+            if (!amberBootLogCtx) return;
+
+            const dt = timestamp - amberBootLogLastDraw;
+            if (dt < 50) {
+                amberBootLogAnimationId = requestAnimationFrame(drawAmberBootLog);
+                return;
+            }
+            amberBootLogLastDraw = timestamp;
+
+            if (timestamp >= amberNextLineTime) {
+                amberLogLines.push(AMBER_BOOT_LOG_MESSAGES[Math.floor(Math.random() * AMBER_BOOT_LOG_MESSAGES.length)]);
+                if (amberLogLines.length > amberVisibleRows) {
+                    amberLogLines.shift();
+                }
+                amberNextLineTime = timestamp + 60 + Math.random() * 640;
+            }
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            amberBootLogCtx.clearRect(0, 0, width, height);
+            for (let i = 0; i < amberLogLines.length; i++) {
+                const y = i * AMBER_LINE_HEIGHT;
+                const fadeT = Math.max(0, Math.min(1, y / height));
+                amberBootLogCtx.globalAlpha = 0.25 + 0.55 * fadeT;
+                amberBootLogCtx.fillStyle = '#FFB000';
+                amberBootLogCtx.fillText(amberLogLines[i], 16, y);
+            }
+            amberBootLogCtx.globalAlpha = 1;
+
+            amberBootLogAnimationId = requestAnimationFrame(drawAmberBootLog);
+        }
+
+        function resizeAmberBootLog() {
+            const canvas = document.getElementById('amberBootLog');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            amberBootLogCtx = ctx;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            amberBootLogCtx.scale(dpr, dpr);
+            amberBootLogCtx.font = '13px "Courier New", monospace';
+            amberVisibleRows = Math.ceil(window.innerHeight / AMBER_LINE_HEIGHT);
+            amberLogLines = [];
+            amberNextLineTime = 0;
+        }
+
+        function startAmberBootLog() {
+            if (amberBootLogAnimationId) return;
+            resizeAmberBootLog();
+            if (!amberBootLogCtx) return;
+            amberBootLogLastDraw = performance.now();
+            amberBootLogAnimationId = requestAnimationFrame(drawAmberBootLog);
+        }
+
+        function stopAmberBootLog() {
+            if (amberBootLogAnimationId) {
+                cancelAnimationFrame(amberBootLogAnimationId);
+                amberBootLogAnimationId = null;
+            }
+            const canvas = document.getElementById('amberBootLog');
+            if (canvas && amberBootLogCtx) {
+                amberBootLogCtx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function updateAmberBootLog() {
+            if (getCurrentTheme() === 'amber') {
+                startAmberBootLog();
+            } else {
+                stopAmberBootLog();
+            }
+        }
+
+        // Bouncing spectrum-analyzer ambient background for MP3 Player -
+        // the single most recognizable visual signature of that late-90s/
+        // early-2000s skinnable media-player era. A row of bars along the
+        // bottom of the viewport, each easing toward a new random target
+        // height on its own timer (no real audio behind it), colored
+        // bottom-to-top in the classic green-yellow-orange-red EQ gradient,
+        // with a small bright "peak-hold" cap that rises with its bar and
+        // falls back slowly - the authentic touch real hardware/software
+        // equalizers had.
+        let mp3VisualizerCtx = null;
+        let mp3Bars = [];
+        let mp3VisualizerAnimationId = null;
+        let mp3VisualizerLastDraw = 0;
+        let mp3MaxBarHeight = 0;
+        const MP3_BAR_WIDTH = 6;
+        const MP3_BAR_GAP = 3;
+
+        function makeMp3Bars(width) {
+            const barSlot = MP3_BAR_WIDTH + MP3_BAR_GAP;
+            const count = Math.max(12, Math.floor(width / barSlot));
+            const bars = new Array(count);
+            for (let i = 0; i < count; i++) {
+                bars[i] = {
+                    height: Math.random() * mp3MaxBarHeight,
+                    target: Math.random() * mp3MaxBarHeight,
+                    nextChange: performance.now() + 150 + Math.random() * 350,
+                    peak: 0
+                };
+            }
+            return bars;
+        }
+
+        function drawMp3Visualizer(timestamp) {
+            const canvas = document.getElementById('mp3Visualizer');
+            if (!canvas || getCurrentTheme() !== 'mp3-player') return;
+            if (!mp3VisualizerCtx) resizeMp3Visualizer();
+            if (!mp3VisualizerCtx) return;
+
+            const dt = timestamp - mp3VisualizerLastDraw;
+            if (dt < 50) {
+                mp3VisualizerAnimationId = requestAnimationFrame(drawMp3Visualizer);
+                return;
+            }
+            mp3VisualizerLastDraw = timestamp;
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const baseline = height;
+            mp3VisualizerCtx.clearRect(0, 0, width, height);
+
+            // One gradient reused for every bar - a pure vertical gradient's
+            // color at any point only depends on y, so it's identical for
+            // every bar regardless of its x position.
+            const grad = mp3VisualizerCtx.createLinearGradient(0, baseline, 0, baseline - mp3MaxBarHeight);
+            grad.addColorStop(0, '#3DDC5A');
+            grad.addColorStop(0.55, '#E8E24A');
+            grad.addColorStop(0.8, '#F2A73B');
+            grad.addColorStop(1, '#F24B4B');
+            mp3VisualizerCtx.fillStyle = grad;
+
+            const barSlot = MP3_BAR_WIDTH + MP3_BAR_GAP;
+            for (let i = 0; i < mp3Bars.length; i++) {
+                const bar = mp3Bars[i];
+                if (timestamp >= bar.nextChange) {
+                    bar.target = Math.random() * mp3MaxBarHeight;
+                    bar.nextChange = timestamp + 150 + Math.random() * 350;
+                }
+                bar.height += (bar.target - bar.height) * 0.25;
+                if (bar.height > bar.peak) {
+                    bar.peak = bar.height;
+                } else {
+                    bar.peak -= mp3MaxBarHeight * 0.02;
+                    if (bar.peak < bar.height) bar.peak = bar.height;
+                }
+
+                const x = i * barSlot;
+                const barHeight = Math.max(2, bar.height);
+                mp3VisualizerCtx.fillStyle = grad;
+                mp3VisualizerCtx.fillRect(x, baseline - barHeight, MP3_BAR_WIDTH, barHeight);
+
+                mp3VisualizerCtx.fillStyle = '#ffffff';
+                mp3VisualizerCtx.fillRect(x, baseline - bar.peak - 2, MP3_BAR_WIDTH, 2);
+            }
+
+            mp3VisualizerAnimationId = requestAnimationFrame(drawMp3Visualizer);
+        }
+
+        function resizeMp3Visualizer() {
+            const canvas = document.getElementById('mp3Visualizer');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            mp3VisualizerCtx = ctx;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            mp3VisualizerCtx.scale(dpr, dpr);
+            mp3MaxBarHeight = Math.min(220, window.innerHeight * 0.28);
+            mp3Bars = makeMp3Bars(window.innerWidth);
+        }
+
+        function startMp3Visualizer() {
+            if (mp3VisualizerAnimationId) return;
+            resizeMp3Visualizer();
+            if (!mp3VisualizerCtx) return;
+            mp3VisualizerLastDraw = performance.now();
+            mp3VisualizerAnimationId = requestAnimationFrame(drawMp3Visualizer);
+        }
+
+        function stopMp3Visualizer() {
+            if (mp3VisualizerAnimationId) {
+                cancelAnimationFrame(mp3VisualizerAnimationId);
+                mp3VisualizerAnimationId = null;
+            }
+            const canvas = document.getElementById('mp3Visualizer');
+            if (canvas && mp3VisualizerCtx) {
+                mp3VisualizerCtx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function updateMp3Visualizer() {
+            if (getCurrentTheme() === 'mp3-player') {
+                startMp3Visualizer();
+            } else {
+                stopMp3Visualizer();
+            }
+        }
+
         function updateFavicon() {
             const link = document.getElementById('faviconLink');
             if (!link) return;
             const theme = getCurrentTheme();
-            // Every theme except dark/light has a matching
-            // static/favicon-<theme>.svg; dark and light use the plain one.
+            // Every theme except dark has a matching
+            // static/favicon-<theme>.svg; dark uses the plain one.
             // The synthesized OhMyDebn custom theme has no favicon of its
             // own (colors vary per palette) - reuse the hand-built
             // "OhMyDebn" theme's favicon as the closest branding match.
@@ -619,17 +1739,37 @@
                 link.href = 'static/favicon-ohmydebn.svg';
                 return;
             }
-            link.href = (theme === 'dark' || theme === 'light')
+            link.href = (theme === 'dark')
                 ? 'static/favicon.svg'
                 : `static/favicon-${theme}.svg`;
         }
 
-        window.addEventListener('resize', resizeCodeRain);
+        // Single source of truth for "every ambient theme background
+        // effect" - setTheme()/applyCustomTheme()/init() all need to
+        // re-evaluate every effect's on/off state on every theme change
+        // (each updater itself checks getCurrentTheme() and starts/stops
+        // accordingly), and the resize/visibilitychange listeners just
+        // below need to reach every effect too. Adding a new ambient
+        // theme now only means adding one entry to each of these three
+        // arrays, rather than a new call in 4+ separate places.
+        const AMBIENT_THEME_RESIZERS = [resizeCodeRain, resizeBlockRain, resizeVaporwaveGrid, resizeDosDefrag, resizeCgaStarfield, resizeBreadbinSprites, resizeDigitalFrontier, resizeLunaBliss, resizeAmberBootLog, resizeMp3Visualizer];
+        const AMBIENT_THEME_UPDATERS = [updateCodeRain, updateBlockRain, updateVaporwaveGrid, updateDosDefrag, updateCgaStarfield, updateBreadbinSprites, updateDigitalFrontier, updateLunaBliss, updateAmberBootLog, updateMp3Visualizer];
+        const AMBIENT_THEME_STOPPERS = [stopCodeRain, stopBlockRain, stopVaporwaveGrid, stopDosDefrag, stopCgaStarfield, stopBreadbinSprites, stopDigitalFrontier, stopLunaBliss, stopAmberBootLog, stopMp3Visualizer];
+
+        function updateAllAmbientThemes() {
+            AMBIENT_THEME_UPDATERS.forEach(fn => fn());
+        }
+
+        function stopAllAmbientThemes() {
+            AMBIENT_THEME_STOPPERS.forEach(fn => fn());
+        }
+
+        AMBIENT_THEME_RESIZERS.forEach(fn => window.addEventListener('resize', fn));
         document.addEventListener('visibilitychange', function() {
             if (document.hidden) {
-                stopCodeRain();
+                stopAllAmbientThemes();
             } else {
-                updateCodeRain();
+                updateAllAmbientThemes();
             }
         });
 
@@ -689,12 +1829,15 @@
             document.getElementById('themesModal').classList.remove('active');
             revertTheme();
             menuBaseTheme = null;
+            themeTileNavSelection = null;
         }
 
-        // Shared by every modal whose backdrop <div> has onclick="handleModalBackdropClick(event, closeXModal)" -
-        // event.currentTarget is always that backdrop div itself (where the
-        // listener is attached), so a click lands on the backdrop (not a
-        // child element) exactly when target === currentTarget.
+        // Backdrop-click helper: closes exactly when the click landed on
+        // the backdrop div itself (not a child element), i.e. when
+        // target === currentTarget. The static modals now route backdrop
+        // clicks through the delegated 'backdrop' STATIC_ACTIONS entry
+        // instead (same target check), but this helper's logic is still
+        // the reference implementation the tests exercise directly.
         function handleModalBackdropClick(event, closeFn) {
             if (event.target === event.currentTarget) closeFn();
         }
@@ -980,6 +2123,27 @@
             SANKEY_MAX_NODES_PER_COLUMN: 50,
             TABLE_PAGE_SIZE: 100,
         };
+        // Page size for every Aggregation Table's Prev/Next pagination
+        // (matches Security Onion's own aggregation-table UX) - user-
+        // adjustable via the "Items per page" selector (changeAggPageSize),
+        // persisted across sessions the same way theme/collapse-state
+        // preferences already are. db.py's AGGREGATION_TOP_N is only the
+        // fallback default the server uses if a request omits page_size
+        // entirely; the actual page size for every real request is always
+        // whatever this is set to.
+        const AGG_PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+        const AGG_PAGE_SIZE_STORAGE_KEY = 'socrates_aggPageSize';
+        // var (not let/const) like every other piece of mutable top-level
+        // state in this file (hiddenAggregations, aggPage, currentMd5,
+        // advancedMode, ...) - only var/function declarations attach to the
+        // real global object, so a jsdom test's own separate indirect-eval
+        // invocation (see tests/jsdom_helper.py, window["eval"]) can
+        // actually see and mutate it; a let here would be invisible outside
+        // whichever indirect eval originally loaded this file.
+        var AGG_PAGE_SIZE = (() => {
+            const stored = parseInt(safeStorageGet(localStorage, AGG_PAGE_SIZE_STORAGE_KEY), 10);
+            return AGG_PAGE_SIZE_OPTIONS.includes(stored) ? stored : CONFIG.AGGREGATION_TOP_N;
+        })();
         const DEFAULT_SAMPLE_URL = 'https://www.malware-traffic-analysis.net/2026/02/03/2026-02-03-GuLoader-for-AgentTesla-style-infection-with-FTP-data-exfil.pcap.zip';
         const SAMPLE_LOG_URL = 'https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES/raw/refs/heads/master/Defense%20Evasion/apt10_jjs_sideloading_prochollowing_persist_as_service_sysmon_1_7_8_13.evtx';
         const SAMPLE_BINARY_URL = 'https://secure.eicar.org/eicar.com';
@@ -1010,14 +2174,15 @@
         const CALENDAR_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>';
         const NOTES_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M14 3v4a1 1 0 0 0 1 1h4"></path><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"></path><line x1="9" y1="9" x2="10" y2="9"></line><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>';
         const EXPAND_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>';
+        const LINK_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>';
         const NOTES_MAX_LENGTH = 10000;
         const ROW_NOTE_MAX_LENGTH = 500; // mirrors config.MAX_ROW_NOTE_LENGTH
         function getWelcomeHelpContent() { return `
             <p style="color: var(--text-muted); font-size: 0.95rem;">
-                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is ${getUserMaxUploadSizeMB().toLocaleString()} MB (adjustable in <a href="#" onclick="event.preventDefault(); showSettingsModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Settings</a>).
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Maximum file size is ${getUserMaxUploadSizeMB().toLocaleString()} MB (adjustable in <a href="#" data-action="show-settings-modal" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Settings</a>).
             </p>
             <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
-                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Processing may take a minute or two depending on the size of the file.
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Processing may take a few minutes depending on the size of the file.
             </p>
             <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
                 <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> File types supported:
@@ -1036,27 +2201,27 @@
                         <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Packet Capture</strong></td>
                         <td style="padding: 8px 12px;">.pcap, .pcapng, .cap, .trace</td>
                         <td style="padding: 8px 12px;">Suricata</td>
-                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal(true);" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Multiple Rulesets</a></td>
+                        <td style="padding: 8px 12px;"><a href="#" data-action="show-rules-modal" data-arg="expand-sources" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Multiple Rulesets</a></td>
                     </tr>
                     <tr style="border-bottom: 1px solid var(--bg-tertiary);">
                         <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Logs</strong></td>
                         <td style="padding: 8px 12px;">.evtx, .json, .jsonl, .csv, .xml, .log</td>
                         <td style="padding: 8px 12px;">Zircolite</td>
-                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">SigmaHQ</a></td>
+                        <td style="padding: 8px 12px;"><a href="#" data-action="show-rules-modal" style="color: var(--accent); text-decoration: underline; font-weight: 600;">SigmaHQ</a></td>
                     </tr>
                     <tr>
                         <td style="padding: 8px 12px;"><strong style="color: var(--accent);">Binary / Other</strong></td>
                         <td style="padding: 8px 12px;">.exe, .dll, .elf, .pdf, etc.</td>
                         <td style="padding: 8px 12px;">YARA</td>
-                        <td style="padding: 8px 12px;"><a href="#" onclick="event.preventDefault(); showRulesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">YARA Forge</a></td>
+                        <td style="padding: 8px 12px;"><a href="#" data-action="show-rules-modal" style="color: var(--accent); text-decoration: underline; font-weight: 600;">YARA Forge</a></td>
                     </tr>
                 </tbody>
             </table>
             <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 8px; margin-bottom: 0;">
-                Any of the above file types can be uploaded inside a .zip archive to automatically extract and analyze the first supported file found.
+                Any of the above file types can be uploaded inside a .zip archive - every supported file found is extracted and analyzed as its own independent analysis.
             </p>
             <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 15px;">
-                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Want more fun? Try one of our fun <a href="#" onclick="event.preventDefault(); showThemesModal();" style="color: var(--accent); text-decoration: underline; font-weight: 600;">themes</a>!
+                <span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Want more fun? Try one of our Fun <a href="#" data-action="show-themes-modal" style="color: var(--accent); text-decoration: underline; font-weight: 600;">themes</a>!
             </p>
         `; }
         // Full feature comparison, opened via showSecurityOnionModal() -
@@ -1234,17 +2399,51 @@
         }
 
         function showTab(sectionId, el) {
+            // Both a direct mouse click and navigateStatTabs()'s own
+            // cards[nextIndex].click() funnel through here - a mouse click
+            // is the explicit "I want Left/Right to mean data type again"
+            // signal (see leftRightSwitchesStatTabs's own comment), and
+            // resetting it when navigateStatTabs() itself triggers this is
+            // a harmless no-op (it can only have run while already true).
+            leftRightSwitchesStatTabs = true;
             document.querySelectorAll('.section').forEach(s => s.classList.add('section-hidden'));
             document.getElementById(sectionId).classList.remove('section-hidden');
             document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('tab-active'));
-            if (el) el.classList.add('tab-active');
-            
+            if (el) {
+                el.classList.add('tab-active');
+                // A plain mouse click on a different card than whatever's
+                // currently keyboard-selected (a Left/Right preview, or a
+                // prior Down/Up landing) leaves that ring stuck on a now-
+                // unrelated card, since nothing else clears it on this
+                // path - navigateStatTabs()'s own cards[nextIndex].click()
+                // always targets the SAME card it just rang, so this is a
+                // no-op there. activeColumnStatCards() trusts
+                // verticalNavSelection as the current column's reference
+                // card (see its own comment), so leaving a stray ring
+                // uncleared would point Down/Up at the wrong column after
+                // a real tab change like this one.
+                document.querySelectorAll('.stat-card.keyboard-selected').forEach(card => {
+                    if (card !== el) {
+                        card.classList.remove('keyboard-selected');
+                        if (verticalNavSelection === card) verticalNavSelection = null;
+                    }
+                });
+            }
+
             const eventType = sectionId.replace('section-', '');
             loadTabData(eventType, el);
         }
         
         let tabDataCache = {};
-        
+
+        // Populated by buildAcknowledgedAlertsSection() and read back by
+        // renderAcknowledgedAlertsGroups() - separate from tabDataCache
+        // since the Acknowledged Alerts tab's own fetches use
+        // acknowledged_only=true, a fundamentally different query from
+        // every other tab's (which all exclude acknowledged rows by
+        // default).
+        let acknowledgedAlertsCache = { alert: [], sigmaalert: [] };
+
         async function loadTabData(eventType, activeCard) {
             resetPagination();
             const sectionId = `section-${eventType}`;
@@ -1253,17 +2452,57 @@
             if (activeCard) {
                 activeCard.classList.add('tab-active');
             } else {
+                // Every real stat card carries data-section="section-x"
+                // (see buildStats' own template, dispatched via the
+                // 'show-tab' STATIC_ACTIONS entry) - matched via dataset
+                // rather than parsing a handler attribute string.
                 document.querySelectorAll('.stat-card').forEach(card => {
-                    const onclick = card.getAttribute('onclick');
-                    if (onclick && onclick.includes(eventType)) {
-                        const match = onclick.match(/showTab\('section-([^']+)'\)/);
-                        if (match && match[1] === eventType) {
-                            card.classList.add('tab-active');
-                        }
+                    if (card.dataset.section === 'section-' + eventType) {
+                        card.classList.add('tab-active');
                     }
                 });
             }
-            
+
+            // #sankeyPanel/#aggregations are single, page-level panels
+            // shared across every tab (not per-section - see
+            // socrates.html). #sankeyPanel is toggled visible once for the
+            // whole PCAP-mode session (see the analysis-load code that
+            // sets sankeyPanel.style.display = '') rather than per tab
+            // switch, and #aggregations is only ever touched by the
+            // generic branches below when advancedMode is true (see
+            // buildAggregationsSection's call sites) - with advancedMode
+            // false, nothing downstream ever rewrites it at all. Both are
+            // defaulted back to normal here, before any of the branches
+            // below, so none of them need to remember to do it - only the
+            // dns_heuristics branch turns them off, for the one tab whose
+            // data (aggregated per-domain heuristic scores, not raw flow
+            // events) doesn't fit either model. Without resetting
+            // #aggregations here too, leaving dns_heuristics with
+            // advancedMode off left even the collapsed "▸ Aggregation
+            // Tables" bar permanently missing, not just its expanded
+            // content. Every other branch either doesn't touch these
+            // (acknowledged - a pre-existing gap, not addressed here) or
+            // overwrites their content itself (updateSankeyDiagram(),
+            // buildAggregationsSection()).
+            const sankeyPanel = document.getElementById('sankeyPanel');
+            if (sankeyPanel && !isLogAnalysisMode) sankeyPanel.style.display = '';
+            const aggContainer = document.getElementById('aggregations');
+            if (aggContainer) aggContainer.innerHTML = AGG_COLLAPSED_HTML;
+
+            if (eventType === 'acknowledged') {
+                await buildAcknowledgedAlertsSection();
+                updateFilterBarVisibility();
+                return;
+            }
+
+            if (eventType === 'dns_heuristics') {
+                if (sankeyPanel) sankeyPanel.style.display = 'none';
+                if (aggContainer) aggContainer.innerHTML = '';
+                if (sectionEl) await buildDnsHeuristicsSection();
+                updateFilterBarVisibility();
+                return;
+            }
+
             if (eventType === 'all') {
                 if (canUseScalableFetch()) {
                     if (needsFullBatch('all')) await ensureCappedBatch('all');
@@ -1389,27 +2628,35 @@
             const cellIndex = Array.from(tr.children).indexOf(td);
             const pair = pairs[cellIndex];
             if (!pair) return false;
-            // Must not reach the document-level outside-click listener
-            // showPivotMenu()'s menu relies on to close itself - that
-            // listener would otherwise see this same click as "outside"
-            // the menu that was just created (the menu isn't a DOM
-            // ancestor of the row/cell that was clicked) and immediately
-            // remove it again before the user ever sees it.
+            // The menu created below survives this same click because the
+            // document-level outside-click listener that closes pivot
+            // menus is registered EARLIER than the data-action dispatcher
+            // this runs from - it has already fired (closing any previous
+            // menu) by the time showPivotMenu() runs, and never sees the
+            // brand-new menu as "outside".
             event.stopPropagation();
-            showPivotMenu(event, 'section-' + tr.dataset.eventType, pair[0], pair[1], false, tr);
+            showPivotMenu(event, 'section-' + tr.dataset.eventType, pair[0], pair[1], false, tr, tr.dataset.communityId);
             return true;
         }
 
         // Tracks the single currently-open pivot menu (at most one at a
         // time, same as every other dropdown/modal in this app) so the
-        // outside-click/Escape listeners below know what to close.
+        // outside-click listener below and the main keydown handler's
+        // Escape case (further down in the file) know what to close.
         let activePivotMenuEl = null;
+        // Arrow-key selection within the open pivot menu (see
+        // navigatePivotMenuItems() below) - separate from
+        // verticalNavSelection since the menu is a transient overlay on
+        // top of whatever row opened it, not part of the page's own
+        // vertical list.
+        let pivotMenuNavSelection = null;
 
         function closePivotMenu() {
             if (activePivotMenuEl) {
                 activePivotMenuEl.remove();
                 activePivotMenuEl = null;
             }
+            pivotMenuNavSelection = null;
         }
 
         // Same always-registered-once, contains()-check pattern as the
@@ -1423,15 +2670,16 @@
                 closePivotMenu();
             }
         });
-
-        // Arrow function, not a plain function(e) expression - this file's
-        // hacker-mode easter egg listener elsewhere is located by tests via
-        // a regex matching addEventListener('keydown', ...) followed by a
-        // plain function(e) expression, which would otherwise wrongly
-        // match whichever of the two listeners appears first in the file.
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && activePivotMenuEl) closePivotMenu();
-        });
+        // Escape used to have its own dedicated listener here too, closing
+        // the pivot menu the same way the outside-click listener above
+        // does. Removed - it ran before the main keydown handler further
+        // down the file (listeners fire in registration order), which
+        // raced that handler's own hadSomethingOpen check: activePivotMenuEl
+        // was already null by the time the main handler looked at it, so
+        // Escape closed the pivot menu AND immediately fell through to
+        // showWelcome() in the same keystroke. Folded into the main
+        // handler's own Escape case instead, which closes it before
+        // hadSomethingOpen would otherwise be computed too late to matter.
 
         // The columns list a detail-panel field's label is checked against
         // (see handleDetailValueClick) to decide whether it gets the full
@@ -1446,10 +2694,49 @@
             return getColumnsForType(eventType);
         }
 
-        // Delegated (not a per-value onclick) since htmlRowText returns a
+        // Real user report: most detail-panel fields don't get the full
+        // Include/Exclude/Only menu even though a table-cell click on the
+        // very same underlying data does - because the detail panel's own
+        // labels (htmlRowText's first argument, all over the render*Details
+        // functions below) are more descriptive prose than the terse
+        // column-header strings getColumnsForType() returns and
+        // extract*Value()'s own column-keyed switches expect (e.g. DNS's
+        // detail label 'Query Name' vs the column 'Query'; HTTP's 'User
+        // Agent' vs 'User-Agent'). This maps each such label to its real
+        // column, per event type, so those fields get the full menu too -
+        // filtering on the mapped column name, not the prose label, since
+        // that's what extract*Value()'s switch statements actually key on.
+        // Deliberately NOT exhaustive: only includes a mapping once
+        // verified against the matching extract*Value() case that both
+        // read the exact same underlying field (see the mapping's own
+        // construction notes) - a wrong guess here would produce a
+        // full-looking menu whose Include/Exclude/Only silently filter on
+        // the wrong data, which is worse than the current trimmed menu.
+        // 'Timestamp' (used by every renderer via _formatEventCommon) is
+        // deliberately excluded even though every event type's own 'Time'
+        // column exists in getColumnsForType()'s array - extractValue()
+        // has no matching 'Time' case (falls through to its log-analysis-
+        // only default branch), so a table-cell click on the Time column
+        // already offers a silently-nonfunctional Include/Exclude/Only;
+        // mapping 'Timestamp' here would just reproduce that same existing
+        // gap in a second place rather than close it.
+        const DETAIL_LABEL_TO_COLUMN = {
+            alert: { 'Signature': 'Alert' },
+            protocol_decode: { 'Signature': 'Alert' },
+            dns: { 'Query Name': 'Query', 'Query Type': 'Type' },
+            http: { 'User Agent': 'User-Agent' },
+            tls: { 'SNI': 'SNI / Host' },
+            flow: { 'Pkts to Server': 'Pkts →', 'Pkts to Client': 'Pkts ←', 'Bytes to Server': 'Bytes →', 'Bytes to Client': 'Bytes ←' },
+            filealerts: { 'Rule': 'Rule Name' },
+            dnp3: { 'Source Address': 'Source Addr', 'Destination Address': 'Dest Addr', 'Application Function': 'Function' },
+            pgsql: { 'Command Completed': 'Command', 'Data Rows': 'Rows', 'SSL Accepted': 'SSL' },
+            sigmaalert: { 'Rule Title': 'Rule' },
+        };
+
+        // Delegated (not a per-value listener) since htmlRowText returns a
         // plain HTML string, not a DOM node addEventListener could attach
         // to directly - same reasoning as showPivotMenu's own closures
-        // over onclick-string embedding. Detail-panel fields have no
+        // over inline handler-string embedding. Detail-panel fields have no
         // ready-made column context of their own (unlike a table row,
         // which already carries data-event-type - see pivotDataAttrsHtml),
         // so this resolves it from the detail-row's own preceding
@@ -1465,14 +2752,45 @@
             } catch (e) {
                 return;
             }
-            const [label, value] = pair;
+            const [label, value, isDynamicField] = pair;
             const detailRow = pivotEl.closest('tr.detail-row');
             const collapsedRow = detailRow ? detailRow.previousElementSibling : null;
             const eventType = collapsedRow ? collapsedRow.dataset.eventType : null;
             const columns = detailColumnsForEventType(eventType);
-            const trimmed = !eventType || !columns.includes(label);
+            // A label already matching a real column (e.g. 'Source IP')
+            // is used as-is. Log/Sigma Alert rows are a different case
+            // entirely, not covered by DETAIL_LABEL_TO_COLUMN below: their
+            // detail panel (formatLogEventDetail) labels values with the
+            // RAW json_data field name (e.g. 'SourceIp', 'CommandLine'),
+            // while getColumnsForType('log')'s own columns (via
+            // discoverLogColumns) are the human LABEL for that same field
+            // (e.g. 'Source IP') - _getLabelForField is the exact
+            // conversion extractLogValue()/extractSigmaValue() themselves
+            // already do in reverse, so this must mirror it to land on a
+            // column those functions actually recognize. A harmless no-op
+            // for every other event type's already-real labels, since
+            // LOG_FIELD_LABELS has no matching key for any of them (real
+            // user report: log analysis's own detail panel showed only
+            // Hunt for the same reason the PCAP one originally did).
+            const fieldLabel = _getLabelForField(label);
+            // isDynamicField (see htmlRowText's own comment): a field like
+            // 'Computer' rarely makes discoverLogColumns' own top-6 cut
+            // (getColumnsForType('log')/('sigmaalert') never lists it), so
+            // the columns.includes() checks above would always trim it -
+            // yet extractLogValue()/extractSigmaValue()'s default case
+            // resolves ANY json_data field generically, columns list or
+            // not (real user report: many Matched Event fields on a sigma
+            // alert, e.g. Computer, offered only Hunt for exactly this
+            // reason). Takes priority over the alias map below since it's
+            // a stronger signal - this field is verifiably a real,
+            // generically-filterable json_data key, not a guess.
+            const mappedColumn = columns.includes(label) ? label
+                : columns.includes(fieldLabel) ? fieldLabel
+                : isDynamicField ? fieldLabel
+                : (eventType && DETAIL_LABEL_TO_COLUMN[eventType]?.[label]);
+            const trimmed = !eventType || !mappedColumn;
             event.stopPropagation();
-            showPivotMenu(event, eventType ? 'section-' + eventType : null, label, value, trimmed);
+            showPivotMenu(event, eventType ? 'section-' + eventType : null, mappedColumn || label, value, trimmed, null, collapsedRow ? collapsedRow.dataset.communityId : null);
         });
 
         // Aggregation-table rows (see _renderAggTablesHtml) always carry a
@@ -1497,14 +2815,86 @@
         // Include/Exclude/Only for one row-cell's value (see
         // handleRowCellClick). Built via direct DOM APIs and
         // addEventListener closures over the real col/value, not an
-        // onclick="..." attribute string - col/value can be arbitrary
+        // inline handler attribute string - col/value can be arbitrary
         // attacker-influenced content (a log field, an HTTP header, ...),
-        // and closures sidestep the whole class of onclick-string escaping
+        // and closures sidestep the whole class of handler-string escaping
         // bugs (JSON.stringify-vs-double-quotes, unescaped single quotes)
-        // this codebase otherwise has to guard against explicitly for
-        // every dynamic onclick elsewhere - see TestFilterOnclickQuoting.
-        // Only the visible label text goes through escapeHtml, same as
-        // any other rendered value.
+        // this codebase's generated data-* attributes otherwise guard
+        // against via escapeHtml/encodeURIComponent - see
+        // TestFilterChipDataAttrs. Only the visible label text goes
+        // through escapeHtml, same as any other rendered value.
+        // Non-null only for a row that can be acknowledged (a Suricata
+        // alert or a sigma_alerts row) - anything else (dns, http, a log
+        // row, ...) gets no Acknowledge buttons in showPivotMenu() below.
+        // rowId/identity are read straight off the <tr>'s own dataset
+        // (baked in at render time by rowPrefixCells/buildSigmaAlertRow),
+        // not looked up in tabDataCache - the default (no filter/sort)
+        // view fetches each page through fetchEventsPage()'s own local
+        // `items`, which never populates tabDataCache[eventType] at all
+        // (see canUseScalableFetchForSort in buildSection), so a
+        // tabDataCache-based lookup would silently find nothing for most
+        // real page views. inAcknowledgedTab distinguishes "Acknowledge"
+        // from "Un-acknowledge" - not a field on the row itself (every row
+        // returned by the Acknowledged Alerts tab's own acknowledged_only
+        // fetch is acknowledged by definition, so there'd be nothing to
+        // check), just whether this particular pivot menu was opened from
+        // within that tab's own section.
+        function acknowledgeableRowInfo(expandRowEl) {
+            if (!expandRowEl) return null;
+            const eventType = expandRowEl.dataset.eventType;
+            if (eventType !== 'alert' && eventType !== 'sigmaalert') return null;
+            const table = eventType === 'sigmaalert' ? 'sigma_alerts' : 'events';
+            const identity = expandRowEl.dataset.alertIdentity || null;
+            const inAcknowledgedTab = !!expandRowEl.closest('#section-acknowledged');
+            return { eventType, table, rowId: Number(expandRowEl.dataset.id), identity, inAcknowledgedTab };
+        }
+
+        // Single-row acknowledge/un-acknowledge and the "all instances"
+        // bulk path both end here - refreshAnalysisData() (the same
+        // resync clearAllFilters() already uses after a state change) is
+        // what actually makes the row(s) disappear from view: it re-fetches
+        // from the server, whose own queries now exclude (or, in the
+        // Acknowledged Alerts tab, include-only) acknowledged rows - see
+        // db.py's _build_where_conditions/_sigma_alert_where. No manual
+        // DOM removal needed, and this keeps stat-card counts correct for
+        // free instead of hand-updating them separately.
+        async function setAlertAcknowledged(table, rowId, acknowledged) {
+            await fetch('/api/acknowledge-alert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ md5: currentMd5, table, rowId, acknowledged }),
+            });
+            await refreshAnalysisData();
+        }
+
+        // "All instances of this alert" - computed client-side from
+        // whatever's already loaded (ensureCappedBatch first, so the match
+        // set isn't limited to a partial page) rather than a server-side
+        // signature_id/rule_id query, matching how every other bulk-ish
+        // action in this app (Include/Exclude/Only) already works purely
+        // off currently-loaded data.
+        async function acknowledgeAllInstances(ackInfo) {
+            if (!ackInfo.identity) {
+                showToast('Could not determine this alert\'s identity');
+                return;
+            }
+            await ensureCappedBatch(ackInfo.eventType);
+            const pool = ackInfo.eventType === 'sigmaalert' ? (tabDataCache['sigmaalert'] || []) : (tabDataCache[ackInfo.eventType] || allEvents || []);
+            const matchIds = pool
+                .filter(e => String(ackInfo.eventType === 'sigmaalert' ? e.rule_id : (e.alert?.signature_id || e.alert?.signature)) === ackInfo.identity)
+                .map(e => e.id);
+            if (matchIds.length === 0) return;
+            if (truncatedTypes.has(ackInfo.eventType)) {
+                showToast('Only matches within the current query limit were acknowledged - some may remain', { sticky: true });
+            }
+            await fetch('/api/acknowledge-alerts-bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ md5: currentMd5, table: ackInfo.table, rowIds: matchIds }),
+            });
+            await refreshAnalysisData();
+        }
+
         // trimmed: true omits Include/Exclude/Only - for a value that has
         // no real filterable column behind it (most detail-panel fields,
         // see handleDetailValueClick), Include/Exclude/Only would have
@@ -1518,7 +2908,7 @@
         // only way its panel could be visible to click in). "Expand Row"
         // is only offered when expandRowEl actually has a collapsible
         // detail-row sibling.
-        function showPivotMenu(event, sectionId, col, value, trimmed, expandRowEl) {
+        function showPivotMenu(event, sectionId, col, value, trimmed, expandRowEl, communityId) {
             closePivotMenu();
             const menu = document.createElement('div');
             menu.className = 'pivot-menu';
@@ -1537,6 +2927,12 @@
             const expandRowHtml = canExpandRow
                 ? `<button type="button" class="pivot-menu-item" data-pivot-action="expand-row" title="${escapeHtml(expandRowTitle)}"><span class="pivot-menu-icon">${EXPAND_ICON_SVG}</span>${expandRowLabel}</button><div class="pivot-menu-divider"></div>`
                 : '';
+            // Acknowledge/Un-acknowledge - see acknowledgeableRowInfo()'s
+            // own comment for why this is null for any non-alert row.
+            const ackInfo = acknowledgeableRowInfo(expandRowEl);
+            const ackHtml = !ackInfo ? '' : ackInfo.inAcknowledgedTab
+                ? `<button type="button" class="pivot-menu-item" data-pivot-action="unacknowledge">Un-acknowledge this alert</button><div class="pivot-menu-divider"></div>`
+                : `<button type="button" class="pivot-menu-item" data-pivot-action="acknowledge">Acknowledge this alert</button><button type="button" class="pivot-menu-item" data-pivot-action="acknowledge-all">Acknowledge all instances of this alert</button><div class="pivot-menu-divider"></div>`;
             // Only the magnifying glass icon is color-coded (via its own
             // wrapping span, not the button itself) - the button's own text
             // stays the normal menu-item color. Icon colors reuse the same
@@ -1574,11 +2970,25 @@
                 <button type="button" class="pivot-menu-item" data-pivot-action="include" title="${escapeHtml(includeTitle)}"><span class="pivot-menu-icon pivot-menu-icon-include">${SEARCH_ICON_SVG}</span>Include</button>
                 <button type="button" class="pivot-menu-item" data-pivot-action="exclude" title="${escapeHtml(excludeTitle)}"><span class="pivot-menu-icon pivot-menu-icon-exclude">${SEARCH_ICON_SVG}</span>Exclude</button>
                 <button type="button" class="pivot-menu-item" data-pivot-action="only" title="${escapeHtml(onlyTitle)}"><span class="pivot-menu-icon pivot-menu-icon-only">${SEARCH_ICON_SVG}</span>Only</button>`;
+            // Only offered when this row actually carries a community_id
+            // (see the data-community-id attribute baked in by
+            // rowPrefixCells/buildAllEventRow) - most rows do, but e.g.
+            // stats/anomaly events don't. Suppressed when the clicked
+            // value already IS the community_id (clicking the Community ID
+            // field itself) since Hunt right above already does the exact
+            // same whole-analysis search in that case - offering both
+            // would just be two identical buttons.
+            const correlateTitle = `Show all logs sharing this flow's Community ID (${communityId})`;
+            const correlateHtml = (communityId && String(value) !== String(communityId))
+                ? `<button type="button" class="pivot-menu-item" data-pivot-action="correlate" title="${escapeHtml(correlateTitle)}"><span class="pivot-menu-icon">${LINK_ICON_SVG}</span>Correlate</button>`
+                : '';
             menu.innerHTML = `
                 <div class="pivot-menu-label" title="${escapeHtml(fullLabel)}">${escapeHtml(col)}: ${escapeHtml(valueLabel)}</div>
                 ${expandRowHtml}
+                ${ackHtml}
                 ${filterButtonsHtml}
                 <button type="button" class="pivot-menu-item" data-pivot-action="hunt" title="${escapeHtml(huntTitle)}"><span class="pivot-menu-icon">${SEARCH_ICON_SVG}</span>Hunt</button>
+                ${correlateHtml}
                 <div class="pivot-menu-divider"></div>
                 <button type="button" class="pivot-menu-item" data-pivot-action="copy"><span class="pivot-menu-icon">${COPY_ICON_SVG}</span>Copy to Clipboard</button>
                 ${lookupSitesHtml}
@@ -1588,6 +2998,21 @@
                 menu.querySelector('[data-pivot-action="expand-row"]').addEventListener('click', function() {
                     closePivotMenu();
                     toggleDetailRow(expandRowEl);
+                });
+            }
+            if (ackInfo && ackInfo.inAcknowledgedTab) {
+                menu.querySelector('[data-pivot-action="unacknowledge"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    setAlertAcknowledged(ackInfo.table, ackInfo.rowId, false);
+                });
+            } else if (ackInfo) {
+                menu.querySelector('[data-pivot-action="acknowledge"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    setAlertAcknowledged(ackInfo.table, ackInfo.rowId, true);
+                });
+                menu.querySelector('[data-pivot-action="acknowledge-all"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    acknowledgeAllInstances(ackInfo);
                 });
             }
             if (!trimmed) {
@@ -1608,6 +3033,12 @@
                 closePivotMenu();
                 huntFilterValue(value);
             });
+            if (correlateHtml) {
+                menu.querySelector('[data-pivot-action="correlate"]').addEventListener('click', function() {
+                    closePivotMenu();
+                    huntFilterValue(communityId);
+                });
+            }
             menu.querySelector('[data-pivot-action="copy"]').addEventListener('click', function() {
                 closePivotMenu();
                 copyValueToClipboard(value);
@@ -1705,7 +3136,7 @@
             // Payload section further down, without losing the section
             // entirely. Expanded by default - this is a "shrink it back
             // down" control, not a "click to reveal" gate.
-            html += `<div class="playbook-questions-toggle" style="grid-column: 1 / -1; color: var(--text-muted); margin-top: 4px; cursor: pointer; user-select: none;" onclick="togglePlaybookQuestions(this)">▾ The following questions might help guide your investigation:</div>`;
+            html += `<div class="playbook-questions-toggle" data-action="toggle-playbook-questions" style="grid-column: 1 / -1; color: var(--text-muted); margin-top: 4px; cursor: pointer; user-select: none;">▾ The following questions might help guide your investigation:</div>`;
             html += `<div class="playbook-questions" style="display: contents;">${questionsHtml}</div>`;
             return html;
         }
@@ -1792,20 +3223,26 @@
                         let html = '';
                         let groupHtml = '';
                         let lastDirection = '';
+                        // Appends the just-finished direction's group (with
+                        // its colored left bar) to html and resets groupHtml
+                        // for the next one - called both mid-loop (on a
+                        // direction change) and once more after the loop for
+                        // the final trailing group.
+                        const flushGroup = () => {
+                            const bar = `<span style="display:inline-block;width:3px;background:${lastDirection === 'src' ? '#ff6b6b' : '#58a6ff'};margin-right:8px;flex-shrink:0;"></span>`;
+                            html += `<div style="display:flex;align-items:stretch;">${bar}<div style="flex:1;">${groupHtml}</div></div>`;
+                            groupHtml = '';
+                        };
                         for (const line of data.lines) {
                             const direction = line.direction;
-                            const color = direction === 'src' ? '#ff6b6b' : '#58a6ff';
                             if (direction !== lastDirection && groupHtml) {
-                                const bar = `<span style="display:inline-block;width:3px;background:${lastDirection === 'src' ? '#ff6b6b' : '#58a6ff'};margin-right:8px;flex-shrink:0;"></span>`;
-                                html += `<div style="display:flex;align-items:stretch;">${bar}<div style="flex:1;">${groupHtml}</div></div>`;
-                                groupHtml = '';
+                                flushGroup();
                             }
                             groupHtml += line.text.split('\n').map(t => `<div>${escapeHtml(t)}</div>`).join('');
                             lastDirection = direction;
                         }
                         if (groupHtml) {
-                            const bar = `<span style="display:inline-block;width:3px;background:${lastDirection === 'src' ? '#ff6b6b' : '#58a6ff'};margin-right:8px;flex-shrink:0;"></span>`;
-                            html += `<div style="display:flex;align-items:stretch;">${bar}<div style="flex:1;">${groupHtml}</div></div>`;
+                            flushGroup();
                         }
                         pre.innerHTML = html;
                         if (data.truncated) {
@@ -1854,7 +3291,7 @@
                 const data = await resp.json();
                 
                 if (data.packets && data.packets.length > 0) {
-                    let html = '<div class="packet-controls"><button class="packet-control-btn" onclick="expandAllPackets(this.parentNode.parentNode)">Expand All</button><button class="packet-control-btn" onclick="collapseAllPackets(this.parentNode.parentNode)">Collapse All</button></div>';
+                    let html = '<div class="packet-controls"><button class="packet-control-btn" data-action="expand-all-packets">Expand All</button><button class="packet-control-btn" data-action="collapse-all-packets">Collapse All</button></div>';
                     
                     // Packets always start collapsed - expandAllPackets()/
                     // collapseAllPackets()/togglePacket() (bound above and
@@ -1868,7 +3305,7 @@
                         const dirClass = isSrc ? 'src-dir' : 'dst-dir';
                         html += `
                             <div class="packet-block ${dirClass}">
-                                <div class="packet-header" onclick="togglePacket(this)">
+                                <div class="packet-header" data-action="toggle-packet">
                                     <span>▸</span><span>${escapeHtml(pkt.header)}</span>
                                 </div>
                                 <div class="packet-content hidden">
@@ -1922,16 +3359,30 @@
         // this one shared helper all get the detail-panel pivot menu for
         // free, without each needing its own change. data-detail-pivot
         // carries [label, value] as percent-encoded JSON rather than an
-        // onclick="..." string - same reasoning as pivotDataAttrsHtml's
+        // inline handler string - same reasoning as pivotDataAttrsHtml's
         // own data-pivot attribute (a detail value can be arbitrary
         // attacker-influenced content, e.g. a log field or HTTP header).
         // An empty value has nothing meaningful to pivot on, so it's left
         // as plain (unwrapped) text, matching pivotDataAttrsHtml's own
         // choice to exclude empty values from the row-cell menu too.
-        function htmlRowText(label, text, className, style) {
+        // dynamicField: true only for formatLogEventDetail's own two call
+        // sites (the log/sigma alert "raw event fields" section) - those
+        // labels are literal json_data keys (e.g. 'CommandLine'), not
+        // members of any fixed column list the way every other event
+        // type's detail fields are, but extractLogValue()/
+        // extractSigmaValue()'s own default case already resolves ANY
+        // such field generically (see the detail-panel click handler's
+        // own comment for why that makes columns.includes() the wrong
+        // gate here). Encoding it into the pivot payload itself - rather
+        // than re-deriving "was this a dynamic field" from the label text
+        // in the click handler - avoids guessing: a label that HAPPENS to
+        // collide with something read genuinely doesn't need to worry
+        // about it, since only these two call sites ever set it.
+        function htmlRowText(label, text, className, style, dynamicField) {
             const value = String(text || '');
             if (!value) return htmlRow(label, '', className, style);
-            const encoded = encodeURIComponent(JSON.stringify([label, value]));
+            const pivotPayload = dynamicField ? [label, value, true] : [label, value];
+            const encoded = encodeURIComponent(JSON.stringify(pivotPayload));
             return htmlRow(label, `<span class="detail-value-pivot" data-detail-pivot="${encoded}">${escapeHtml(value)}</span>`, className, style);
         }
 
@@ -1964,6 +3415,7 @@
             html += htmlRow('Event Type', `${valueDotSpan(COLORS.EVENT[e.event_type])}${escapeHtml(e.event_type || '')}`);
             if (e.proto) html += htmlRowText('Protocol', e.proto);
             if (e.flow_id) html += htmlRowText('Flow ID', e.flow_id);
+            if (e.community_id) html += htmlRowText('Community ID', e.community_id, 'mono');
             if (e.pcap_cnt) html += htmlRowText('PCAP Count', e.pcap_cnt);
             if (e.src_ip || e.src_port || e.dest_ip || e.dest_port) {
                 html += htmlSection('Connection', COLORS.EVENT.connection);
@@ -1977,15 +3429,18 @@
 
         function _formatEventPayload(e) {
             if (!e.src_ip || !e.src_port || !e.dest_ip || !e.dest_port) return '';
-            const srcIpJs = escapeJsString(e.src_ip);
-            const dstIpJs = escapeJsString(e.dest_ip);
             const srcIpHtml = escapeHtml(e.src_ip);
             const dstIpHtml = escapeHtml(e.dest_ip);
-            // Ports are embedded unquoted in onclick handlers and raw in data
-            // attributes, so coerce to integers to guarantee they are numeric.
+            // Ports are embedded raw in data attributes, so coerce to
+            // integers to guarantee they are numeric.
             const srcPort = parseInt(e.src_port, 10) || 0;
             const dstPort = parseInt(e.dest_port, 10) || 0;
-            return `<div class="stream-payload" data-src-ip="${srcIpHtml}" data-src-port="${srcPort}" data-dst-ip="${dstIpHtml}" data-dst-port="${dstPort}" style="margin-top: 15px;"><div style="color: var(--text-muted); font-size: 0.85rem; border-bottom: 1px solid var(--border-color); padding-bottom: 5px; margin-bottom: 5px;">Payload</div><div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px;"><div class="view-tabs"><button class="view-tab active" onclick="switchStreamView('ascii','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">ASCII Transcript</button><button class="view-tab" onclick="switchStreamView('hexdump','${srcIpJs}',${srcPort},'${dstIpJs}',${dstPort},this)">Hexdump</button></div><button class="stream-btn" onclick="downloadPcap('${srcIpJs}','${srcPort}','${dstIpJs}','${dstPort}')" style="margin-left: 12px;">Download PCAP</button></div><div class="stream-view-container" style="background: var(--bg-primary); padding: 15px; border-radius: 8px; font-size: 0.8rem; margin: 0;"><div class="ascii-transcript" style="white-space: pre-wrap; overflow-wrap: break-word;"></div><div class="hexdump-content" style="display: none;"></div></div></div>`;
+            // The wrapper's own data-src-ip/data-src-port/data-dst-ip/
+            // data-dst-port attributes are the single source of the stream
+            // endpoints - the 'switch-stream-view'/'download-stream-pcap'
+            // STATIC_ACTIONS entries read them back via closest(), so the
+            // buttons themselves only carry the view name.
+            return `<div class="stream-payload" data-src-ip="${srcIpHtml}" data-src-port="${srcPort}" data-dst-ip="${dstIpHtml}" data-dst-port="${dstPort}" style="margin-top: 15px;"><div style="color: var(--text-muted); font-size: 0.85rem; border-bottom: 1px solid var(--border-color); padding-bottom: 5px; margin-bottom: 5px;">Payload</div><div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px;"><div class="view-tabs"><button class="view-tab active" data-action="switch-stream-view" data-view="ascii">ASCII Transcript</button><button class="view-tab" data-action="switch-stream-view" data-view="hexdump">Hexdump</button></div><button class="stream-btn" data-action="download-stream-pcap" style="margin-left: 12px;">Download PCAP</button></div><div class="stream-view-container" style="background: var(--bg-primary); padding: 15px; border-radius: 8px; font-size: 0.8rem; margin: 0;"><div class="ascii-transcript" style="white-space: pre-wrap; overflow-wrap: break-word;"></div><div class="hexdump-content" style="display: none;"></div></div></div>`;
         }
 
         // Hidden anchor for an AI Summary field - see
@@ -2077,6 +3532,9 @@
             let html = htmlSection('TLS Details', COLORS.EVENT.tls);
             html += htmlRowText('SNI', e.tls?.sni, 'mono');
             html += htmlRow('Version', `${valueDotSpan(tlsVersionColor(e.tls?.version))}${escapeHtml(e.tls?.version || '')}`);
+            if (e.tls?.ja3?.hash) html += htmlRowText('JA3', e.tls.ja3.hash, 'mono');
+            if (e.tls?.ja3s?.hash) html += htmlRowText('JA3S', e.tls.ja3s.hash, 'mono');
+            if (e.tls?.ja4) html += htmlRowText('JA4', e.tls.ja4, 'mono');
             html += htmlRowText('Subject', e.tls?.subject, 'mono');
             html += htmlRowText('Issuer', e.tls?.issuerdn, 'mono');
             html += htmlRowText('Not Before', e.tls?.notbefore);
@@ -2334,6 +3792,13 @@
         document.addEventListener('click', function(e) {
             if (e.target.tagName === 'TH') {
                 const th = e.target;
+                // Skip THs inside a modal (e.g. the Help modal's file-types
+                // table) - those clicks used to be blocked from reaching
+                // this document-level listener by a stopPropagation()
+                // handler on every .modal-content div; that shim is gone
+                // (backdrop closing now checks event.target instead), so
+                // keep modal tables non-sortable explicitly.
+                if (th.closest('.modal-content')) return;
                 // Skip if cursor is default (non-sortable table)
                 if (window.getComputedStyle(th).cursor === 'default') return;
                 const thead = th.closest('thead');
@@ -2342,17 +3807,14 @@
                 sortCurrentTable(index);
             }
 
-            // Delegated handler for previous analyses buttons
+            // Delegated handler for previous analyses buttons - Re-analyze/
+            // Delete moved to the analysis page header (reanalyzeIconHtml()/
+            // deleteIconHtml()), so notes is the only action left here.
             const btn = e.target.closest('#previousAnalysesList button[data-action]');
             if (btn) {
                 const md5 = btn.dataset.md5;
-                const name = btn.dataset.name;
                 const action = btn.dataset.action;
-                if (action === 'reanalyze') {
-                    openReanalyzeModal(md5, name);
-                } else if (action === 'delete') {
-                    openDeleteAnalysis(md5, name);
-                } else if (action === 'notes') {
+                if (action === 'notes') {
                     openAnalysisNotesFromList(md5);
                 }
             }
@@ -2403,8 +3865,8 @@
             // also centering that unrelated content away from the filename
             // it describes. This welcome-only tagline is scoped to its own
             // class instead, left untouched at the other #appHeaderMeta call site.
-            document.getElementById('appHeaderMeta').innerHTML = '<a href="#" onclick="event.preventDefault(); showAboutModal();" class="app-header-tagline">Security Onion Containerized Rapid Analysis of Threats, Evil, and Sus</a>';
-            document.getElementById('footerCenterTeaser').innerHTML = '<a href="#" onclick="event.preventDefault(); showSecurityOnionModal();" class="footer-teaser-link">Need more advanced functionality?</a>';
+            document.getElementById('appHeaderMeta').innerHTML = '<a href="#" data-action="show-about-modal" class="app-header-tagline">Security Onion Containerized Rapid Analysis of Threats, Evil, and Sus</a>';
+            document.getElementById('footerCenterTeaser').innerHTML = '<a href="#" data-action="show-security-onion-modal" class="footer-teaser-link">Need more advanced functionality?</a>';
             document.getElementById('appHeaderRight').innerHTML = renderGearMenu();
             updateThemeMenu();
             checkForStaleRules();
@@ -2440,7 +3902,7 @@
 
         function showHelpModal() {
             closeOtherMenuModals('helpModal');
-            const isWelcome = document.getElementById('inputBoxes').style.display !== 'none';
+            const isWelcome = isWelcomeScreen();
             const modalTitle = document.getElementById('helpModalTitle');
             const modalBody = document.getElementById('helpModalBody');
             const checkboxContainer = document.getElementById('helpShowAgainContainer');
@@ -2448,7 +3910,7 @@
 
             const helpModal = document.getElementById('helpModal');
             if (isWelcome) {
-                modalTitle.innerHTML = 'Welcome to <a href="#" onclick="event.preventDefault(); showAboutModal();" style="color: var(--accent); text-decoration: underline;">SO-CRATES</a>!';
+                modalTitle.innerHTML = 'Welcome to <a href="#" data-action="show-about-modal" style="color: var(--accent); text-decoration: underline;">SO-CRATES</a>!';
                 modalBody.innerHTML = getWelcomeHelpContent();
                 checkboxContainer.style.display = 'flex';
                 checkbox.checked = safeStorageGet(localStorage, 'socrates_hideHelp') !== 'true';
@@ -2459,11 +3921,11 @@
                 const isFileOnly = document.body.classList.contains('file-analysis');
                 let helpText;
                 if (isLogFile) {
-                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Investigate Sigma Alerts and then review Log Events. Filter using the search bar or aggregation tables.`;
+                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Investigate Sigma Alerts and then review Log Events. Filter using the search bar or Aggregation Tables.`;
                 } else if (isFileOnly) {
                     helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Review the FILE INFO section for metadata and then the data table at the bottom for any matches found by the YARA rules.`;
                 } else {
-                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Start by reviewing all alerts and then you can change to one of the other data types like DNS, HTTP, or TLS. Filter using the search bar, sankey diagram, or aggregation tables. When you find something interesting, you can drill into the row in the data table at the bottom. This will allow you to see the ASCII transcript and hexdump and optionally download the PCAP file for that stream.`;
+                    helpText = `<span style="color: var(--help-icon-color);">${LIGHTBULB_ICON_SVG}</span> Start by reviewing all alerts and then you can change to one of the other data types like DNS, HTTP, or TLS. Filter using the search bar, Sankey Diagram, or Aggregation Tables. When you find something interesting, you can drill into the row in the data table at the bottom. This will allow you to see the ASCII transcript and hexdump and optionally download the PCAP file for that stream.`;
                 }
                 modalBody.innerHTML = '<div style="color: var(--text-muted); font-size: 0.95rem; line-height: 1.6;">' + helpText + '</div>';
                 checkboxContainer.style.display = 'none';
@@ -2475,7 +3937,7 @@
 
         function closeHelpModal() {
             document.getElementById('helpModal').classList.remove('active');
-            const isWelcome = document.getElementById('inputBoxes').style.display !== 'none';
+            const isWelcome = isWelcomeScreen();
             if (isWelcome) {
                 safeStorageSet(sessionStorage, 'socrates_helpShown', 'true');
                 if (!document.getElementById('helpShowAgain').checked) {
@@ -2491,6 +3953,13 @@
                 closeHelpModal();
             }
         }
+
+        // Backing count for the Danger Zone's Delete All button
+        // (openDeleteAllAnalyses(settingsAnalysisCount) in the HTML reads
+        // this by name at click time, not by the value baked in at
+        // render time, since the real count only arrives after an async
+        // fetch - see showSettingsModal()'s own fetch below).
+        let settingsAnalysisCount = 0;
 
         // focusCustomLookup: true opens the modal with focus already in the
         // Custom Lookup Sites add-form - reached from the pivot menu's own
@@ -2525,10 +3994,35 @@
                 uploadHint.textContent = `Default: ${CONFIG.DEFAULT_UPLOAD_SIZE_MB.toLocaleString()} MB. Server maximum: ${maxUploadMB.toLocaleString()} MB.`;
             }).catch(() => {});
             renderCustomLookupSitesSection();
+            renderSettingsDeleteAllSection();
             document.getElementById('settingsModal').classList.add('active');
             if (focusCustomLookup) {
                 document.getElementById('customLookupNameInput').focus();
             }
+        }
+
+        // Delete All moved here from the welcome screen's Previous Analyses
+        // list (a rare, irreversible bulk action fits a Settings "danger
+        // zone" better than sitting next to the list it wipes out) - unlike
+        // that list, Settings can be opened from anywhere, so the count
+        // shown next to the button is fetched fresh on every open rather
+        // than being handed in from an already-rendered list.
+        function renderSettingsDeleteAllSection() {
+            const hint = document.getElementById('settingsDeleteAllHint');
+            const btn = document.getElementById('settingsDeleteAllBtn');
+            hint.textContent = 'Loading...';
+            btn.disabled = true;
+            fetch('/api/analyses').then(r => r.json()).then(analyses => {
+                settingsAnalysisCount = analyses.length;
+                hint.textContent = settingsAnalysisCount > 0
+                    ? `Permanently delete all ${settingsAnalysisCount.toLocaleString()} previous ${settingsAnalysisCount === 1 ? 'analysis' : 'analyses'}. This cannot be undone.`
+                    : 'No previous analyses to delete.';
+                btn.disabled = settingsAnalysisCount === 0;
+            }).catch(() => {
+                settingsAnalysisCount = 0;
+                hint.textContent = 'Could not load previous analyses.';
+                btn.disabled = true;
+            });
         }
 
         // Re-rendered from scratch (not patched in place) on every open and
@@ -2549,8 +4043,8 @@
                             <div style="color: var(--text-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(site.urlTemplate)}">${escapeHtml(site.urlTemplate)}</div>
                         </div>
                         <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
-                            <button onclick="startEditCustomLookupSite(${i})" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">Edit</button>
-                            <button onclick="handleDeleteCustomLookupSite(${i})" style="background: none; color: var(--badge-danger-text); border: none; padding: 0; cursor: pointer; display: flex;" title="Delete">${DELETE_ICON_SVG}</button>
+                            <button data-action="edit-custom-lookup-site" data-index="${i}" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">Edit</button>
+                            <button data-action="delete-custom-lookup-site" data-index="${i}" style="background: none; color: var(--badge-danger-text); border: none; padding: 0; cursor: pointer; display: flex;" title="Delete">${DELETE_ICON_SVG}</button>
                         </div>
                     </div>
                 `).join('');
@@ -2689,6 +4183,7 @@
         }
 
         function showAnalysisUI() {
+            leftRightSwitchesStatTabs = true;
             document.getElementById('inputBoxes').style.display = 'none';
             document.getElementById('mainHeader').style.display = 'block';
             document.getElementById('dataPanel').style.display = '';
@@ -2696,9 +4191,9 @@
             // Same footer teaser as the welcome screen (showWelcomeUI) -
             // kept consistent across both modes rather than swapping to a
             // "Need help?" prompt during analysis.
-            document.getElementById('footerCenterTeaser').innerHTML = '<a href="#" onclick="event.preventDefault(); showSecurityOnionModal();" class="footer-teaser-link">Need more advanced functionality?</a>';
+            document.getElementById('footerCenterTeaser').innerHTML = '<a href="#" data-action="show-security-onion-modal" class="footer-teaser-link">Need more advanced functionality?</a>';
         }
-        
+
         async function showWelcome() {
             document.title = 'SO-CRATES - Welcome';
             closeAllModals();
@@ -2713,11 +4208,9 @@
             
             // Load previous analyses
             let previousHtml = '';
-            let previousAnalysisCount = 0;
             try {
                 const resp = await fetch('/api/analyses');
                 const analyses = await resp.json();
-                previousAnalysisCount = analyses.length;
                 if (analyses.length > 0) {
                     previousHtml = analyses.map(a => {
                         // The MD5 is still reachable via the link's
@@ -2740,13 +4233,11 @@
                         const notesButtonHtml = a.has_notes
                             ? `<button data-md5="${escapeHtml(a.md5)}" data-action="notes" class="previous-analysis-notes" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="View/edit notes">${NOTES_ICON_SVG}</button>`
                             : '';
-                        return `<div class="previous-analysis-row" style="display: flex; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border-color);">
-                            <a href="?file=${escapeHtml(a.md5)}" onclick="event.preventDefault(); loadAnalysis('${escapeJsString(a.md5)}');" style="color: var(--accent); text-decoration: none; flex: 1; display: flex; align-items: baseline; gap: 8px; overflow: hidden;" title="${escapeHtml(rowTitle)}">
+                        return `<div class="previous-analysis-row" style="display: flex; align-items: center; padding: 8px 10px;">
+                            <a href="?file=${escapeHtml(a.md5)}" data-action="load-analysis" data-md5="${escapeHtml(a.md5)}" style="color: var(--accent); text-decoration: none; flex: 1; display: flex; align-items: baseline; gap: 8px; overflow: hidden;" title="${escapeHtml(rowTitle)}">
                                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${FOLDER_ICON_SVG}${escapeHtml(a.name)}</span>
                             </a>
                             ${notesButtonHtml}
-                            <button data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="reanalyze" class="previous-analysis-reanalyze" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px; margin-right: 4px;" title="Re-analyze">${REFRESH_ICON_SVG}</button>
-                            <button class="previous-analysis-delete" data-md5="${escapeHtml(a.md5)}" data-name="${escapeHtml(a.name)}" data-action="delete" style="border: none; cursor: pointer; font-size: 1rem; padding: 4px 10px; border-radius: 6px;" title="Delete">${DELETE_ICON_SVG}</button>
                         </div>`;
                     }).join('');
                 } else {
@@ -2756,29 +4247,25 @@
                 console.error('Failed to load analyses:', err);
                 previousHtml = '<span style="color: var(--bg-hover-light);">Error loading analyses</span>';
             }
-            const deleteAllButtonHtml = previousAnalysisCount > 0
-                ? `<button class="previous-analysis-delete-all" onclick="openDeleteAllAnalyses(${previousAnalysisCount})" style="border: none; cursor: pointer; font-size: 0.8rem; padding: 4px 10px; border-radius: 6px;" title="Delete all previous analyses">Delete All</button>`
-                : '';
-            
             document.getElementById('inputBoxes').innerHTML = `
                 <div style="max-width: 900px; margin: 0 auto;">
                     <div style="display: flex; flex-direction: column; gap: 20px; margin-bottom: 20px;">
                         <div style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color); width: 100%; box-sizing: border-box;">
                             <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; margin-bottom: 15px; font-weight: 600;">${DOWN_ARROW_ICON_SVG} Select a sample file, import a file from URL, or import a file from your local system</div>
                             <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 15px;">
-                                <div class="sample-card" title="${_sampleCardTitle(DEFAULT_SAMPLE_URL)}" onclick="loadSampleUrl('${DEFAULT_SAMPLE_URL}')">
-                                     <span class="sample-label">Sample pcap file</span>
+                                <div class="sample-card" title="${_sampleCardTitle(DEFAULT_SAMPLE_URL)}" tabindex="0" role="button" aria-label="Analyze the sample PCAP file" data-action="load-sample-url" data-url="${escapeHtml(DEFAULT_SAMPLE_URL)}" data-key-activate="enter-space">
+                                     <span class="sample-label">Sample PCAP file</span>
                                  </div>
-                                <div class="sample-card" title="${_sampleCardTitle(SAMPLE_LOG_URL)}" onclick="loadSampleUrl('${SAMPLE_LOG_URL}')">
+                                <div class="sample-card" title="${_sampleCardTitle(SAMPLE_LOG_URL)}" tabindex="0" role="button" aria-label="Analyze the sample log file" data-action="load-sample-url" data-url="${escapeHtml(SAMPLE_LOG_URL)}" data-key-activate="enter-space">
                                     <span class="sample-label">Sample log file</span>
                                 </div>
-                                <div class="sample-card" title="${_sampleCardTitle(SAMPLE_BINARY_URL)}" onclick="loadSampleUrl('${SAMPLE_BINARY_URL}')">
+                                <div class="sample-card" title="${_sampleCardTitle(SAMPLE_BINARY_URL)}" tabindex="0" role="button" aria-label="Analyze the sample binary file" data-action="load-sample-url" data-url="${escapeHtml(SAMPLE_BINARY_URL)}" data-key-activate="enter-space">
                                     <span class="sample-label">Sample binary file</span>
                                 </div>
                             </div>
                             <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 15px;">
                                 <div style="flex: 1; text-align: center;">
-                                    <a href="https://www.malware-traffic-analysis.net/" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">More pcap samples ↗</a>
+                                    <a href="https://www.malware-traffic-analysis.net/" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">More PCAP samples ↗</a>
                                 </div>
                                 <div style="flex: 1; text-align: center;">
                                     <a href="https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">More log samples ↗</a>
@@ -2789,14 +4276,13 @@
                             </div>
                             <div style="text-align: center; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; text-transform: uppercase; margin-bottom: 15px;">— OR —</div>
                             <div style="display: flex; gap: 8px; margin-bottom: 15px;">
-                                <input type="text" id="pcapUrl" value="${DEFAULT_SAMPLE_URL}" onfocus="this.value=''" onkeydown="if(event.key==='Enter')loadFromUrl()" style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 4px; font-size: 0.95rem; flex: 1;">
-                                <button onclick="loadFromUrl()" style="background: var(--accent); color: var(--bg-primary); padding: 8px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.95rem; border: none;">Go</button>
+                                <input type="text" id="pcapUrl" value="${DEFAULT_SAMPLE_URL}" data-clear-on-focus data-enter-action="load-from-url" style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 4px; font-size: 0.95rem; flex: 1;">
+                                <button data-action="load-from-url" style="background: var(--accent); color: var(--bg-primary); padding: 8px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.95rem; border: none;">Go</button>
                             </div>
                             <div style="text-align: center; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; text-transform: uppercase; margin-bottom: 15px;">— OR —</div>
-                            <input type="file" id="pcapUpload" onchange="uploadPcap()" style="display: none;">
-                            <div id="dropZone" style="background: var(--bg-primary); color: var(--accent); padding: 20px; border-radius: 4px; cursor: pointer; font-size: 0.95rem; border: 2px dashed var(--border-color); text-align: center; transition: border-color 0.2s, background 0.2s;"
-                                 ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)"
-                                 onclick="document.getElementById('pcapUpload').click()">
+                            <input type="file" id="pcapUpload" data-change-action="upload-pcap" style="display: none;">
+                            <div id="dropZone" tabindex="0" role="button" aria-label="Choose a file to upload, or drag and drop one here" style="background: var(--bg-primary); color: var(--accent); padding: 20px; border-radius: 4px; cursor: pointer; font-size: 0.95rem; border: 2px dashed var(--border-color); text-align: center; transition: border-color 0.2s, background 0.2s;"
+                                 data-action="open-upload-picker" data-key-activate="enter-space">
                                  <div style="font-size: 1.5rem; margin-bottom: 8px;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="2 13 6 9 10 13"></polyline></svg></div>
                                  <div>Choose file or drag and drop here</div>
                              </div>
@@ -2806,7 +4292,6 @@
                        <div class="previous-analyses-section" style="background: var(--bg-secondary); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color);">
                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                                <div style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; font-weight: 600;">${FOLDER_OPEN_ICON_SVG} Previous Analyses</div>
-                               ${deleteAllButtonHtml}
                            </div>
                           <div id="previousAnalysesList">${previousHtml}</div>
                       </div>
@@ -2833,7 +4318,7 @@
             const host = escapeHtml(support.host_label || 'this host');
             section.innerHTML = `
                 <div style="text-align: center; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; text-transform: uppercase; margin: 15px 0;">— OR —</div>
-                <div id="captureCard" onclick="showCaptureModal()" style="background: var(--bg-primary); color: var(--accent); padding: 20px; border-radius: 4px; cursor: pointer; font-size: 0.95rem; border: 2px dashed var(--border-color); text-align: center; transition: border-color 0.2s, background 0.2s;">
+                <div id="captureCard" data-action="show-capture-modal" style="background: var(--bg-primary); color: var(--accent); padding: 20px; border-radius: 4px; cursor: pointer; font-size: 0.95rem; border: 2px dashed var(--border-color); text-align: center; transition: border-color 0.2s, background 0.2s;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg></div>
                     <div>Capture live traffic from ${host}</div>
                 </div>`;
@@ -2858,98 +4343,1311 @@
             closeNotesModal();
             closeSecurityOnionModal();
             closeCaptureModal();
+            closeAutocompleteModal();
         }
 
-        let keyBuffer = '';
+        // scrollIntoView({block:'nearest'}) alone isn't enough here - it
+        // only reasons about the raw viewport, with no notion that
+        // .app-header/.footer are position:fixed on top of it (not part of
+        // the normal document flow it scrolls within), so an element can
+        // land technically inside the viewport's bounds and still be
+        // hidden underneath one of them. Runs the native call first
+        // (handles horizontal/inline positioning and gets vertical mostly
+        // right on its own), then corrects for whichever fixed bar is
+        // still covering the element afterward, measured fresh since the
+        // native call may have already moved it. A no-op scrollBy(0) when
+        // nothing's occluded.
+        function scrollKeyboardSelectionIntoView(el) {
+            el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            const headerBottom = document.querySelector('.app-header')?.getBoundingClientRect().bottom ?? 0;
+            const footerTop = document.querySelector('.footer')?.getBoundingClientRect().top ?? window.innerHeight;
+            const rect = el.getBoundingClientRect();
+            if (rect.top < headerBottom) {
+                window.scrollBy(0, rect.top - headerBottom);
+            } else if (rect.bottom > footerTop) {
+                window.scrollBy(0, rect.bottom - footerTop);
+            }
+        }
+
+        // Arrow-key navigation. Two different interaction models
+        // depending on the cost of the underlying action: stat-card tabs
+        // activate immediately on Left/Right (cheap, already-cached tab
+        // switch, like a native tab strip) - sample buttons, previous-
+        // analysis rows, and data-table rows only get a visual
+        // "keyboard-selected" highlight on arrow, activating on Enter,
+        // since their action is a real network fetch or an expand/
+        // collapse that shouldn't fire just from moving past an item.
+        let verticalNavSelection = null;
+        let horizontalSampleNavIndex = -1;
+
+        // Left/Right switches the data-type stat-card tab (navigateStatTabs)
+        // only while this is true. True on a fresh analysis load (set in
+        // showAnalysisUI()) and reset back to true by a direct stat-card
+        // click (set in showTab(), which both a mouse click and
+        // navigateStatTabs() itself funnel through) - flipped false the
+        // moment the user presses Up/Down (navigateVertical()) to move into
+        // the page's own content. Otherwise Left/Right deep in a long table
+        // silently jumps to a different data type, which reads as a stray
+        // keystroke wiping out whatever the user was looking at.
+        let leftRightSwitchesStatTabs = true;
+
+        // showAnalysisUI() only hides #inputBoxes (display: none) rather
+        // than clearing its innerHTML, so the welcome screen's contents
+        // (sample cards, previous-analysis rows) are still sitting in the
+        // DOM - just invisible - while an analysis is open. Checking this
+        // display style is the same "which view is actually showing" test
+        // showWelcomeUI()/showAnalysisUI() themselves use, and is more
+        // reliable than inferring the view from whether some list happens
+        // to be non-empty.
+        function isWelcomeScreen() {
+            return document.getElementById('inputBoxes').style.display !== 'none';
+        }
+
+        // The interactive controls inside an expanded detail-row - one
+        // combined query so they come back in real document order:
+        // [data-detail-pivot] (every clickable field value - Timestamp,
+        // Src/Dst IP, DNS Query, etc., see htmlRowText) is rendered first
+        // by formatEvent(), before the Notes/Payload sections it appends
+        // after (rowNoteDetailHtml() then _formatEventPayload()) - so the
+        // note link precedes ASCII Transcript/Hexdump, which precede
+        // Download PCAP.
+        // .packet-control-btn (Expand All/Collapse All) and .packet-header
+        // (one per packet) live inside .hexdump-content, which loadHexdumpData()
+        // only ever populates after the Hexdump tab has actually been activated
+        // once (see switchStreamView) - querying for them is always safe even
+        // before that (they simply don't exist yet, contributing nothing), and
+        // the offsetParent filter below (not this selector) is what keeps them
+        // out of the list while the ASCII Transcript view is showing instead.
+        const EXPANDED_ROW_ITEM_SELECTOR = '[data-detail-pivot], .row-note-edit-link, .view-tab, .stream-btn, .packet-control-btn, .packet-header';
+
+        // Scoped to the currently visible primary section (excludes
+        // .agg-section, mirroring buildStats()'s own "visible section"
+        // lookup) so Up/Down only ever walks the one event/log table
+        // actually on screen, not a hidden tab's rows or an aggregation
+        // table. tr[data-id] alone (no :not(.detail-row) needed) already
+        // excludes detail-rows - only primary rows carry that attribute.
+        // Each row's own detail-row (its very next sibling - see
+        // toggleDetailRow) is spliced in right after it via
+        // EXPANDED_ROW_ITEM_SELECTOR, but only while that specific row is
+        // expanded - multiple rows can be expanded independently, so this
+        // is checked per row rather than assuming one page-wide expanded
+        // state. A collapsed row (or one with nothing to add - not every
+        // event type has a stream, and some have no note link either)
+        // contributes nothing extra, so Down/Up behave exactly as before
+        // for any row that's never had Enter pressed on it.
+        function getVisibleDataTableRows() {
+            const section = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
+            // A binary-only analysis has no stat-card tabs at all -
+            // buildBinaryAnalysisView() renders its YARA-match table
+            // directly into #sections with no .section wrapper around
+            // it, unlike every pcap/log tab's own hidden-except-one
+            // .section block. #sections only ever holds that one table
+            // in this mode, so querying it directly is safe here (it
+            // would incorrectly include every hidden tab's rows too if
+            // done unconditionally in the normal pcap/log case above,
+            // which is why this is a fallback, not the first check).
+            const sectionsEl = document.getElementById('sections');
+            const rows = section
+                ? Array.from(section.querySelectorAll('tr[data-id]'))
+                : (sectionsEl ? Array.from(sectionsEl.querySelectorAll('tr[data-id]')) : []);
+            return rows.flatMap(row => {
+                const detailRow = row.nextElementSibling;
+                if (!detailRow || !detailRow.classList.contains('detail-row') || !detailRow.classList.contains('visible')) {
+                    return [row];
+                }
+                // offsetParent !== null - not just querying at all - is what
+                // actually excludes the packet-control-btn/packet-header items
+                // while the ASCII Transcript view is showing instead of Hexdump
+                // (switchStreamView() hides .hexdump-content via display:none,
+                // which zeroes offsetParent for everything inside it). The
+                // other three item types are always visible together whenever
+                // the row itself is expanded, so this filter is a no-op for them.
+                const items = Array.from(detailRow.querySelectorAll(EXPANDED_ROW_ITEM_SELECTOR))
+                    .filter(el => el.offsetParent !== null);
+                return [row, ...items];
+            });
+        }
+
+        // The filter bar (search-term/filter-value chips, plus one
+        // trailing Clear All button - see buildFilterBarHtml()) in DOM
+        // order.
+        function filterBarRowItems() {
+            return Array.from(document.querySelectorAll('#filterBarContainer .filter-chip, #filterBarContainer .filter-clear-all'));
+        }
+
+        // Down/Up must treat the whole filter bar row as ONE stop (real
+        // bug report: with several chips active, Down used to step
+        // through each one individually before ever reaching the stat-
+        // card grid below - "moving between an active filter chip and
+        // Clear All should be Left/Right", not Down) - Left/Right is what
+        // cycles within the row instead (see navigateFilterBarItems).
+        // Contributes whichever item is currently selected if Left/Right
+        // has already moved within the row (mirrors activeColumnStatCards'
+        // own "follow the current ring" reference-picking, one level up),
+        // else defaults to the first chip - so a fresh Down/Up always
+        // lands on a predictable, visible entry point into the row.
+        function filterBarRowAnchor() {
+            const items = filterBarRowItems();
+            if (items.length === 0) return [];
+            const current = (verticalNavSelection && verticalNavSelection.isConnected && items.includes(verticalNavSelection))
+                ? verticalNavSelection : items[0];
+            return [current];
+        }
+
+        // Left/Right's own handling for the filter bar row, mirroring
+        // navigateStreamControls()/navigatePacketControls()'s established
+        // horizontal-group idiom one level up - only active while the
+        // current selection is actually inside the row; Down/Up
+        // (navigateVertical(), via filterBarRowAnchor() above) is what
+        // moves out of it entirely.
+        function currentFilterBarSelection() {
+            if (!(verticalNavSelection && verticalNavSelection.isConnected && verticalNavSelection.offsetParent !== null)) return null;
+            if (!(verticalNavSelection.classList.contains('filter-chip') || verticalNavSelection.classList.contains('filter-clear-all'))) return null;
+            return verticalNavSelection;
+        }
+
+        function navigateFilterBarItems(direction) {
+            const current = currentFilterBarSelection();
+            if (!current) return false;
+            const items = filterBarRowItems();
+            if (items.length < 2) return false;
+            const index = items.indexOf(current);
+            moveStreamControlSelectionTo(items[(index + direction + items.length) % items.length]);
+            return true;
+        }
+
+        // The Sankey/Aggregation toggle bars sit directly above the data
+        // table in the DOM (#sankeyPanel, #aggregations, #sections in that
+        // order - see socrates.html), so prepending them here extends the
+        // same flat top-to-bottom list navigateVertical() already walks for
+        // table rows, rather than introducing a separate selection track.
+        // offsetParent !== null (instead of e.g. checking style.display
+        // directly) catches every way a bar can be hidden - #sankeyPanel's
+        // own inline display:none when cleared, and the CSS rule that
+        // force-hides it in binary/file-analysis mode - without needing to
+        // know which one applies. Each bar already has an onclick handler
+        // (toggleDiagram()/toggleAggregations()), so no change is needed in
+        // activateKeyboardSelection(): its existing generic
+        // verticalNavSelection.click() fallback (used for data rows too)
+        // already fires it.
+        const TOGGLE_BAR_SELECTORS = {
+            sankey: '#sankeyPanel > .section-toggle-bar',
+            agg: '#aggregations .section-toggle-bar',
+            dnsHeuristicsInfo: '#section-dns_heuristics .dns-heuristics-info-toggle',
+        };
+
+        // Groups the currently-visible aggregation tables into visual rows
+        // by rendered top position - the flex-wrap agg-grid has no fixed
+        // column count the way #statsGrid's CSS Grid does (read via
+        // statsGridColumnCount()), so row membership can only come from
+        // actual layout, not arithmetic. Real bug report: DOM order alone
+        // (every table's rows back to back) makes Down from a table's last
+        // row land on the very next table in DOM order - almost always the
+        // sibling immediately to its right, same visual row - when the
+        // expectation is "next VISUAL row of tables, or the Data Table if
+        // this was the last row"; Left/Right (navigateAggTables) is what's
+        // supposed to move sideways within a row, not Down.
+        function aggTableRowGroups() {
+            const tables = Array.from(document.querySelectorAll('#aggregations .agg-section')).filter(t => t.offsetParent !== null);
+            const rows = [];
+            for (const table of tables) {
+                const top = table.offsetTop;
+                let row = rows.find(r => Math.abs(r.top - top) < 4); // sub-pixel tolerance
+                if (!row) { row = { top, tables: [] }; rows.push(row); }
+                row.tables.push(table);
+            }
+            rows.sort((a, b) => a.top - b.top);
+            return rows.map(r => r.tables);
+        }
+
+        // A table's own value rows (tr.agg-row[data-agg-pivot], see
+        // _renderAggTablesHtml) plus its Prev/Next pagination row collapsed
+        // to one stop, if it has one (mirrors filterBarRowAnchor's own
+        // reasoning exactly) - contributes whichever button is already
+        // selected if Left/Right has moved within it
+        // (navigateAggPaginationButtons), else defaults to the first
+        // non-disabled one (page 1 has no Prev - landing on it by default
+        // would need an extra Left/Right press before Enter could do
+        // anything).
+        function aggTableOwnItems(table) {
+            const rows = Array.from(table.querySelectorAll('tr.agg-row[data-agg-pivot]'));
+            const pageButtons = Array.from(table.querySelectorAll('.agg-page-btn'));
+            if (pageButtons.length === 0) return rows;
+            const current = (verticalNavSelection && verticalNavSelection.isConnected && pageButtons.includes(verticalNavSelection))
+                ? verticalNavSelection : (pageButtons.find(b => !b.disabled) || pageButtons[0]);
+            return rows.concat([current]);
+        }
+
+        // Down/Up walks the reference table's own rows/pagination stop,
+        // bridging to the first table of the next visual row once it runs
+        // out (or the last table of the previous row, moving the other
+        // direction) - recomputed fresh on every keypress from wherever
+        // verticalNavSelection actually landed, so chaining across several
+        // rows in a row (so to speak) falls out for free without needing
+        // to pre-build the whole multi-row sequence in one call. Left/Right
+        // jumps directly to a different table instead of stepping through
+        // every intervening row (see navigateAggTables) - the same
+        // "Down/Up walks the flat list, Left/Right jumps within/between
+        // groups" split every other section here already uses. Collapsed
+        // panels naturally contribute nothing since #aggregations then has
+        // no .agg-section elements to find at all.
+        function aggTableAndPaginationItems() {
+            const rowGroups = aggTableRowGroups();
+            if (rowGroups.length === 0) return [];
+            let referenceTable = (verticalNavSelection && verticalNavSelection.isConnected)
+                ? verticalNavSelection.closest('#aggregations .agg-section') : null;
+            let rowIndex = referenceTable ? rowGroups.findIndex(row => row.includes(referenceTable)) : -1;
+            if (rowIndex === -1) {
+                // verticalNavSelection isn't currently inside the agg block
+                // at all (a toggle bar/filter chip/stat card, a Data Table
+                // row, or nothing selected yet) - which end of the block to
+                // offer as the entry point depends on which side we're
+                // approaching from. Real bug report: with 3+ rows, Up from
+                // the Data Table always re-entered at row 0 regardless of
+                // how many rows actually existed below it, since this used
+                // to default to the first row unconditionally - only a Data
+                // Table row means "arriving from below" (Up); every other
+                // case (including the very first Down of a fresh page) means
+                // "arriving from above" (Down), so the first row is still
+                // the right default there.
+                const fromBelow = verticalNavSelection && verticalNavSelection.isConnected
+                    && getVisibleDataTableRows().includes(verticalNavSelection);
+                rowIndex = fromBelow ? rowGroups.length - 1 : 0;
+                referenceTable = rowGroups[rowIndex][0];
+            }
+            let items = aggTableOwnItems(referenceTable);
+            const prevRow = rowGroups[rowIndex - 1];
+            if (prevRow) items = aggTableOwnItems(prevRow[prevRow.length - 1]).concat(items);
+            const nextRow = rowGroups[rowIndex + 1];
+            if (nextRow) items = items.concat(aggTableOwnItems(nextRow[0]));
+            return items;
+        }
+
+        function getVerticalNavItems() {
+            // The filter bar (search-term/filter-value chips, plus Clear
+            // All) is a single horizontal row - see filterBarRowAnchor()'s
+            // own comment for why it contributes only ONE entry here
+            // rather than one per chip.
+            const filterBarItems = filterBarRowAnchor();
+            const toggleBars = [
+                document.querySelector(TOGGLE_BAR_SELECTORS.sankey),
+                document.querySelector(TOGGLE_BAR_SELECTORS.agg),
+                document.querySelector(TOGGLE_BAR_SELECTORS.dnsHeuristicsInfo),
+            ];
+            const aggRows = aggTableAndPaginationItems();
+            // Positioned right after the filter chips, matching where
+            // #statsGrid actually sits on the page (see socrates.html:
+            // #filterBarContainer, #statsGrid, #sankeyPanel,
+            // #aggregations, #dataPanel, in that order) - Down/Up walking
+            // this list is meant to move "straight down the page", and
+            // burying the stat-card grid at the very end (reachable only
+            // after a full wraparound) put it out of that order entirely.
+            // Includes every row in the active tab's own column (not just
+            // the active card itself), so a multi-row grid's other rows
+            // are ordinary stops along the same path rather than a
+            // separate mechanism bolted onto one end of it - Down from
+            // the last table row still wraps to this same block (now via
+            // plain wraparound, landing on its first entry, the active
+            // card, with no special-casing needed), and Up from the first
+            // filter chip (or the active card, if there are no chips)
+            // symmetrically retraces it in reverse for free.
+            const gridRowCards = activeColumnStatCards();
+            return filterBarItems.concat(gridRowCards, toggleBars, aggRows)
+                .filter(el => el && el.offsetParent !== null)
+                .concat(getVisibleDataTableRows());
+        }
+
+        // Left/Right's own handling once the current selection is actually
+        // one of the two Prev/Next buttons (i.e. Down has already entered
+        // the pagination stop aggTableAndPaginationItems() collapses to one
+        // entry) - mirrors currentFilterBarSelection/navigateFilterBarItems
+        // exactly. navigateAggTables (below) handles Left/Right for every
+        // OTHER agg-area selection (an ordinary row, not yet on Prev/Next).
+        function currentAggPaginationSelection() {
+            if (!(verticalNavSelection && verticalNavSelection.isConnected && verticalNavSelection.offsetParent !== null)) return null;
+            if (!verticalNavSelection.classList.contains('agg-page-btn')) return null;
+            return verticalNavSelection;
+        }
+
+        function navigateAggPaginationButtons(direction) {
+            const current = currentAggPaginationSelection();
+            if (!current) return false;
+            const table = current.closest('.agg-section');
+            const buttons = table ? Array.from(table.querySelectorAll('.agg-page-btn')) : [];
+            if (buttons.length < 2) return false;
+            const index = buttons.indexOf(current);
+            moveStreamControlSelectionTo(buttons[(index + direction + buttons.length) % buttons.length]);
+            return true;
+        }
+
+        // Left/Right jumps straight to a different aggregation table
+        // instead of stepping through every intervening row via Down - only
+        // active while the current selection is actually inside one (an
+        // agg-row or one of its Prev/Next buttons); Down/Up
+        // (navigateVertical(), via aggTableAndPaginationItems() above) is
+        // what walks within/between tables one row at a time. Lands on the
+        // target table's first row (matching navigateStatTabs' own
+        // "preview, don't require a second Down" landing behavior) - every
+        // rendered table has at least one row (_renderOneAggTableHtml is
+        // never called with zero entries), so a null first-row can't happen
+        // in practice.
+        function navigateAggTables(direction) {
+            const current = (verticalNavSelection && verticalNavSelection.isConnected)
+                ? verticalNavSelection.closest('#aggregations tr.agg-row, #aggregations .agg-page-btn')
+                : null;
+            if (!current) return false;
+            const currentTable = current.closest('.agg-section');
+            if (!currentTable) return false;
+            const tables = Array.from(document.querySelectorAll('#aggregations .agg-section')).filter(t => t.offsetParent !== null);
+            const index = tables.indexOf(currentTable);
+            if (index === -1 || tables.length < 2) return false;
+            const nextTable = tables[(index + direction + tables.length) % tables.length];
+            const target = nextTable.querySelector('tr.agg-row[data-agg-pivot]');
+            if (!target) return false;
+            moveStreamControlSelectionTo(target);
+            return true;
+        }
+
+        // Which toggle bar (if any) is the current keyboard selection,
+        // tracked by kind rather than by relying on verticalNavSelection's
+        // node reference alone - toggleDiagram()/toggleAggregations()
+        // rebuild their panel's entire innerHTML (including the bar itself)
+        // on every collapse/expand, which would otherwise silently drop the
+        // selection each time. The MutationObservers below use this to
+        // re-glue the selection onto whichever new bar element lands, so
+        // Enter can immediately re-collapse a panel just expanded via Enter
+        // without another arrow-key press.
+        let verticalNavToggleBarKind = null;
+
+        function reapplyToggleBarSelection() {
+            if (!verticalNavToggleBarKind) return;
+            const bar = document.querySelector(TOGGLE_BAR_SELECTORS[verticalNavToggleBarKind]);
+            if (!bar) return;
+            bar.classList.add('keyboard-selected');
+            verticalNavSelection = bar;
+        }
+        // childList (not subtree) is enough for both: toggleDiagram()
+        // always replaces #sankeyPanel's innerHTML directly, and
+        // toggleAggregations() always replaces #aggregations' innerHTML
+        // directly (the .agg-panel wrapper and everything in it), so the
+        // bar's re-creation is always a direct-child mutation of one of
+        // these two containers.
+        new MutationObserver(reapplyToggleBarSelection).observe(document.getElementById('sankeyPanel'), { childList: true });
+        new MutationObserver(reapplyToggleBarSelection).observe(document.getElementById('aggregations'), { childList: true });
+        // #section-dns_heuristics (unlike #sankeyPanel/#aggregations,
+        // static elements always present in socrates.html) doesn't exist
+        // until buildSections() first creates it, so observing it
+        // directly here at script-init time would call .observe(null,
+        // ...) and throw. #sections is the stable, always-present
+        // ancestor buildSections() renders every tab's section into -
+        // subtree: true catches buildDnsHeuristicsSectionContent()'s own
+        // container.innerHTML replacement several levels down (sections >
+        // section-dns_heuristics > section-content > agg-panel > toggle
+        // bar) without needing to re-attach a new observer on every visit
+        // to this tab. reapplyToggleBarSelection() is a cheap no-op
+        // whenever verticalNavToggleBarKind isn't currently set, so the
+        // wider subtree scope firing on unrelated tab/pagination changes
+        // elsewhere in #sections costs nothing in practice.
+        new MutationObserver(reapplyToggleBarSelection).observe(document.getElementById('sections'), { childList: true, subtree: true });
+
+        function navigateStatTabs(direction) {
+            const cards = Array.from(document.querySelectorAll('#statsGrid .stat-card'));
+            if (cards.length === 0) return false;
+            // Continue from a live preview selection if one exists, not
+            // necessarily .tab-active - repeated Left/Right (like Down/Up
+            // below) only moves the preview ring one card at a time, so
+            // each press must pick up from wherever the ring already is,
+            // not restart from whatever's still really active underneath
+            // it.
+            let currentIndex = (verticalNavSelection && verticalNavSelection.isConnected && cards.includes(verticalNavSelection))
+                ? cards.indexOf(verticalNavSelection) : -1;
+            if (currentIndex === -1) {
+                const activeIndex = cards.findIndex(c => c.classList.contains('tab-active'));
+                currentIndex = activeIndex === -1 ? 0 : activeIndex;
+            }
+            const nextIndex = (currentIndex + direction + cards.length) % cards.length;
+            // Preview only, same as Down/Up's own handling of the active
+            // tab's grid column (see activeColumnStatCards) -
+            // deliberately does NOT click()/activate the card. Left/Right
+            // used to switch tabs immediately on every press; now every
+            // arrow key uses the same preview-then-Enter-to-commit model
+            // (mirroring navigateThemeTiles' own established idiom for
+            // grid navigation), so a user browsing with arrow keys never
+            // gets dropped onto a different tab's data mid-browse without
+            // meaning to.
+            cards.forEach(c => c.classList.remove('keyboard-selected'));
+            verticalNavSelection = cards[nextIndex];
+            verticalNavSelection.classList.add('keyboard-selected');
+            scrollKeyboardSelectionIntoView(verticalNavSelection);
+            return true;
+        }
+
+        // .stats-grid is a responsive CSS grid (repeat(auto-fit,
+        // minmax(140px, 1fr))) with no fixed column count - mirrors
+        // themeTileGridColumnCount()'s own technique of reading the
+        // browser's already-resolved column list back via
+        // getComputedStyle rather than trying to compute it by hand from
+        // container width/card width.
+        function statsGridColumnCount() {
+            const grid = document.getElementById('statsGrid');
+            if (!grid) return 1;
+            const columns = getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length;
+            return columns > 0 ? columns : 1;
+        }
+
+        // Every card in the CURRENT column, top to bottom - just
+        // [referenceCard] for a single-row grid or when no reference card
+        // is found. Used by getVerticalNavItems() to fold the stat-card
+        // grid into the same flat Down/Up sequence as everything else
+        // (filter chips, Sankey/Aggregation Tables, the data table) -
+        // earlier this was a separate preemptive interceptor
+        // (navigateStatTabsVertical) bolted onto one end of that
+        // sequence, which produced asymmetric, surprising wrap behavior
+        // (Up not retracing the same path Down took) and skipped the
+        // grid entirely whenever filter chips were the first real item in
+        // the list. Folding every row into the ordinary list at its real
+        // page position (see getVerticalNavItems' own comment) fixes both
+        // for free via the exact same wraparound logic every other item
+        // here already uses, with no stat-card-specific case needed.
+        //
+        // The reference card is whichever stat card is currently ringed
+        // (verticalNavSelection), not necessarily .tab-active - Left/
+        // Right (navigateStatTabs) can preview a DIFFERENT column's card
+        // without committing it, and Down/Up must continue straight down
+        // *that* column (real bug report: previewing a card via Right and
+        // then pressing Down landed back on the still-active tab's own
+        // column instead, reading as Down having gone "left"). Falls back
+        // to .tab-active only when nothing is currently ringed (e.g. right
+        // after a tab switch, before any arrow key has been pressed) -
+        // showTab() clears any stray ring left on a different card by a
+        // plain mouse click (see its own comment), so verticalNavSelection
+        // never drifts out of sync with reality once a real click commits
+        // a different tab.
+        function activeColumnStatCards() {
+            const referenceCard = (verticalNavSelection && verticalNavSelection.isConnected && verticalNavSelection.classList.contains('stat-card'))
+                ? verticalNavSelection
+                : document.querySelector('.stat-card.tab-active');
+            if (!referenceCard) return [];
+            const cards = Array.from(document.querySelectorAll('#statsGrid .stat-card'));
+            const columnCount = statsGridColumnCount();
+            const referenceIndex = cards.indexOf(referenceCard);
+            if (referenceIndex === -1) return [];
+            const columnStart = referenceIndex % columnCount;
+            const column = [];
+            for (let i = columnStart; i < cards.length; i += columnCount) {
+                column.push(cards[i]);
+            }
+            return column;
+        }
+
+        // True for the 3 controls that behave as one horizontal group within
+        // an expanded row's Payload section (see navigateStreamControls/
+        // navigateStreamControlsVertical below) - ASCII Transcript, Hexdump
+        // (both .view-tab) and Download PCAP (.stream-btn). Excludes
+        // .packet-control-btn (Expand All/Collapse All) deliberately - that
+        // pair is its own separate group one level below this one, not part
+        // of the row/tab strip.
+        function isStreamControlGroupMember(el) {
+            return !!el && (el.classList.contains('view-tab') || el.classList.contains('stream-btn'));
+        }
+
+        // offsetParent, not just isConnected - a stale selection left over
+        // from a stat-card tab the user has since switched away from (mouse
+        // click bypasses navigateVertical()'s own indexOf-based self-heal,
+        // since neither this nor navigateStreamControlsVertical() goes
+        // through getVerticalNavItems() at all) is still attached to the
+        // document, just hidden via .section-hidden's display:none.
+        function currentStreamControlSelection() {
+            if (!(verticalNavSelection && verticalNavSelection.isConnected && verticalNavSelection.offsetParent !== null && isStreamControlGroupMember(verticalNavSelection))) return null;
+            return verticalNavSelection;
+        }
+
+        function moveStreamControlSelectionTo(el) {
+            verticalNavSelection.classList.remove('keyboard-selected');
+            verticalNavSelection = el;
+            verticalNavSelection.classList.add('keyboard-selected');
+            scrollKeyboardSelectionIntoView(verticalNavSelection);
+        }
+
+        // Left/Right's other section-local behavior once
+        // leftRightSwitchesStatTabs is false (see its own comment) - cycles
+        // through all 3 stream controls (ASCII Transcript, Hexdump, Download
+        // PCAP - .stream-payload's own DOM order) as one horizontal group.
+        // Only the two view-tabs activate on arrival (tabs[nextIndex].click(),
+        // same as navigateStatTabs() does for data-type tabs - a real
+        // tab-strip, not preview-then-Enter) - Download PCAP deliberately
+        // does NOT, since unlike switching a view it's a real side effect
+        // (triggers an actual file download), and arrowing past a button
+        // must never fire its action on its own (same reasoning as every
+        // other Enter-to-activate item in this app - see verticalNavSelection's
+        // own comment). keyboard-selected moves along regardless - .active
+        // (which view) and .keyboard-selected (arrow-key cursor) are
+        // independent (see the CSS comment on .view-tab.keyboard-selected),
+        // so switching the active view here must also explicitly move the
+        // cursor, unlike a plain click elsewhere which only ever changes .active.
+        function navigateStreamControls(direction) {
+            const current = currentStreamControlSelection();
+            if (!current) return false;
+            const wrapper = current.closest('.stream-payload');
+            if (!wrapper) return false;
+            const items = Array.from(wrapper.querySelectorAll('.view-tab, .stream-btn'));
+            if (items.length < 2) return false;
+            const index = items.indexOf(current);
+            const next = items[(index + direction + items.length) % items.length];
+            if (next.classList.contains('view-tab')) next.click();
+            moveStreamControlSelectionTo(next);
+            return true;
+        }
+
+        // Up/Down's other section-local behavior for the same 3-item group
+        // navigateStreamControls() cycles with Left/Right - treats the whole
+        // group as a single row in a small 2D layout (Add Note above, the
+        // Expand All/Collapse All section below), so Up/Down jump straight
+        // out of the row to one of those instead of stepping to a
+        // neighboring control within it (which is what plain flat-list
+        // navigateVertical() would otherwise do, landing on whichever
+        // control happens to be next in DOM order). Checked ahead of
+        // navigateVertical() in the keydown handler, same precedence as
+        // navigatePivotMenuItems()/navigateThemeTiles(). Falls through
+        // (returns false) to navigateVertical()'s normal flat-list stepping
+        // whenever the jump target doesn't exist yet - Hexdump not activated
+        // at least once means no .packet-control-btn to jump to for Down.
+        function navigateStreamControlsVertical(direction) {
+            const current = currentStreamControlSelection();
+            if (!current) return false;
+            let target;
+            if (direction > 0) {
+                target = current.closest('.stream-payload')?.querySelector('.packet-control-btn');
+            } else {
+                target = current.closest('.detail-row')?.querySelector('.row-note-edit-link');
+            }
+            if (!target || target.offsetParent === null) return false;
+            moveStreamControlSelectionTo(target);
+            return true;
+        }
+
+        // Left/Right's behavior for the Expand All/Collapse All pair - its
+        // own separate 2-item horizontal group, not merged into
+        // navigateStreamControls()'s group above (that group's Down jumps
+        // INTO this one as a distinct row, so it can't also BE this one).
+        // Neither button activates on arrival, unlike ASCII Transcript/
+        // Hexdump in the group above - both are real state-mutating actions
+        // (bulk-toggling every packet's visibility) rather than a passive
+        // view switch, so this follows the same reasoning Download PCAP
+        // does: arrowing past a button must never fire its action on its
+        // own, only Enter does.
+        function navigatePacketControls(direction) {
+            if (!(verticalNavSelection && verticalNavSelection.isConnected && verticalNavSelection.offsetParent !== null && verticalNavSelection.classList.contains('packet-control-btn'))) return false;
+            const wrapper = verticalNavSelection.closest('.packet-controls');
+            if (!wrapper) return false;
+            const items = Array.from(wrapper.querySelectorAll('.packet-control-btn'));
+            if (items.length < 2) return false;
+            const index = items.indexOf(verticalNavSelection);
+            moveStreamControlSelectionTo(items[(index + direction + items.length) % items.length]);
+            return true;
+        }
+
+        // Up/Down's other section-local behavior for the Expand All/Collapse
+        // All pair - mirrors navigateStreamControlsVertical()'s own jump
+        // logic, one level down: Up from either button jumps to Download
+        // PCAP (its nearest DOM neighbor in the group above, same "jump to
+        // the boundary neighbor" pattern navigateStreamControlsVertical()
+        // uses for Add Note), Down jumps to the first packet regardless of
+        // which of the two is currently selected. Both search from the
+        // shared .stream-payload ancestor (not just .packet-controls, which
+        // only wraps the two buttons themselves) since that's the closest
+        // container holding .stream-btn/.packet-header too. Checked ahead
+        // of navigateVertical() in the keydown handler, same precedence as
+        // navigateStreamControlsVertical().
+        function navigatePacketControlsVertical(direction) {
+            if (!(verticalNavSelection && verticalNavSelection.isConnected && verticalNavSelection.offsetParent !== null && verticalNavSelection.classList.contains('packet-control-btn'))) return false;
+            const wrapper = verticalNavSelection.closest('.stream-payload');
+            if (!wrapper) return false;
+            const target = direction > 0 ? wrapper.querySelector('.packet-header') : wrapper.querySelector('.stream-btn');
+            if (!target || target.offsetParent === null) return false;
+            moveStreamControlSelectionTo(target);
+            return true;
+        }
+
+        function navigateSampleCards(direction) {
+            // Guard on the view, not just DOM presence - same reasoning
+            // as navigateVertical(): showAnalysisUI() only hides
+            // #inputBoxes rather than clearing it, so the sample cards
+            // are still sitting in the DOM (just invisible) while an
+            // analysis is open.
+            const isWelcome = isWelcomeScreen();
+            if (!isWelcome) return false;
+            const cards = Array.from(document.querySelectorAll('.sample-card'));
+            if (cards.length === 0) return false;
+            cards.forEach(c => c.classList.remove('keyboard-selected'));
+            // Left/Right and Up/Down are two independent selection tracks
+            // on the welcome screen - moving on one axis must clear the
+            // other's highlight, or Enter can activate a stale selection
+            // instead of whatever's actually highlighted.
+            document.querySelectorAll('.previous-analysis-row.keyboard-selected').forEach(el => el.classList.remove('keyboard-selected'));
+            verticalNavSelection = null;
+            verticalNavToggleBarKind = null;
+            if (horizontalSampleNavIndex === -1 || horizontalSampleNavIndex >= cards.length) {
+                horizontalSampleNavIndex = direction > 0 ? 0 : cards.length - 1;
+            } else {
+                horizontalSampleNavIndex = (horizontalSampleNavIndex + direction + cards.length) % cards.length;
+            }
+            cards[horizontalSampleNavIndex].classList.add('keyboard-selected');
+            scrollKeyboardSelectionIntoView(cards[horizontalSampleNavIndex]);
+            return true;
+        }
+
+        // Which list applies is driven by which view is actually showing
+        // (same #inputBoxes display check showWelcomeUI()/showAnalysisUI()
+        // themselves use), not just by which list happens to be non-empty
+        // - showAnalysisUI() only hides #inputBoxes, it doesn't clear its
+        // innerHTML, so the previous-analysis rows are still sitting in
+        // the DOM (just invisible) while an analysis is open, and a
+        // presence-only check would keep finding those instead of ever
+        // falling through to the data table.
+        function navigateVertical(direction) {
+            const isWelcome = isWelcomeScreen();
+            const items = isWelcome
+                ? Array.from(document.querySelectorAll('.previous-analysis-row'))
+                : getVerticalNavItems();
+            if (items.length === 0) return false;
+            // See leftRightSwitchesStatTabs's own comment - any real Up/Down
+            // move hands Left/Right over to whatever's now keyboard-selected
+            // instead of the data-type tabs.
+            leftRightSwitchesStatTabs = false;
+            items.forEach(el => el.classList.remove('keyboard-selected'));
+            if (isWelcome) {
+                // See the matching note in navigateSampleCards(): clear the
+                // other axis's stale highlight so Enter always activates
+                // whatever's actually highlighted.
+                document.querySelectorAll('.sample-card.keyboard-selected').forEach(el => el.classList.remove('keyboard-selected'));
+                horizontalSampleNavIndex = -1;
+            }
+            // isConnected guards against a stale reference into a row set
+            // that's since been replaced (tab switch, pagination, a
+            // search/filter re-render) - self-heals by just starting a
+            // fresh selection instead of erroring or selecting nothing.
+            let index = (verticalNavSelection && verticalNavSelection.isConnected) ? items.indexOf(verticalNavSelection) : -1;
+            if (index === -1) {
+                index = direction > 0 ? 0 : items.length - 1;
+            } else {
+                index = (index + direction + items.length) % items.length;
+            }
+            verticalNavSelection = items[index];
+            // Landing on one of the active tab's own stat cards (see
+            // getVerticalNavItems'/activeColumnStatCards' own comments -
+            // the whole grid column lives at its real page position in
+            // this same list now, not bolted onto one end of it) - hand
+            // control back to Left/Right immediately, overriding the
+            // leftRightSwitchesStatTabs = false just set above, so a
+            // different data type is reachable right away without
+            // needing a second Up/Down press first.
+            if (!isWelcome && verticalNavSelection.classList.contains('stat-card')) {
+                leftRightSwitchesStatTabs = true;
+            }
+            verticalNavToggleBarKind = isWelcome ? null
+                : verticalNavSelection.matches(TOGGLE_BAR_SELECTORS.sankey) ? 'sankey'
+                : verticalNavSelection.matches(TOGGLE_BAR_SELECTORS.agg) ? 'agg'
+                : verticalNavSelection.matches(TOGGLE_BAR_SELECTORS.dnsHeuristicsInfo) ? 'dnsHeuristicsInfo'
+                : null;
+            verticalNavSelection.classList.add('keyboard-selected');
+            scrollKeyboardSelectionIntoView(verticalNavSelection);
+            return true;
+        }
+
+        // Whenever a rebuild (opening an analysis, applying/clearing a
+        // search or filter, acknowledging an alert, ...) replaces the DOM
+        // node verticalNavSelection was pointing at, the very next arrow
+        // press would otherwise hit navigateVertical()'s own "nothing
+        // selected" fallback and land ON the new top-of-list item instead
+        // of moving relative to it (real bug reports, several rounds:
+        // this happened both right after opening an analysis - landing on
+        // the default tab's own card - and after applying a search filter
+        // - landing on the new chip - when in both cases that item should
+        // already read as the current position, so the first press moves
+        // past it). Called after every such rebuild completes; re-seeds
+        // with no visible ring (a starting reference point, not something
+        // the user asked to see highlighted) so the first real arrow
+        // press behaves exactly as if the user had already arrowed onto
+        // whatever's now first. Guarded on staleness (isConnected) so an
+        // ACTUAL, still-valid selection elsewhere - a re-glued toggle bar,
+        // a table row that survived the rebuild - is left untouched
+        // rather than yanked back to the top.
+        function seedVerticalNavSelectionIfStale() {
+            if (verticalNavSelection && verticalNavSelection.isConnected) return;
+            verticalNavSelection = getVerticalNavItems()[0] || null;
+        }
+
+        let themeTileNavSelection = null;
+
+        // .theme-tile-grid uses a responsive auto-fill column count (see
+        // its own CSS rule), so the number of tiles per row changes with
+        // modal width rather than being a fixed constant - read back
+        // whatever it actually resolved to via getComputedStyle so
+        // Up/Down can jump by a real row instead of guessing a column
+        // count. All 3 group grids (Dark/Light/Fun) share the same
+        // container width, so they always resolve to the same column
+        // count - reading the first one is enough. Falls back to 1 (Up/
+        // Down behaves like Left/Right) if the grid can't be found for
+        // any reason, rather than throwing.
+        function themeTileGridColumnCount() {
+            const grid = document.querySelector('.theme-tile-grid');
+            if (!grid) return 1;
+            const columns = getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length;
+            return columns > 0 ? columns : 1;
+        }
+
+        // Themes modal tiles are laid out as a responsive CSS grid split
+        // across 3 separate group grids (Dark/Light/Fun) - rather than
+        // handle cross-grid column alignment explicitly, this treats
+        // every tile across all 3 groups as one flat sequential list in
+        // DOM order (matching every other arrow-nav list in this app) and
+        // moves through it by 1 (Left/Right) or by a full row's width
+        // (Up/Down, via themeTileGridColumnCount()) - close enough to true
+        // 2D movement in practice, since group boundaries rarely land
+        // exactly on a row boundary anyway. Each move calls previewTheme()
+        // on the newly-selected tile, exactly mirroring onmouseenter's
+        // live-preview behavior, so keyboard navigation feels like
+        // hovering with the keyboard rather than a separate mechanism.
+        function navigateThemeTiles(direction, vertical) {
+            const themesModal = document.getElementById('themesModal');
+            if (!themesModal || !themesModal.classList.contains('active')) return false;
+            const tiles = Array.from(document.querySelectorAll('.theme-tile[data-theme-option]'));
+            if (tiles.length === 0) return false;
+            const step = direction * (vertical ? themeTileGridColumnCount() : 1);
+            tiles.forEach(t => t.classList.remove('keyboard-selected'));
+            let index = (themeTileNavSelection && themeTileNavSelection.isConnected) ? tiles.indexOf(themeTileNavSelection) : -1;
+            if (index === -1) {
+                // No keyboard selection yet (the very first arrow press
+                // since the modal opened) - start from the currently
+                // active theme (menuBaseTheme, set by showThemesModal())
+                // rather than always jumping to the first/last tile in the
+                // whole grid, so navigation continues from wherever the
+                // user already is instead of restarting from a corner.
+                // menuBaseTheme is always a valid THEMES key by the time
+                // this can run (showThemesModal() falls back to 'dark' if
+                // the applied theme isn't a real one, e.g. the synthesized
+                // OhMyDebn custom-theme marker) - the -1 fallback below is
+                // purely defensive.
+                const currentIndex = tiles.findIndex(t => t.dataset.themeOption === menuBaseTheme);
+                index = currentIndex === -1
+                    ? (direction > 0 ? 0 : tiles.length - 1)
+                    : (currentIndex + step + tiles.length) % tiles.length;
+            } else {
+                index = (index + step + tiles.length) % tiles.length;
+            }
+            themeTileNavSelection = tiles[index];
+            themeTileNavSelection.classList.add('keyboard-selected');
+            previewTheme(themeTileNavSelection.dataset.themeOption);
+            themeTileNavSelection.scrollIntoView({ block: 'nearest' });
+            return true;
+        }
+
+        let themeTileTypeaheadBuffer = '';
+        let themeTileTypeaheadTimer = null;
+
+        // Type-ahead select for the Themes modal grid, mirroring the
+        // standard native <select>-element convention (type a name's start
+        // to jump to it) rather than reusing the app's own separate
+        // command-palette overlay (see AUTOCOMPLETE_COMMANDS) - the modal
+        // is already a picker with live preview, so jumping the highlight
+        // in place reads more naturally here than popping a second,
+        // floating search box on top of the grid you're already looking
+        // at. Matches against THEMES[key].label directly (not the tile's
+        // own textContent) so it's exact regardless of whatever else a
+        // tile happens to render. The buffer resets after a short pause
+        // between keystrokes - same idea as native select typeahead -
+        // rather than growing forever, so typing "ret" then pausing then
+        // typing "amber" searches for "amber", not "retamber".
+        function handleThemeTileTypeahead(e) {
+            const themesModal = document.getElementById('themesModal');
+            if (!themesModal || !themesModal.classList.contains('active')) return false;
+            if (!(e.key.length === 1 && /[a-z0-9]/i.test(e.key))) return false;
+            clearTimeout(themeTileTypeaheadTimer);
+            themeTileTypeaheadBuffer += e.key.toLowerCase();
+            themeTileTypeaheadTimer = setTimeout(() => { themeTileTypeaheadBuffer = ''; }, 800);
+            const tiles = Array.from(document.querySelectorAll('.theme-tile[data-theme-option]'));
+            const match = tiles.find(t => (THEMES[t.dataset.themeOption]?.label || '').toLowerCase().startsWith(themeTileTypeaheadBuffer));
+            // Still consumes the keystroke (returns true, so the caller
+            // calls e.preventDefault()) even with no match yet - e.g. right
+            // after "z" alone, before the buffer resets - since a
+            // keystroke that's part of an in-progress typeahead search
+            // still isn't meant for anything else, whether or not it
+            // happens to resolve to a tile.
+            if (!match) return true;
+            document.querySelectorAll('.theme-tile.keyboard-selected').forEach(t => t.classList.remove('keyboard-selected'));
+            themeTileNavSelection = match;
+            themeTileNavSelection.classList.add('keyboard-selected');
+            previewTheme(themeTileNavSelection.dataset.themeOption);
+            themeTileNavSelection.scrollIntoView({ block: 'nearest' });
+            return true;
+        }
+
+        // Both pivot-triggering delegated click listeners (tr.agg-row
+        // [data-agg-pivot] and [data-detail-pivot], see above
+        // getVerticalNavItems()/EXPANDED_ROW_ITEM_SELECTOR) read
+        // event.clientX/clientY to position the menu - a plain .click()
+        // leaves those at 0 (the click() method's synthetic MouseEvent
+        // always zeroes coordinate properties), which would pin the menu
+        // to the viewport's top-left corner instead of opening next to
+        // whatever triggered it. Building the event by hand anchors it to
+        // the element's own bounding box instead, so a keyboard-opened
+        // menu lands in the same place a mouse click on that element would
+        // have. Generic over any pivot-triggering element, not just table
+        // rows, despite the name's history - kept short rather than
+        // renamed to something like openPivotMenuForElement().
+        function openPivotMenuForRow(row) {
+            const rect = row.getBoundingClientRect();
+            row.dispatchEvent(new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                clientX: rect.left + 16,
+                clientY: rect.top + rect.height / 2,
+            }));
+        }
+
+        function activateKeyboardSelection() {
+            // Even higher priority than the pivot menu below - the command
+            // palette's own text input holds real DOM focus while it's
+            // open, so there's nothing else Enter could plausibly mean.
+            if (activateAutocompleteSelection()) {
+                return true;
+            }
+            // Highest priority: an open pivot menu is a transient overlay
+            // on top of everything else, so Enter should always act on its
+            // own highlighted item first rather than falling through to
+            // whatever's keyboard-selected on the page underneath it.
+            if (pivotMenuNavSelection && pivotMenuNavSelection.isConnected && activePivotMenuEl && activePivotMenuEl.contains(pivotMenuNavSelection)) {
+                pivotMenuNavSelection.click();
+                return true;
+            }
+            if (themeTileNavSelection && themeTileNavSelection.isConnected && themeTileNavSelection.classList.contains('keyboard-selected')) {
+                themeTileNavSelection.click();
+                return true;
+            }
+            const isWelcome = isWelcomeScreen();
+            const selectedSample = isWelcome ? document.querySelector('.sample-card.keyboard-selected') : null;
+            if (selectedSample) {
+                selectedSample.click();
+                return true;
+            }
+            if (verticalNavSelection && verticalNavSelection.isConnected && verticalNavSelection.classList.contains('keyboard-selected')) {
+                if (verticalNavSelection.classList.contains('previous-analysis-row')) {
+                    const link = verticalNavSelection.querySelector('a[href]');
+                    if (link) link.click();
+                } else if (verticalNavSelection.matches('tr.agg-row[data-agg-pivot]') || verticalNavSelection.matches('[data-detail-pivot]')) {
+                    openPivotMenuForRow(verticalNavSelection);
+                } else if (verticalNavSelection.classList.contains('filter-chip')) {
+                    // The chip itself carries no click action (see
+                    // buildFilterBarHtml()) - only its nested
+                    // .filter-chip-remove "x" does, so .click() on the chip
+                    // directly would silently do nothing.
+                    const removeBtn = verticalNavSelection.querySelector('.filter-chip-remove');
+                    if (removeBtn) removeBtn.click();
+                } else {
+                    verticalNavSelection.click();
+                }
+                return true;
+            }
+            return false;
+        }
+
+        // Mirrors navigateVertical()/navigateThemeTiles()'s own flat-list
+        // pattern, scoped to the open pivot menu's own buttons - Escape
+        // (registered separately, see closePivotMenu()'s call site) still
+        // closes the menu outright, this only handles cycling Up/Down
+        // through what's inside it.
+        function navigatePivotMenuItems(direction) {
+            if (!activePivotMenuEl) return false;
+            const items = Array.from(activePivotMenuEl.querySelectorAll('.pivot-menu-item'));
+            if (items.length === 0) return false;
+            items.forEach(el => el.classList.remove('keyboard-selected'));
+            let index = (pivotMenuNavSelection && pivotMenuNavSelection.isConnected) ? items.indexOf(pivotMenuNavSelection) : -1;
+            if (index === -1) {
+                index = direction > 0 ? 0 : items.length - 1;
+            } else {
+                index = (index + direction + items.length) % items.length;
+            }
+            pivotMenuNavSelection = items[index];
+            pivotMenuNavSelection.classList.add('keyboard-selected');
+            pivotMenuNavSelection.scrollIntoView({ block: 'nearest' });
+            return true;
+        }
+
+        // Shared guard for every single-key shortcut below ('?', '>'/'<',
+        // arrow navigation, Enter-to-activate): only fire when no modifier
+        // is held and the user isn't actively typing somewhere (a real
+        // input/textarea, or - defensively, though nothing in this app
+        // currently uses it - a contenteditable element). Centralizing
+        // this means a future change to what counts as "typing" (e.g. a
+        // new input type) only needs updating here instead of at every
+        // call site.
+        function isNavigableKeyContext(e) {
+            return !e.ctrlKey && !e.altKey && !e.metaKey &&
+                e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA' &&
+                !e.target.isContentEditable;
+        }
+
+        // Single source of truth for every typed shortcut, all routed
+        // through one live-filtered command palette (see
+        // openAutocompleteModal() below). The 4 modal-openers are listed by
+        // hand; every theme is generated straight from THEMES instead of
+        // maintaining a separate hand-picked list of "cheat codes" for just
+        // the Fun group - any theme (Dark/Light/Fun alike) is reachable by
+        // typing its real displayed name now, so a new theme needs no
+        // manual autocomplete wiring of its own, and there's no separate
+        // short code to invent, document, and keep in sync. analysisOnly
+        // mirrors the old "notes" code's own guard - showNotesModal() with
+        // no args edits currentNotes via currentMd5, neither of which is
+        // meaningful before an analysis is loaded, so it's filtered out of
+        // the list entirely on the welcome screen rather than being offered
+        // and then doing something odd.
+        const AUTOCOMPLETE_COMMANDS = [
+            { code: 'help', label: 'Help', action: () => { closeAutocompleteModal(); showHelpModal(); } },
+            { code: 'about', label: 'About', action: () => { closeAutocompleteModal(); showAboutModal(); } },
+            { code: 'advanced features', label: 'Advanced Features', action: () => { closeAutocompleteModal(); showSecurityOnionModal(); } },
+            // External links - same window.open(url, '_blank', 'noopener,noreferrer')
+            // convention already used elsewhere in this file (see the
+            // detail-panel value linkifier), not a plain <a target="_blank">
+            // since these commands have no anchor element of their own to
+            // click.
+            { code: 'documentation', label: 'Documentation', action: () => { closeAutocompleteModal(); window.open('https://so-crates.org', '_blank', 'noopener,noreferrer'); } },
+            { code: 'security onion', label: 'Security Onion', action: () => { closeAutocompleteModal(); window.open('https://securityonion.net', '_blank', 'noopener,noreferrer'); } },
+            { code: 'github repo', label: 'Github repo', action: () => { closeAutocompleteModal(); window.open('https://github.com/dougburks/so-crates', '_blank', 'noopener,noreferrer'); } },
+            { code: 'pcap samples', label: 'PCAP samples', action: () => { closeAutocompleteModal(); window.open('https://malware-traffic-analysis.net', '_blank', 'noopener,noreferrer'); } },
+            { code: 'log samples', label: 'Log samples', action: () => { closeAutocompleteModal(); window.open('https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES', '_blank', 'noopener,noreferrer'); } },
+            { code: 'binary samples', label: 'Binary samples', action: () => { closeAutocompleteModal(); window.open('https://www.eicar.org/', '_blank', 'noopener,noreferrer'); } },
+            { code: 'themes', label: 'Themes', action: () => { closeAutocompleteModal(); showThemesModal(); } },
+            { code: 'rules', label: 'Rules', action: () => { closeAutocompleteModal(); showRulesModal(); } },
+            { code: 'settings', label: 'Settings', action: () => { closeAutocompleteModal(); showSettingsModal(); } },
+            { code: 'notes', label: 'Notes', analysisOnly: true, action: () => { closeAutocompleteModal(); showNotesModal(); } },
+            // openDeleteAnalysis() only opens the confirmation modal (see
+            // its own definition) - it still requires clicking Delete
+            // there to actually delete anything, same "no action until the
+            // user agrees" property as every other command here.
+            { code: 'delete', label: 'Delete this analysis', analysisOnly: true, action: () => { closeAutocompleteModal(); openDeleteAnalysis(currentMd5, currentFileName); } },
+            { code: 're-analyze', label: 'Re-analyze', analysisOnly: true, action: () => { closeAutocompleteModal(); openReanalyzeModal(currentMd5, currentFileName); } },
+            // Focuses, doesn't open anything - #searchBarContainer is
+            // display:none until showAnalysisUI() reveals it, so
+            // analysisOnly keeps this out of the candidate list entirely on
+            // the welcome screen rather than focusing a hidden input.
+            { code: 'search', label: 'Search', analysisOnly: true, action: () => { closeAutocompleteModal(); document.getElementById('searchInput').focus(); } },
+            { code: 'clear', label: 'Clear all search filters', analysisOnly: true, action: () => { closeAutocompleteModal(); clearAllFilters(); } },
+            { code: 'sankey', label: 'Toggle Sankey Diagram section', analysisOnly: true, action: () => { closeAutocompleteModal(); toggleDiagram(); } },
+            { code: 'aggregation', label: 'Toggle Aggregation Tables section', analysisOnly: true, action: () => { closeAutocompleteModal(); toggleAggregations(); } },
+            // All three go to the same place (showWelcome()) - they're
+            // different mental models for "I want to start something new"
+            // (upload a file, import from a URL, revisit a past analysis),
+            // not three different screens. analysisOnly here means the
+            // opposite of what it means everywhere else in this list (hide
+            // while already on the welcome screen these navigate to,
+            // rather than hide while NOT on an analysis) - reused as-is
+            // since the underlying need (hide when the destination is
+            // where you already are) is the same shape either way.
+            { code: 'upload', label: 'Upload', analysisOnly: true, action: () => { closeAutocompleteModal(); showWelcome(); } },
+            { code: 'import', label: 'Import', analysisOnly: true, action: () => { closeAutocompleteModal(); showWelcome(); } },
+            { code: 'previous analyses', label: 'Previous Analyses', analysisOnly: true, action: () => { closeAutocompleteModal(); showWelcome(); } },
+            { code: 'copy md5 hash to clipboard', label: 'Copy MD5 hash to clipboard', analysisOnly: true, action: () => { closeAutocompleteModal(); copyMd5ToClipboard(currentMd5); } },
+            { code: 'rename analysis', label: 'Rename Analysis', analysisOnly: true, action: () => { closeAutocompleteModal(); startRenameAnalysis(); } },
+            ...Object.entries(THEMES).map(([key, theme]) => ({
+                // 'theme' is appended to code (not just present in label)
+                // so typing "theme" surfaces every individual theme-switch
+                // command, not just the "Themes" modal-opener above -
+                // autocompleteMatchesQuery/autocompleteMatchScore only
+                // ever look at code, never label.
+                code: `${theme.label.toLowerCase()} theme`,
+                label: `${theme.label} theme`,
+                action: () => { closeAutocompleteModal(); setTheme(key); showToast(`Switched to ${theme.label} theme.`); },
+            })),
+        ];
+
+        // The commands currently rendered in #autocompleteResults (post-
+        // filter), kept alongside the DOM so the click delegate/Enter
+        // activation below can map an .autocomplete-item back to its
+        // action without re-deriving the filter.
+        let autocompleteMatches = [];
+        let autocompleteNavSelection = null;
+
+        function isAutocompleteModalActive() {
+            return document.getElementById('autocompleteModal').classList.contains('active');
+        }
+
+        function closeAutocompleteModal() {
+            document.getElementById('autocompleteModal').classList.remove('active');
+            // Blur, not just hide - closing (Escape, backdrop click, or a
+            // command committing) doesn't otherwise move focus off the
+            // input, so it would still be document.activeElement even
+            // while invisible. The very next bare-letter trigger keydown
+            // would then see e.target as that INPUT and isNavigableKeyContext()
+            // would (correctly, for a real focused input) refuse to treat
+            // it as a trigger key - silently blocking the palette from ever
+            // reopening until something else happened to move focus away first.
+            const input = document.getElementById('autocompleteInput');
+            input.blur();
+            input.value = '';
+            autocompleteMatches = [];
+            autocompleteNavSelection = null;
+        }
+
+        // Only letters/digits - the codes are all-alphanumeric, and this
+        // doubles as the trigger-key test (see the keydown handler below):
+        // any bare letter/digit typed outside a text field, with nothing
+        // else already open, opens the palette pre-seeded with that
+        // character instead of silently starting an invisible buffer match.
+        function isAutocompleteTriggerKey(e) {
+            return e.key.length === 1 && /[a-z0-9]/i.test(e.key);
+        }
+
+        function openAutocompleteModal(firstChar) {
+            document.getElementById('autocompleteModal').classList.add('active');
+            const input = document.getElementById('autocompleteInput');
+            input.value = firstChar;
+            filterAutocomplete();
+            input.focus();
+        }
+
+        // Data-type stat-card tabs (DNS, HTTP, All Events, ...) aren't a
+        // fixed list like AUTOCOMPLETE_COMMANDS' other entries - which
+        // tabs exist depends on what that particular analysis actually
+        // contains, so this is read fresh from #statsGrid on every filter
+        // pass instead of being baked into AUTOCOMPLETE_COMMANDS itself.
+        // Naturally contributes nothing on the welcome screen, where
+        // #statsGrid has no .stat-card children yet - no separate
+        // analysisOnly flag needed the way the other analysis-only
+        // commands have. Reuses the card's own real onclick (card.click(),
+        // same as navigateStatTabs() does) rather than duplicating
+        // showTab()'s section-id logic here.
+        function getDataTypeAutocompleteCommands() {
+            return Array.from(document.querySelectorAll('#statsGrid .stat-card')).map(card => {
+                const label = card.querySelector('.stat-label').textContent;
+                return {
+                    code: label.toLowerCase(),
+                    label: label,
+                    action: () => { closeAutocompleteModal(); card.click(); },
+                };
+            });
+        }
+
+        // Matches a query anywhere a word starts, not just at the very
+        // start of the whole code - "alerts" needs to find "network
+        // alerts"/"file alerts" (query prefixes the label's 2nd word), not
+        // just codes it's a prefix of outright. A bare substring anywhere
+        // (e.g. "eme" inside "themes") also counts - autocompleteMatchScore
+        // below ranks it lowest of the three, so a real prefix match never
+        // gets buried under mid-word noise for a short query.
+        function autocompleteMatchesQuery(code, query) {
+            if (!query) return true;
+            return code.includes(query);
+        }
+
+        // 2 = the whole code is a prefix match ("dns" -> "dns"), 1 = some
+        // word within it is ("alerts" -> "network alerts", split on spaces
+        // AND hyphens so e.g. "analyze" also finds "re-analyze"), 0 = only
+        // a bare substring match ("eme" -> "themes"). Used purely for
+        // result ordering, not filtering - autocompleteMatchesQuery already
+        // decided this code is a match at all.
+        function autocompleteMatchScore(code, query) {
+            if (code.startsWith(query)) return 2;
+            if (code.split(/[\s-]+/).some(word => word.startsWith(query))) return 1;
+            return 0;
+        }
+
+        // oninput (not keydown) so Backspace/paste/selection-delete all
+        // re-filter for free via the browser's own native text-editing,
+        // rather than this needing to hand-track the query string itself.
+        function filterAutocomplete() {
+            const query = document.getElementById('autocompleteInput').value.trim().toLowerCase();
+            const isWelcome = isWelcomeScreen();
+            const allCommands = AUTOCOMPLETE_COMMANDS.concat(getDataTypeAutocompleteCommands());
+            autocompleteMatches = allCommands
+                .filter(c => autocompleteMatchesQuery(c.code, query) && (!c.analysisOnly || !isWelcome))
+                .sort((a, b) => autocompleteMatchScore(b.code, query) - autocompleteMatchScore(a.code, query));
+            autocompleteNavSelection = null;
+            const resultsEl = document.getElementById('autocompleteResults');
+            resultsEl.innerHTML = autocompleteMatches.length
+                ? autocompleteMatches.map((c, i) => `<button type="button" class="autocomplete-item" data-autocomplete-index="${i}">${escapeHtml(c.label)}</button>`).join('')
+                : '<div class="autocomplete-empty">No matches</div>';
+        }
+
+        // Scoped to #autocompleteResults itself, not delegated from document
+        // like every other click-delegated list in this app (agg-row,
+        // filter-chip, ...) - those live directly on the page or in a
+        // fixed-position popup; this one is kept scoped so the palette's
+        // own items stay wired even if a future .modal-content
+        // stopPropagation shim ever comes back (one used to sit between
+        // these buttons and any document-level listener).
+        document.getElementById('autocompleteResults').addEventListener('click', function(e) {
+            const item = e.target.closest('.autocomplete-item[data-autocomplete-index]');
+            if (!item) return;
+            const cmd = autocompleteMatches[Number(item.dataset.autocompleteIndex)];
+            if (cmd) cmd.action();
+        });
+
+        // Mirrors navigateVertical()'s own flat-list pattern, scoped to the
+        // open palette's own results - always returns true while the modal
+        // is active (even with 0 matches) so Up/Down never falls through to
+        // whatever's keyboard-selected on the page underneath it.
+        function navigateAutocompleteItems(direction) {
+            if (!isAutocompleteModalActive()) return false;
+            const items = Array.from(document.querySelectorAll('#autocompleteResults .autocomplete-item'));
+            if (items.length > 0) {
+                items.forEach(el => el.classList.remove('keyboard-selected'));
+                let index = (autocompleteNavSelection && autocompleteNavSelection.isConnected) ? items.indexOf(autocompleteNavSelection) : -1;
+                index = index === -1 ? (direction > 0 ? 0 : items.length - 1) : (index + direction + items.length) % items.length;
+                autocompleteNavSelection = items[index];
+                autocompleteNavSelection.classList.add('keyboard-selected');
+                autocompleteNavSelection.scrollIntoView({ block: 'nearest' });
+            }
+            return true;
+        }
+
+        // Enter with nothing yet arrow-selected still commits a single
+        // remaining match (typing a unique prefix and hitting Enter,
+        // without an extra arrow press first, is standard command-palette
+        // behavior) - with 0 or 2+ still-ambiguous matches it does nothing,
+        // keeping the "no action until the user agrees" property the whole
+        // palette was built around.
+        function activateAutocompleteSelection() {
+            if (!isAutocompleteModalActive()) return false;
+            if (autocompleteNavSelection && autocompleteNavSelection.isConnected) {
+                autocompleteNavSelection.click();
+            } else {
+                const items = document.querySelectorAll('#autocompleteResults .autocomplete-item');
+                if (items.length === 1) items[0].click();
+            }
+            return true;
+        }
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
+                // Escape backs out one level at a time: close whatever's
+                // open (a modal, the gear dropdown, a pivot menu) if
+                // anything is, and only fall through to leaving the
+                // analysis entirely (back to the welcome screen) once
+                // there's nothing left to close - so a stray Escape while
+                // closing a modal doesn't also yank the analysis out from
+                // under it in the same keystroke. loadingModal is
+                // deliberately excluded (closeAllModals() itself never
+                // touches it either, to avoid abandoning an in-progress
+                // analysis mid-load). Also skipped while typing (e.g.
+                // cancelling the inline analysis-rename input, which has
+                // its own Escape handler for that but doesn't
+                // stopPropagation()) - Escape there should only cancel
+                // the edit, not also abandon the whole analysis.
+                const hadSomethingOpen = !!document.querySelector('.modal.active:not(#loadingModal)') ||
+                    !!document.getElementById('appHeaderMenuDropdown')?.classList.contains('active') ||
+                    !!activePivotMenuEl;
                 closeAllModals();
+                // closeAllModals() only closes .modal elements - the pivot
+                // menu isn't one (it's append/remove'd from document.body
+                // per open, see closePivotMenu()'s own comment), so it
+                // needs its own explicit close call here. This used to live
+                // in a separate keydown listener instead, registered
+                // earlier in the file - which raced this one: on a single
+                // Escape press, that listener always ran first and cleared
+                // activePivotMenuEl before hadSomethingOpen could see it
+                // was ever open, so this handler always computed
+                // hadSomethingOpen === false and fell through to
+                // showWelcome() - Escape closed the pivot menu AND kicked
+                // back to the welcome screen in the same keystroke instead
+                // of just closing the menu.
+                closePivotMenu();
+                const isTypingContext = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
+                if (!hadSomethingOpen && !isTypingContext) {
+                    const isWelcome = isWelcomeScreen();
+                    if (!isWelcome) {
+                        showWelcome();
+                    }
+                }
             }
-            if (e.key === '?' && !e.ctrlKey && !e.altKey && !e.metaKey && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+            if (e.key === '?' && isNavigableKeyContext(e)) {
                 e.preventDefault();
                 showHelpModal();
             }
-            if (e.key === 't' && !e.ctrlKey && !e.altKey && !e.metaKey && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA' && !e.target.isContentEditable) {
+            // '<'/'>' (not the 't' key formerly used here, and not arrow
+            // keys either) - 't' collided with typing several of the
+            // app's own theme cheat codes (e.g. "retro", "digit" both
+            // contain a 't'), toggling the theme on every matching
+            // keystroke while the cheat code was still being typed.
+            // Arrow keys are reserved for real in-app navigation (stat
+            // tabs, sample buttons, table rows), so this uses '<'/'>'
+            // instead - reads naturally as previous/next (same
+            // convention as media-player buttons) and collides with
+            // neither.
+            if (e.key === '>' && isNavigableKeyContext(e)) {
                 e.preventDefault();
                 toggleTheme();
             }
-            // Easter eggs: type "31337" for Hacker theme, "sguil" for Sguil
-            // theme, "cga" for CGA theme, "bread" for Breadbin Blue theme,
-            // "vapor" for Vaporwave theme, "luna" for Luna Blue theme,
-            // "amber" for Amber CRT theme, "dos" for DOS Blue theme, "digit"
-            // for Digital Frontier theme, or "retro" for Retro Handheld
-            // theme. Checked with endsWith() rather than === since the
-            // buffer holds the last 5 keys typed session-wide - a code
-            // shorter than 5 characters (like "cga") would otherwise only
-            // ever match in the first few keystrokes after page load, when
-            // the buffer hasn't filled up yet.
-            const tag = e.target.tagName;
-            const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable;
-            if (!isTyping && e.key.length === 1) {
-                keyBuffer += e.key.toLowerCase();
-                if (keyBuffer.length > 5) {
-                    keyBuffer = keyBuffer.slice(-5);
-                }
-                if (keyBuffer.endsWith('31337')) {
+            if (e.key === '<' && isNavigableKeyContext(e)) {
+                e.preventDefault();
+                toggleThemeReverse();
+            }
+            // Left/Right no-op while the pivot menu is open rather than
+            // falling through to stat-tab/sample-card navigation - the
+            // menu is a single vertical list with nothing for Left/Right
+            // to do, and letting them reach the page underneath would
+            // switch tabs (rebuilding the very table the open menu's row
+            // belongs to) while the menu is still sitting on screen.
+            if (e.key === 'ArrowRight' && isNavigableKeyContext(e)) {
+                if (!activePivotMenuEl && (navigateThemeTiles(1) || navigateStreamControls(1) || navigatePacketControls(1) || navigateFilterBarItems(1) || navigateAggPaginationButtons(1) || navigateAggTables(1) || (leftRightSwitchesStatTabs && navigateStatTabs(1)) || navigateSampleCards(1))) {
                     e.preventDefault();
-                    setTheme('hacker');
-                    showToast('Switched to Hacker theme. You are truly 31337!');
-                    keyBuffer = '';
                 }
-                if (keyBuffer.endsWith('sguil')) {
+            }
+            if (e.key === 'ArrowLeft' && isNavigableKeyContext(e)) {
+                if (!activePivotMenuEl && (navigateThemeTiles(-1) || navigateStreamControls(-1) || navigatePacketControls(-1) || navigateFilterBarItems(-1) || navigateAggPaginationButtons(-1) || navigateAggTables(-1) || (leftRightSwitchesStatTabs && navigateStatTabs(-1)) || navigateSampleCards(-1))) {
                     e.preventDefault();
-                    setTheme('sguil');
-                    showToast('Switched to Sguil theme.');
-                    keyBuffer = '';
                 }
-                if (keyBuffer.endsWith('cga')) {
+            }
+            // navigateAutocompleteItems()/isAutocompleteModalActive() checked
+            // first, and with an extra "|| isAutocompleteModalActive()" on
+            // the guard itself - the palette's own text input necessarily
+            // has real DOM focus while it's open (unlike the pivot menu's
+            // plain buttons), which isNavigableKeyContext() would otherwise
+            // treat as "the user is typing, don't intercept arrows" and
+            // block this whole block from running at all. navigatePivotMenuItems()
+            // next for the same reason activateKeyboardSelection() checks
+            // pivotMenuNavSelection first - an open menu is a transient
+            // overlay, so Up/Down should drive it rather than the page
+            // underneath while it's open. navigateStreamControlsVertical()/
+            // navigatePacketControlsVertical() next, same precedence as
+            // navigateStreamControls()/navigatePacketControls() above -
+            // jump out of whichever horizontal group is selected before
+            // falling through to navigateVertical()'s plain flat-list
+            // stepping.
+            if (e.key === 'ArrowDown' && (isNavigableKeyContext(e) || isAutocompleteModalActive())) {
+                if (navigateAutocompleteItems(1) || navigatePivotMenuItems(1) || navigateThemeTiles(1, true) || navigateStreamControlsVertical(1) || navigatePacketControlsVertical(1) || navigateVertical(1)) {
                     e.preventDefault();
-                    setTheme('cga');
-                    showToast('Switched to CGA theme.');
-                    keyBuffer = '';
                 }
-                if (keyBuffer.endsWith('bread')) {
+            }
+            if (e.key === 'ArrowUp' && (isNavigableKeyContext(e) || isAutocompleteModalActive())) {
+                if (navigateAutocompleteItems(-1) || navigatePivotMenuItems(-1) || navigateThemeTiles(-1, true) || navigateStreamControlsVertical(-1) || navigatePacketControlsVertical(-1) || navigateVertical(-1)) {
                     e.preventDefault();
-                    setTheme('breadbin-blue');
-                    showToast('Switched to Breadbin Blue theme.');
-                    keyBuffer = '';
                 }
-                if (keyBuffer.endsWith('vapor')) {
+            }
+            if (e.key === 'Enter' && (isNavigableKeyContext(e) || isAutocompleteModalActive())) {
+                if (activateKeyboardSelection()) {
                     e.preventDefault();
-                    setTheme('vaporwave');
-                    showToast('Switched to Vaporwave theme.');
-                    keyBuffer = '';
                 }
-                if (keyBuffer.endsWith('luna')) {
-                    e.preventDefault();
-                    setTheme('luna-blue');
-                    showToast('Switched to Luna Blue theme.');
-                    keyBuffer = '';
-                }
-                if (keyBuffer.endsWith('amber')) {
-                    e.preventDefault();
-                    setTheme('amber');
-                    showToast('Switched to Amber CRT theme.');
-                    keyBuffer = '';
-                }
-                if (keyBuffer.endsWith('dos')) {
-                    e.preventDefault();
-                    setTheme('dos-blue');
-                    showToast('Switched to DOS Blue theme.');
-                    keyBuffer = '';
-                }
-                if (keyBuffer.endsWith('digit')) {
-                    e.preventDefault();
-                    setTheme('digital-frontier');
-                    showToast('Switched to Digital Frontier theme.');
-                    keyBuffer = '';
-                }
-                if (keyBuffer.endsWith('retro')) {
-                    e.preventDefault();
-                    setTheme('retro-handheld');
-                    showToast('Switched to Retro Handheld theme.');
-                    keyBuffer = '';
-                }
+            }
+            // Type-ahead select for the Themes modal grid (see
+            // handleThemeTileTypeahead() above) - checked ahead of the
+            // command-palette trigger below purely for grouping (the
+            // trigger's own !document.querySelector('.modal.active') guard
+            // already excludes it whenever Themes is open regardless of
+            // order).
+            if (isNavigableKeyContext(e) && handleThemeTileTypeahead(e)) {
+                e.preventDefault();
+            }
+            // Bare letter/digit trigger for the command palette (see
+            // AUTOCOMPLETE_COMMANDS/openAutocompleteModal() above) - only
+            // when nothing else is already open/focused, so it can't steal
+            // a keystroke meant for a real text field, another modal, the
+            // gear dropdown, or the pivot menu (all of which have their own
+            // reasons to want every keystroke themselves).
+            if (isNavigableKeyContext(e) && isAutocompleteTriggerKey(e) && !isAutocompleteModalActive() &&
+                !document.querySelector('.modal.active') && !activePivotMenuEl &&
+                !document.getElementById('appHeaderMenuDropdown')?.classList.contains('active')) {
+                e.preventDefault();
+                openAutocompleteModal(e.key.toLowerCase());
             }
         });
 
@@ -2998,18 +5696,34 @@
                 toast.style.cursor = 'pointer';
                 toast.addEventListener('click', dismiss);
             } else {
-                setTimeout(dismiss, 2000);
+                setTimeout(dismiss, 3500);
             }
         }
 
-        // Only one file from a multi-file ZIP is ever analyzed (the first
-        // PCAP, or the first non-hidden file if there's no PCAP) - the
-        // server reports how many others were dropped so this isn't
-        // silent data loss the user has no way to notice.
+        // Every file in a multi-file ZIP is analyzed (pcaps get network
+        // analysis, everything else gets log/binary analysis - see
+        // notifyIfAdditionalAnalyses below) - filesSkipped now only ever
+        // means a file genuinely failed to process (unreadable, etc), not
+        // a by-design drop. The server reports how many so a real failure
+        // still isn't silent.
         function notifyIfFilesSkipped(result) {
             if (result && result.filesSkipped) {
-                const plural = result.filesSkipped === 1 ? 'file was' : 'files were';
-                showToast(`${result.filesSkipped} additional ${plural} in the ZIP and not analyzed`, { sticky: true });
+                const plural = result.filesSkipped === 1 ? 'file' : 'files';
+                showToast(`${result.filesSkipped} additional ${plural} in the ZIP could not be analyzed`, { sticky: true });
+            }
+        }
+
+        // A multi-file ZIP's other files (beyond the primary one the user
+        // is navigated into) are each analyzed as their own independent
+        // analysis in the background - point the user at Recent Analyses
+        // rather than leaving them to wonder where the results went.
+        function notifyIfAdditionalAnalyses(result) {
+            if (result && result.additionalMd5s && result.additionalMd5s.length) {
+                const n = result.additionalMd5s.length;
+                showToast(
+                    `${n} additional file${n === 1 ? '' : 's'} found in the ZIP ${n === 1 ? 'is' : 'are'} also being analyzed`,
+                    { sticky: true, actionLabel: 'View Recent Analyses', onAction: () => showWelcome() }
+                );
             }
         }
 
@@ -3061,7 +5775,7 @@
                     && info.sigma.windows.count === null
                     && info.sigma.linux.count === null;
                 if (noRules) {
-                    showToast('No rule sets are configured yet — Suricata/YARA/Sigma detections will be empty until you set them up.', {
+                    showToast('No rulesets are configured yet — Suricata/YARA/Sigma detections will be empty until you set them up.', {
                         sticky: true,
                         actionLabel: 'Open Rules',
                         onAction: showRulesModal,
@@ -3091,6 +5805,7 @@
         const RULESET_LABELS = { suricata: 'Suricata', yara: 'YARA', sigma: 'Sigma' };
 
         let rulesPollInterval = null;
+        let rulesModalLastRenderedHtml = null;
         // Separate 1s ticker just for the "Updating… Ns" elapsed-time
         // display, so it counts up every second instead of only jumping
         // every 2s alongside rulesPollInterval's actual network fetch.
@@ -3204,7 +5919,7 @@
                 ? `<span class="rule-spinner"></span>Updating… ${startTime ? formatElapsed(Math.max(0, Math.round((Date.now() - startTime) / 1000))) : ''}`
                 : 'Update';
             const logToggle = logText
-                ? `<button onclick="toggleRuleLog('${name}')" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">${expanded ? 'Hide Log' : 'View Log'}</button>`
+                ? `<button data-action="toggle-rule-log" data-name="${escapeHtml(name)}" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline;">${expanded ? 'Hide Log' : 'View Log'}</button>`
                 : '';
             const sectionDivider = isLast ? '' : 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--bg-hover);';
             // Suricata's heading link opens the sources picker
@@ -3219,7 +5934,7 @@
             // expanded/collapsed state.
             const sourceLink = source
                 ? `<a href="${source.url}" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-size: 0.8rem; margin-left: 6px;">(${source.label})</a>`
-                : `<button onclick="toggleSuricataSources()" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; margin-left: 6px;">(${suricataSourcesExpanded ? 'Hide Rulesets' : 'Enable/Disable Rulesets'})</button>`;
+                : `<button data-action="toggle-suricata-sources" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; margin-left: 6px;">(${suricataSourcesExpanded ? 'Hide Rulesets' : 'Enable/Disable Rulesets'})</button>`;
             return `
                 <div style="${sectionDivider}">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 10px;">
@@ -3231,7 +5946,7 @@
                         <div style="display: flex; align-items: center; gap: 8px;">
                             ${resultIcon}
                             ${logToggle}
-                            <button onclick="triggerRulesetUpdate('${name}')" ${statusEntry.running ? 'disabled' : ''} style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">${updateButtonLabel}</button>
+                            <button data-action="update-ruleset" data-arg="${escapeHtml(name)}" ${statusEntry.running ? 'disabled' : ''} style="background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-color); padding: 6px 14px; border-radius: 6px; cursor: pointer; white-space: nowrap;">${updateButtonLabel}</button>
                         </div>
                     </div>
                     ${expanded && logText ? `<div class="rule-update-log" data-ruleset="${name}">${escapeHtml(logText)}</div>` : ''}
@@ -3271,8 +5986,13 @@
                 // target that shows the same text as a toast, which works
                 // on touch.
                 const noteText = notes.join(' - ');
+                // data-action="show-source-note" (see STATIC_ACTIONS):
+                // preventDefault keeps the click from toggling the
+                // wrapping <label>'s checkbox, and the note text rides in
+                // its own data-note attribute (escapeHtml'd - the HTML
+                // parser decodes it back before dataset ever sees it).
                 const noteHtml = notes.length
-                    ? `<span title="${escapeHtml(noteText)}" onclick="event.preventDefault(); event.stopPropagation(); showToast('${escapeJsString(noteText)}')" style="color: var(--badge-warning-text); font-size: 0.7rem; font-weight: bold; cursor: help; white-space: nowrap;">WARNING!</span>`
+                    ? `<span title="${escapeHtml(noteText)}" data-action="show-source-note" data-note="${escapeHtml(noteText)}" style="color: var(--badge-warning-text); font-size: 0.7rem; font-weight: bold; cursor: help; white-space: nowrap;">WARNING!</span>`
                     : '';
                 // break-inside: avoid keeps one entry from being split
                 // across the column break below.
@@ -3283,11 +6003,11 @@
                 return `
                     <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 0.85rem; color: var(--text-primary); cursor: pointer; break-inside: avoid;">
                         <span class="theme-switch">
-                            <input type="checkbox" ${checked} onchange="handleSuricataSourceToggle('${name}', this.checked)">
+                            <input type="checkbox" ${checked} data-change-action="suricata-source-toggle" data-name="${escapeHtml(name)}">
                             <span class="theme-switch-slider"></span>
                         </span>
                         <span>${escapeHtml(src.label)}</span>
-                        <a href="${src.url}" target="_blank" rel="noopener noreferrer" style="color: var(--text-muted); font-size: 0.75rem; text-decoration: none;" onclick="event.stopPropagation()">(source)</a>
+                        <a href="${src.url}" target="_blank" rel="noopener noreferrer" style="color: var(--text-muted); font-size: 0.75rem; text-decoration: none;" data-action="stop-propagation">(source)</a>
                         ${noteHtml}
                     </label>`;
             }).join('');
@@ -3306,8 +6026,8 @@
                 : 'Enable All';
             const bulkLinks = `
                 <div style="display: flex; justify-content: center; gap: 10px; margin-bottom: 6px;">
-                    <button onclick="enableAllSuricataSources()" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.75rem; text-decoration: underline;">${escapeHtml(enableAllLabel)}</button>
-                    <button onclick="resetSuricataSourcesToDefault()" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.75rem; text-decoration: underline;">Revert to Default (ET Open)</button>
+                    <button data-action="enable-all-suricata-sources" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.75rem; text-decoration: underline;">${escapeHtml(enableAllLabel)}</button>
+                    <button data-action="reset-suricata-sources" style="background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.75rem; text-decoration: underline;">Revert to Default (ET Open)</button>
                 </div>`;
             // A classtype-based filter, not a per-source choice - every
             // curated source above bundles an identical copy of Suricata's
@@ -3320,7 +6040,7 @@
                 <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--bg-hover);">
                     <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 0.85rem; color: var(--text-primary); cursor: pointer;">
                         <span class="theme-switch">
-                            <input type="checkbox" ${showProtocolDecodeAlerts ? 'checked' : ''} onchange="handleShowProtocolDecodeAlertsToggle(this.checked)">
+                            <input type="checkbox" ${showProtocolDecodeAlerts ? 'checked' : ''} data-change-action="protocol-decode-toggle">
                             <span class="theme-switch-slider"></span>
                         </span>
                         <span>Show protocol-anomaly noise alerts <span style="color: var(--text-muted);">("Generic Protocol Command Decode", e.g. excessive retransmissions - off by default)</span></span>
@@ -3458,6 +6178,19 @@
             if (selection && !selection.isCollapsed && modalBody.contains(selection.anchorNode)) {
                 return;
             }
+            // Skip the replacement entirely when nothing visible changed -
+            // an idle modal (no update running) renders byte-identical HTML
+            // on every 2s poll tick, and replacing anyway swaps every node
+            // out from under an in-progress click: a human press spans
+            // ~100ms+, and if the rebuild lands between mousedown and
+            // mouseup the browser never fires click on the button at all
+            // (the two targets are different nodes). Reported as "after
+            // Revert to Default, the Update button needs two clicks".
+            const html = renderRulesModalBody(info, status);
+            if (html === rulesModalLastRenderedHtml) {
+                return;
+            }
+            rulesModalLastRenderedHtml = html;
             const scrollPositions = {};
             modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
                 scrollPositions[el.dataset.ruleset] = el.scrollTop;
@@ -3468,7 +6201,7 @@
             // poll tick just like they do.
             const sourcesListEl = modalBody.querySelector('.suricata-sources-list');
             const sourcesScrollTop = sourcesListEl ? sourcesListEl.scrollTop : null;
-            modalBody.innerHTML = renderRulesModalBody(info, status);
+            modalBody.innerHTML = html;
             modalBody.querySelectorAll('.rule-update-log').forEach(function(el) {
                 if (el.dataset.ruleset in scrollPositions) {
                     el.scrollTop = scrollPositions[el.dataset.ruleset];
@@ -3587,7 +6320,7 @@
             }).join('');
             const presets = captureDurationOptions().map(s => {
                 const label = s >= 60 ? `${s / 60} min` : `${s}s`;
-                return `<button type="button" class="modal-btn-secondary" onclick="setCaptureDuration(${s})" style="padding: 4px 12px; font-size: 0.85rem;">${label}</button>`;
+                return `<button type="button" class="modal-btn-secondary" data-action="set-capture-duration" data-arg="${s}" style="padding: 4px 12px; font-size: 0.85rem;">${label}</button>`;
             }).join('');
             body.innerHTML = `
                 <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px; line-height: 1.5;">
@@ -3607,8 +6340,8 @@
                 </div>
                 <div id="captureFormError" style="color: var(--severity-high, #e06c75); font-size: 0.85rem; margin-bottom: 10px; display: none;"></div>
                 <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 12px; border-top: 1px solid var(--bg-hover);">
-                    <button class="modal-btn-secondary" onclick="closeCaptureModal()">Cancel</button>
-                    <button class="modal-btn-primary" id="captureStartBtn" onclick="startCapture()">Start Capture</button>
+                    <button class="modal-btn-secondary" data-action="close-capture-modal">Cancel</button>
+                    <button class="modal-btn-primary" id="captureStartBtn" data-action="start-capture">Start Capture</button>
                 </div>`;
         }
 
@@ -3631,8 +6364,8 @@
                 : (state.error ? 'Capture failed' : 'Capture complete');
             const lines = (state.lines || []).map(l => `<div>${escapeHtml(l)}</div>`).join('');
             const stopButton = state.running
-                ? `<button class="modal-btn-secondary" id="captureStopBtn" onclick="stopCapture()">Stop &amp; Analyze Now</button>`
-                : `<button class="modal-btn-secondary" onclick="closeCaptureModal()">Close</button>`;
+                ? `<button class="modal-btn-secondary" id="captureStopBtn" data-action="stop-capture">Stop &amp; Analyze Now</button>`
+                : `<button class="modal-btn-secondary" data-action="close-capture-modal">Close</button>`;
             body.innerHTML = `
                 <div style="font-weight: 600; margin-bottom: 12px;">${heading}</div>
                 <div style="background: var(--bg-primary); border-radius: 6px; height: 10px; overflow: hidden; margin-bottom: 14px;">
@@ -3830,11 +6563,10 @@
             const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
             if (!visibleSection) {
                 // Binary analysis mode: no tab sections, rebuild aggregations directly
-                const fileAlerts = allEvents.filter(e => e.event_type === 'filealerts');
-                const filtered = fileAlerts.filter(e => matchesCurrentFilters(e, (ev, col) => extractValue(ev, col, -1)));
                 if (advancedMode) {
                     hiddenAggregations = new Set();
-                    buildBinaryAggregations(filtered);
+                    aggPage = {}; aggFullCountsCache = {}; aggTotalsCache = {};
+                    await rebuildVisibleAggregations();
                 } else {
                     const aggContainer = document.getElementById('aggregations');
                     if (aggContainer) aggContainer.innerHTML = AGG_COLLAPSED_HTML;
@@ -3842,30 +6574,10 @@
                 updateFilterBarVisibility();
                 return;
             }
-            const eventType = visibleSection.id.replace('section-', '');
             if (advancedMode) {
-                // needsFullBatch (not an unconditional ensureCappedBatch) so
-                // opening the aggregation view for an eligible pcap per-type
-                // tab with no active filter goes straight through
-                // buildAggregationsSection's own server-aggregation branch
-                // instead of always eagerly fetching the full capped batch.
-                if (needsFullBatch(eventType)) await ensureCappedBatch(eventType);
                 hiddenAggregations = new Set();
-                if (eventType === 'all') {
-                    await buildAggregationsSectionAll();
-                } else if (isLogAnalysisMode && eventType === 'log') {
-                    const events = tabDataCache['log'] || [];
-                    const filtered = getFilteredLogEvents(events);
-                    buildLogAggregations(filtered, visibleSection.id);
-                } else if (isLogAnalysisMode && eventType === 'sigmaalert') {
-                    const alerts = tabDataCache['sigmaalert'] || [];
-                    const filtered = getFilteredSigmaAlerts(alerts);
-                    buildSigmaAlertAggregations(filtered, visibleSection.id);
-                } else {
-                    const events = tabDataCache[eventType] || [];
-                    const filtered = getFilteredEvents(visibleSection.id, events, eventType);
-                    await buildAggregationsSection(eventType, filtered);
-                }
+                aggPage = {}; aggFullCountsCache = {}; aggTotalsCache = {};
+                await rebuildVisibleAggregations();
             } else {
                 const aggContainer = document.getElementById('aggregations');
                 if (aggContainer) {
@@ -3880,6 +6592,7 @@
             anomaly: 'Anomalies',
             protocol_decode: 'Decoder Alerts',
             dns: 'DNS Queries',
+            dns_heuristics: 'DNS Heuristics',
             filealerts: 'File Alerts',
             fileinfo: 'File Info',
             flow: 'Flows',
@@ -4112,11 +6825,11 @@
             sankeyPanel.innerHTML = '';
 
             if (!diagramMode) {
-                sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▸ Sankey Diagram</div>';
+                sankeyPanel.innerHTML = '<div class="section-toggle-bar" data-action="toggle-diagram">▸ Sankey Diagram</div>';
                 return;
             }
 
-            sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▾ Sankey Diagram</div><div style="padding:20px;color:var(--text-muted);display:flex;align-items:center;gap:8px;"><span class="ascii-loading"></span>Loading Sankey diagram...</div>';
+            sankeyPanel.innerHTML = '<div class="section-toggle-bar" data-action="toggle-diagram">▾ Sankey Diagram</div><div style="padding:20px;color:var(--text-muted);display:flex;align-items:center;gap:8px;"><span class="ascii-loading"></span>Loading Sankey diagram...</div>';
 
             const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
             const eventType = visibleSection ? visibleSection.id.replace('section-', '') : null;
@@ -4140,16 +6853,16 @@
                 // above and nothing downstream ever ran to replace it.
                 if (isStaleSankeyFetch(gen)) return;
                 console.error('Failed to load Sankey diagram:', e);
-                sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▾ Sankey Diagram</div><div style="padding:20px;color:var(--text-muted);">Error loading Sankey diagram</div>';
+                sankeyPanel.innerHTML = '<div class="section-toggle-bar" data-action="toggle-diagram">▾ Sankey Diagram</div><div style="padding:20px;color:var(--text-muted);">Error loading Sankey diagram</div>';
                 return;
             }
             if (isStaleSankeyFetch(gen)) return;
 
             if (!data || !data.nodes || data.nodes.length === 0) {
-                sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▾ Sankey Diagram</div>';
+                sankeyPanel.innerHTML = '<div class="section-toggle-bar" data-action="toggle-diagram">▾ Sankey Diagram</div>';
                 return;
             }
-            sankeyPanel.innerHTML = '<div class="section-toggle-bar" onclick="toggleDiagram()">▾ Sankey Diagram</div><div class="sankey-content"></div>';
+            sankeyPanel.innerHTML = '<div class="section-toggle-bar" data-action="toggle-diagram">▾ Sankey Diagram</div><div class="sankey-content"></div>';
             const svgContainer = sankeyPanel.querySelector('.sankey-content');
             renderSankeySVG(data, svgContainer);
         }
@@ -4260,15 +6973,21 @@
         // note happens from the expanded detail panel instead (see
         // rowNoteDetailHtml below), not from this collapsed-row cell.
         //
-        // id is passed through escapeJsString like note, not interpolated
+        // id is passed through escapeHtml like note, not interpolated
         // raw, even though it's always a real SQL integer in production -
-        // same "escape every onclick argument regardless of expected type"
+        // same "escape every attribute value regardless of expected type"
         // convention buildLogEventRow/buildSigmaAlertRow already use for
         // their own detailId. openRowNoteEditor parses it back to a number.
+        // The <td>'s own data-action="row-note-cell" (a preventDefault/
+        // stopPropagation no-op in STATIC_ACTIONS) shadows the row's
+        // 'toggle-row' action for clicks that land in the cell but miss
+        // the icon - the dispatcher only ever runs the CLOSEST
+        // data-action - matching the old behavior where such clicks
+        // never expanded the row.
         function rowNoteIconHtml(table, id, note) {
             if (!(note && note.trim())) return '<td class="row-note-cell"></td>';
             const preview = note.slice(0, 200);
-            return `<td class="row-note-cell" onclick="event.preventDefault(); event.stopPropagation();"><span class="row-note-icon" onclick="openRowNoteEditor('${table}', '${escapeJsString(String(id))}', '${escapeJsString(note)}')" title="${escapeHtml(preview)}" style="cursor: pointer; color: var(--accent);">${NOTES_ICON_SVG}</span></td>`;
+            return `<td class="row-note-cell" data-action="row-note-cell"><span class="row-note-icon" data-action="open-row-note-editor" data-table="${escapeHtml(table)}" data-row-id="${escapeHtml(String(id))}" data-note="${escapeHtml(note)}" title="${escapeHtml(preview)}" style="cursor: pointer; color: var(--accent);">${NOTES_ICON_SVG}</span></td>`;
         }
 
         // The value half of the detail panel's Note row, split out from
@@ -4282,9 +7001,7 @@
         // stable hook for that in-place replacement.
         function rowNoteDetailValueHtml(table, id, note) {
             const has = !!(note && note.trim());
-            const idJs = escapeJsString(String(id));
-            const noteJs = escapeJsString(note || '');
-            const editLink = `<a href="#" onclick="event.preventDefault(); openRowNoteEditor('${table}', '${idJs}', '${noteJs}');" style="color: var(--accent); text-decoration: none;">${has ? 'Edit' : '+ Add Note'}</a>`;
+            const editLink = `<a href="#" class="row-note-edit-link" data-action="open-row-note-editor" data-table="${escapeHtml(table)}" data-row-id="${escapeHtml(String(id))}" data-note="${escapeHtml(note || '')}" style="color: var(--accent); text-decoration: none;">${has ? 'Edit' : '+ Add Note'}</a>`;
             const value = has ? `${escapeHtml(note)} ${editLink}` : editLink;
             return `<span class="detail-value row-note-detail-value">${value}</span>`;
         }
@@ -4364,7 +7081,24 @@
             const dstPort = e.dest_port || '';
             const eventType = e.event_type || '';
             const pivotAttrs = pivotDataAttrsHtml(e, eventType, getColumnsForType(eventType), extractValue);
-            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs} onclick="toggleRow(this, event)"><td class="timestamp">${escapeHtml(ts)}</td><td>${valueDotSpan(DOT_COLORS.PROTO[proto.toUpperCase()])}${escapeHtml(proto)}</td><td class="mono-fixed" title="${escapeHtml(srcIp)}">${escapeHtml(srcIp)}</td><td class="mono-fixed">${escapeHtml(String(srcPort))}</td><td class="mono-fixed" title="${escapeHtml(dstIp)}">${escapeHtml(dstIp)}</td><td class="mono-fixed">${escapeHtml(String(dstPort))}</td>`;
+            // Carries the alert's own matching key for the "Acknowledge all
+            // instances" pivot menu action (see acknowledgeableRowInfo) -
+            // baked into the row at render time rather than looked up from
+            // tabDataCache when clicked, since tabDataCache[eventType] is
+            // often empty: the default (no filter/sort) view fetches each
+            // page through fetchEventsPage()'s own local `items`, which
+            // never touches tabDataCache at all (see canUseScalableFetchForSort
+            // in buildSection).
+            const identityAttr = eventType === 'alert'
+                ? ` data-alert-identity="${escapeHtml(String(e.alert?.signature_id || e.alert?.signature || ''))}"`
+                : '';
+            // Carries this row's own community_id (see showPivotMenu's
+            // Correlate entry), independent of pivotAttrs above - Correlate
+            // must work from ANY field's pivot menu on this row, not just
+            // one clicked directly on the Community ID value itself, so it
+            // can't rely on that value having been the one clicked.
+            const communityIdAttr = e.community_id ? ` data-community-id="${escapeHtml(e.community_id)}"` : '';
+            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs}${identityAttr}${communityIdAttr} data-action="toggle-row"><td class="timestamp">${escapeHtml(ts)}</td><td>${valueDotSpan(DOT_COLORS.PROTO[proto.toUpperCase()])}${escapeHtml(proto)}</td><td class="mono-fixed" title="${escapeHtml(srcIp)}">${escapeHtml(srcIp)}</td><td class="mono-fixed">${escapeHtml(String(srcPort))}</td><td class="mono-fixed" title="${escapeHtml(dstIp)}">${escapeHtml(dstIp)}</td><td class="mono-fixed">${escapeHtml(String(dstPort))}</td>`;
         }
 
         function buildRowForEvent(e) {
@@ -4710,7 +7444,7 @@
             const author = fa.author || '';
             const formatted = formatEvent(e);
             const pivotAttrs = pivotDataAttrsHtml(e, 'binary', BINARY_YARA_COLUMNS, extractValue);
-            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs} onclick="toggleRow(this, event)"><td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(ruleName)}</td><td>${tagsHtml}</td><td>${escapeHtml(author)}</td>${rowNoteIconHtml('events', e.id, e.row_note)}</tr><tr class="detail-row"><td colspan="4"><div class="detail-content">${formatted}</div></td></tr>`;
+            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs} data-action="toggle-row"><td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(ruleName)}</td><td>${tagsHtml}</td><td>${escapeHtml(author)}</td>${rowNoteIconHtml('events', e.id, e.row_note)}</tr><tr class="detail-row"><td colspan="4"><div class="detail-content">${formatted}</div></td></tr>`;
         }
 
         function buildBinaryYaraTable(events) {
@@ -4750,7 +7484,7 @@
             }
             const columns = ['Rule Name', 'Tags', 'Author'];
             const html = buildAggregationTablesCore(events, columns, 'section-binary', extractValue);
-            aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + html + '</div></div>';
+            aggContainer.innerHTML = _wrapAggPanel(html);
         }
 
         function buildBinaryAnalysisView(events, baseEvents) {
@@ -4777,11 +7511,10 @@
             const detail = getLogEventSmartDetail(jsonData);
             const detailTruncated = detail.length > 120 ? detail.slice(0, 117) + '...' : detail;
             const detailId = 'log-detail-' + (evt.row_id || ++_detailIdCounter);
-            // id attribute needs HTML escaping; the onclick argument also
-            // needs JS-string escaping (escapeHtml alone would let a quote
-            // break out of the JS string after attribute decoding).
+            // Both the detail row's id attribute and the collapsed row's
+            // data-detail-id are plain HTML attribute values now - one
+            // escaping (escapeHtml) covers both.
             const detailIdAttr = escapeHtml(String(detailId));
-            const detailIdJs = escapeJsString(String(detailId));
             const totalCols = 3 + (columns ? columns.length : 0); // Time + [cols] + Detail + Note
 
             // Mirrors getColumnsForType('log')'s own ['Time', ...labels,
@@ -4792,7 +7525,7 @@
             // O(rows) work that must not run again per row).
             const pivotColumns = ['Time', ...(columns || []).map(c => c.label), 'Detail'];
             const pivotAttrs = pivotDataAttrsHtml(evt, 'log', pivotColumns, extractLogValue);
-            let row = `<tr data-id="${escapeHtml(String(evt.id))}"${pivotAttrs} onclick="toggleLogRow(this, '${detailIdJs}', event)">`;
+            let row = `<tr data-id="${escapeHtml(String(evt.id))}"${pivotAttrs} data-action="toggle-log-row" data-detail-id="${detailIdAttr}">`;
             row += `<td class="timestamp">${timestamp}</td>`;
             if (columns) {
                 columns.forEach(c => {
@@ -4845,12 +7578,14 @@
             const mitreHtml = mitreTechniquesHtml(alert.mitre_techniques);
 
             const detailId = 'sigma-detail-' + (alert.id || Math.random().toString(36).substr(2, 9));
-            // See buildLogEventRow: attribute escaping vs JS-string escaping.
+            // See buildLogEventRow: one escapeHtml covers both attribute uses.
             const detailIdAttr = escapeHtml(String(detailId));
-            const detailIdJs = escapeJsString(String(detailId));
 
             const pivotAttrs = pivotDataAttrsHtml(alert, 'sigmaalert', getColumnsForType('sigmaalert'), extractSigmaValue);
-            let row = `<tr data-id="${escapeHtml(String(alert.id))}"${pivotAttrs} onclick="toggleSigmaRow(this, '${detailIdJs}', event)">`;
+            // See rowPrefixCells' own comment - same "bake the matching key
+            // into the row at render time" reasoning, for sigma_alerts'
+            // rule_id instead of events' signature_id.
+            let row = `<tr data-id="${escapeHtml(String(alert.id))}"${pivotAttrs} data-alert-identity="${ruleId}" data-action="toggle-sigma-row" data-detail-id="${detailIdAttr}">`;
             row += `<td class="timestamp">${timestamp}</td>`;
             row += `<td>${valueDotSpan(sevColor)}${escapeHtml(sev.toUpperCase())}</td>`;
             row += `<td><strong>${ruleTitle}</strong>${ruleId ? '<br><span style="color:var(--text-muted);font-size:0.8rem;">' + ruleId + '</span>' : ''}</td>`;
@@ -5082,7 +7817,11 @@
                 // Sub-techniques (e.g. T1055.012) live at a nested MITRE URL
                 // (/techniques/T1055/012/), not a dotted slug.
                 const urlPath = tid.split('.').map(encodeURIComponent).join('/');
-                return `<a href="https://attack.mitre.org/techniques/${urlPath}/" target="_blank" rel="noopener noreferrer" class="mitre-tag" onclick="event.stopPropagation()">${escapeHtml(tid)}</a>`;
+                // data-action="stop-propagation": shadows the row's own
+                // toggle action (the dispatcher runs only the closest
+                // data-action) so clicking the tag opens the MITRE page
+                // without also expanding/collapsing the row.
+                return `<a href="https://attack.mitre.org/techniques/${urlPath}/" target="_blank" rel="noopener noreferrer" class="mitre-tag" data-action="stop-propagation">${escapeHtml(tid)}</a>`;
             }).join('');
         }
 
@@ -5121,6 +7860,400 @@
         function getFilteredSigmaAlerts(alerts) {
             if (Object.keys(currentFilters).length === 0) return alerts;
             return alerts.filter(a => matchesCurrentFilters(a, extractSigmaValue));
+        }
+
+        // DNS Heuristics - a derived, client-computed view over the same
+        // 'dns' event batch the real DNS tab uses (see buildDnsHeuristicsSection
+        // below), grouping queries by registrable domain and flagging ones
+        // that look like DGA/tunneling activity. Not a rule engine match
+        // (unlike Suricata/Sigma alerts) - a heuristic score meant to
+        // narrow an analyst's attention, so it's surfaced as its own tab
+        // rather than folded into the acknowledge/playbook alert pipeline
+        // built for real rule matches.
+
+        // A short, deliberately non-exhaustive allowlist of CDN/cloud
+        // suffixes that legitimately generate long, random-looking
+        // subdomains as part of normal operation (asset hashes, edge PoP
+        // routing, etc.) - without this, those would dominate the flagged
+        // list and drown out real signal. Reduces noise, doesn't eliminate
+        // it - an analyst in an unusual environment may still see false
+        // positives from CDNs not on this list.
+        const DNS_HEURISTICS_CDN_SUFFIXES = [
+            'amazonaws.com', 'cloudfront.net', 'akamaiedge.net', 'akamaitechnologies.com',
+            'akamai.net', 'akamaized.net', 'akamaihd.net', 'akadns.net',
+            'azureedge.net', 'azurewebsites.net', 'windows.net',
+            'googleusercontent.com', 'gstatic.com', 'googleapis.com', 'googlesyndication.com',
+            'doubleclick.net', 'fastly.net', 'fastlylb.net', 'cloudflare.net',
+            'edgekey.net', 'edgesuite.net', 'edgecastcdn.net', 'msedge.net',
+            'trafficmanager.net', 'cdn77.org', 'stackpathdns.com',
+            // Ubiquitous OS/browser/vendor domains whose background
+            // traffic (updates, telemetry, sync) legitimately fans out
+            // across many subdomains. Excluding them is safe for a
+            // DGA/tunneling detector: those techniques require an
+            // attacker-CONTROLLED domain, which these are not.
+            'microsoft.com', 'windowsupdate.com', 'msftconnecttest.com',
+            'live.com', 'office.com', 'office.net', 'bing.com',
+            'google.com', 'gvt1.com', 'gvt2.com', 'youtube.com',
+            'apple.com', 'icloud.com', 'mzstatic.com',
+            'mozilla.org', 'mozilla.com', 'mozilla.net', 'firefox.com',
+            'ubuntu.com', 'canonical.com', 'debian.org', 'archlinux.org',
+        ];
+
+        function _isKnownCdnSuffix(suffix) {
+            return DNS_HEURISTICS_CDN_SUFFIXES.some(s => suffix === s || suffix.endsWith('.' + s));
+        }
+
+        // Common two-label public suffixes (co.uk, com.au, ...) that need a
+        // third label pulled in to reach the real registrable domain - not
+        // a full Public Suffix List implementation (that's a large,
+        // frequently-updated dataset, at odds with this app's offline/
+        // self-contained design - see AGENTS.md's detection-rule-freshness
+        // reasoning for the same tradeoff elsewhere), just enough common
+        // cases to keep the biggest offenders from being mis-grouped.
+        const DNS_HEURISTICS_MULTI_PART_SUFFIXES = new Set([
+            'co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'me.uk', 'ltd.uk', 'net.uk',
+            'com.au', 'net.au', 'org.au', 'com.br', 'com.cn', 'com.mx', 'com.tr',
+            'co.jp', 'co.nz', 'co.in', 'co.za', 'co.kr', 'com.sg', 'co.id',
+        ]);
+
+        function dnsRegistrableSuffix(domain) {
+            const labels = domain.toLowerCase().replace(/\.$/, '').split('.').filter(Boolean);
+            if (labels.length < 2) return domain.toLowerCase();
+            const lastTwo = labels.slice(-2).join('.');
+            if (labels.length >= 3 && DNS_HEURISTICS_MULTI_PART_SUFFIXES.has(lastTwo)) {
+                return labels.slice(-3).join('.');
+            }
+            return lastTwo;
+        }
+
+        function shannonEntropyBits(str) {
+            if (!str) return 0;
+            const counts = {};
+            for (const ch of str) counts[ch] = (counts[ch] || 0) + 1;
+            let entropy = 0;
+            for (const ch in counts) {
+                const p = counts[ch] / str.length;
+                entropy -= p * Math.log2(p);
+            }
+            return entropy;
+        }
+
+        // Fraction of characters that are a/e/i/o/u - digits and
+        // consonants both count as "not a vowel", so this naturally
+        // penalizes both digit-heavy strings (classic DGA output like
+        // "08kcbghk807qtl9") and pure-random consonant strings alike,
+        // without needing a separate digit-specific check. English
+        // words/word-mashups (even long, unusual-looking ones like
+        // "furtheringthemagic") sit around 30-40%; a uniformly random
+        // string over the full alnum charset sits far lower.
+        function vowelRatio(str) {
+            if (!str) return 0;
+            return (str.match(/[aeiou]/g) || []).length / str.length;
+        }
+
+        // Only scored above this length - entropy on short strings is
+        // noisy (a handful of characters can look "random" by chance),
+        // which is exactly the false-positive mode a length floor exists
+        // to cut off.
+        const DNS_HEURISTICS_MIN_ENTROPY_PREFIX_LENGTH = 10;
+        const DNS_HEURISTICS_ENTROPY_THRESHOLD = 3.5;
+        // Below random-uniform-lowercase's own expected ~19% (5/26) and
+        // comfortably below ordinary English's ~30-40% - see
+        // vowelRatio's own comment for why this, not a digit-presence
+        // check, is what actually separates "furtheringthemagic" (0.33)
+        // from "08kcbghk807qtl9" (0.0) despite their nearly identical
+        // entropy (3.50 vs 3.51).
+        const DNS_HEURISTICS_DGA_MAX_VOWEL_RATIO = 0.20;
+        // Shared by the tunneling (subdomain label) and DGA (registrable
+        // label) checks so their three-part test can never drift apart: a
+        // label long enough to carry payload, with the character spread of
+        // encoded data (entropy) AND without the vowel density of real
+        // words - see vowelRatio's comment for why entropy alone false-
+        // positives on word-mashups like prod-streaming-video-msn-com.
+        function _labelLooksEncoded(label) {
+            return label.length >= DNS_HEURISTICS_MIN_ENTROPY_PREFIX_LENGTH
+                && shannonEntropyBits(label) > DNS_HEURISTICS_ENTROPY_THRESHOLD
+                && vowelRatio(label) < DNS_HEURISTICS_DGA_MAX_VOWEL_RATIO;
+        }
+
+        const DNS_HEURISTICS_LONG_NAME_LENGTH = 60;
+        const DNS_HEURISTICS_LONG_LABEL_LENGTH = 50;
+        // Distinct subdomains under one suffix, not raw query count - a
+        // chatty app repeatedly resolving the SAME name isn't suspicious,
+        // but many unique names under one suffix is a much more specific
+        // tunneling/DGA signal.
+        const DNS_HEURISTICS_FANOUT_THRESHOLD = 15;
+
+        // Groups `events` (a 'dns' event array) by registrable domain,
+        // scores each group against a handful of independent heuristics,
+        // and returns only the ones that tripped at least one - sorted
+        // highest score first. Each event contributes to its own suffix
+        // group regardless of which specific query it is; scoring happens
+        // once per group afterward, not per event.
+        function computeDnsHeuristics(events) {
+            const bySuffix = new Map();
+
+            events.forEach(e => {
+                const domain = (e.dns?.rrname || e.dns?.queries?.[0]?.rrname || '').toLowerCase();
+                if (!domain) return;
+                const qtype = (e.dns?.rrtype || e.dns?.queries?.[0]?.rrtype || '').toUpperCase();
+                const suffix = dnsRegistrableSuffix(domain);
+                if (_isKnownCdnSuffix(suffix)) return;
+
+                let rec = bySuffix.get(suffix);
+                if (!rec) {
+                    rec = {
+                        suffix, queryCount: 0, names: new Map(), srcIps: new Set(),
+                        maxEntropy: 0, maxEntropyName: '', maxNameLength: 0,
+                        maxLabelLength: 0, txtNullCount: 0, firstSeen: null, lastSeen: null,
+                    };
+                    bySuffix.set(suffix, rec);
+                }
+
+                rec.queryCount++;
+                rec.names.set(domain, (rec.names.get(domain) || 0) + 1);
+                if (e.src_ip) rec.srcIps.add(e.src_ip);
+                rec.maxNameLength = Math.max(rec.maxNameLength, domain.length);
+                rec.maxLabelLength = Math.max(rec.maxLabelLength, ...domain.split('.').map(l => l.length));
+
+                const suffixWithDot = '.' + suffix;
+                const prefix = domain.endsWith(suffixWithDot)
+                    ? domain.slice(0, domain.length - suffixWithDot.length)
+                    : (domain === suffix ? '' : domain);
+                // Entropy is scored per label, never over the dot-stripped
+                // prefix as a whole: concatenating a deep-but-ordinary
+                // chain like msedge.b.tlu.dl.delivery.mp merges many short
+                // words into one string whose character spread reads as
+                // high entropy, flagging normal vendor traffic. Real DNS
+                // tunneling carries its randomness inside individual long
+                // labels (encoded payload chunks), which this still
+                // catches; campaigns of many short random labels are the
+                // fan-out check's job below.
+                // The vowel-ratio guard mirrors the DGA check below, for
+                // the same reason its comment gives: a long hyphenated
+                // word-mashup label (prod-streaming-video-msn-com, a real
+                // false positive this shipped with briefly) lands right in
+                // DGA-entropy territory, but words carry ~30-40% vowels
+                // while encoded tunneling payloads sit well under 20%
+                // (base32 ~0.16, hex ~0.13, base64 ~0.16, random alnum
+                // ~0.14) - so requiring both keeps the real signal.
+                for (const label of prefix.split('.')) {
+                    if (_labelLooksEncoded(label)) {
+                        const ent = shannonEntropyBits(label);
+                        if (ent > rec.maxEntropy) {
+                            rec.maxEntropy = ent;
+                            rec.maxEntropyName = domain;
+                        }
+                    }
+                }
+
+                if (qtype === 'TXT' || qtype === 'NULL') rec.txtNullCount++;
+
+                const ts = e.timestamp || '';
+                if (ts) {
+                    if (!rec.firstSeen || ts < rec.firstSeen) rec.firstSeen = ts;
+                    if (!rec.lastSeen || ts > rec.lastSeen) rec.lastSeen = ts;
+                }
+            });
+
+            const results = [];
+            bySuffix.forEach(rec => {
+                const reasons = [];
+                let score = 0;
+
+                if (rec.maxEntropy > DNS_HEURISTICS_ENTROPY_THRESHOLD) {
+                    reasons.push('High-entropy subdomain');
+                    score += 35;
+                }
+                // Separate from the subdomain-prefix check above, and
+                // scored against the registrable label itself (the first
+                // label of rec.suffix, e.g. "08kcbghk807qtl9" from
+                // "08kcbghk807qtl9.top") - DNS tunneling and DGA malware
+                // put their randomness in different places. Tunneling
+                // fans many random subdomains out under one fixed,
+                // otherwise-ordinary parent domain (caught above); a DGA
+                // instead generates the base domain itself, usually
+                // queried once with nothing distinctive in front of it -
+                // exactly the case the prefix-only check above computes
+                // an empty prefix for and silently skips.
+                //
+                // Entropy alone isn't enough here: a long lowercase
+                // word-mashup domain (e.g. "furtheringthemagic.com", a
+                // real false positive this shipped with briefly) can land
+                // right next to genuine DGA output in raw entropy - 3.50
+                // vs 3.51 for "08kcbghk807qtl9", practically tied. Vowel
+                // ratio is what actually tells them apart (0.33 vs 0.0 -
+                // see vowelRatio's own comment), so it's required
+                // alongside entropy, not scored as its own separate
+                // reason.
+                const suffixLabel = rec.suffix.split('.')[0];
+                if (_labelLooksEncoded(suffixLabel)) {
+                    reasons.push('High-entropy domain name (possible DGA)');
+                    score += 35;
+                }
+                if (rec.maxNameLength > DNS_HEURISTICS_LONG_NAME_LENGTH || rec.maxLabelLength > DNS_HEURISTICS_LONG_LABEL_LENGTH) {
+                    reasons.push('Unusually long query name');
+                    score += 15;
+                }
+                const distinctNames = rec.names.size;
+                if (distinctNames >= DNS_HEURISTICS_FANOUT_THRESHOLD) {
+                    reasons.push('High distinct-subdomain fan-out');
+                    score += 30;
+                }
+                if (rec.txtNullCount > 0) {
+                    reasons.push('TXT/NULL query type');
+                    score += 20;
+                }
+
+                if (score === 0) return;
+
+                results.push({
+                    domain: rec.suffix,
+                    score: Math.min(100, score),
+                    reasons,
+                    queryCount: rec.queryCount,
+                    distinctNames,
+                    sampleQuery: rec.maxEntropyName || Array.from(rec.names.keys())[0] || rec.suffix,
+                    sourceCount: rec.srcIps.size,
+                    firstSeen: rec.firstSeen,
+                    lastSeen: rec.lastSeen,
+                });
+            });
+
+            results.sort((a, b) => b.score - a.score);
+            return results;
+        }
+
+        const DNS_HEURISTIC_COLUMNS = ['Domain', 'Score', 'Reasons', 'Sample Query', 'Queries', 'Distinct Names', 'First Seen'];
+
+        function extractDnsHeuristicValue(item, col) {
+            switch (col) {
+                case 'Domain': return item.domain;
+                case 'Score': return item.score;
+                case 'Reasons': return item.reasons.join(', ');
+                case 'Sample Query': return item.sampleQuery;
+                case 'Queries': return item.queryCount;
+                case 'Distinct Names': return item.distinctNames;
+                case 'First Seen': return (item.firstSeen || '').slice(0, 19);
+                default: return '';
+            }
+        }
+
+        function dnsHeuristicRowHtml(item) {
+            const scoreColor = item.score >= 60 ? 'var(--badge-danger-text)' : item.score >= 35 ? 'var(--badge-warning-text)' : 'var(--text-muted)';
+            // data-id is what getVisibleDataTableRows() (the Up/Down
+            // keyboard nav item list) selects on - tr[data-id] - without
+            // it these rows are invisible to keyboard navigation entirely.
+            // computeDnsHeuristics() already groups by registrable domain,
+            // so item.domain is guaranteed unique within one table's rows,
+            // same uniqueness property a real numeric event id has. The
+            // only other reader of data-id (acknowledgeableRowInfo, for
+            // the pivot menu's Acknowledge button) never runs against
+            // these rows - they have no pivot menu at all, just the
+            // 'view-dns-heuristic-domain' click action (which reads the
+            // domain back from this same data-id) - so a non-numeric
+            // value here is safe.
+            return `<tr class="dns-heuristic-row" data-id="${escapeHtml(item.domain)}" data-action="view-dns-heuristic-domain" style="cursor:pointer;" title="Click to view matching DNS queries">` +
+                `<td class="mono">${escapeHtml(item.domain)}</td>` +
+                `<td>${valueDotSpan(scoreColor)}${item.score}</td>` +
+                `<td>${escapeHtml(item.reasons.join(', '))}</td>` +
+                `<td class="mono">${escapeHtml(item.sampleQuery)}</td>` +
+                `<td>${item.queryCount.toLocaleString()}</td>` +
+                `<td>${item.distinctNames.toLocaleString()}</td>` +
+                `<td class="timestamp">${escapeHtml((item.firstSeen || '').slice(0, 19))}</td>` +
+                `<td></td>` +
+                `</tr>`;
+        }
+
+        // Jumps to the real DNS tab, scoped to this suffix - a free-text
+        // search (huntFilterValue), not a column filter (onlyFilterValue),
+        // since `domain` here is the grouping suffix (e.g. "example.com"),
+        // not a single query's exact name - a phrase search still matches
+        // "xk3f9.example.com" (FTS5 tokenizes on the dots, so "example"
+        // immediately followed by "com" matches regardless of what
+        // precedes it), where an exact-equality column filter would not.
+        // Goes through huntFilterValue (not a hand-rolled shortcut) so its
+        // tabDataCache invalidation runs too - the DNS tab may already be
+        // cached from an earlier, differently-scoped visit.
+        async function viewDnsHeuristicDomain(domain) {
+            await huntFilterValue(domain);
+            const card = document.querySelector('.stat-card[data-section="section-dns"]');
+            showTab('section-dns', card || null);
+        }
+
+        const DNS_HEURISTICS_INFO_COLLAPSED_KEY = 'socrates_dnsHeuristicsInfoCollapsed';
+
+        // This tab behaves nothing like any other data-type tab - rows are
+        // aggregated per-domain (not raw events), clicking one navigates
+        // away entirely instead of expanding a detail panel, and the
+        // scoring criteria aren't visible anywhere in the column headers -
+        // so unlike every other tab, it gets its own explanatory card.
+        // Collapsible (reusing the same .agg-panel/.section-toggle-bar
+        // look as the Sankey/Aggregation Tables panels) rather than a
+        // permanent fixture, since re-reading the same explanation on
+        // every visit is just clutter once an analyst already knows it -
+        // state persists across visits via localStorage, defaulting open
+        // the first time.
+        function dnsHeuristicsInfoCardHtml() {
+            const collapsed = safeStorageGet(localStorage, DNS_HEURISTICS_INFO_COLLAPSED_KEY) === 'true';
+            const arrow = collapsed ? '▸' : '▾';
+            const display = collapsed ? 'none' : 'block';
+            return `<div class="agg-panel" style="margin-bottom: 15px;">
+                <div class="section-toggle-bar dns-heuristics-info-toggle" data-action="toggle-dns-heuristics-info">${arrow} About DNS Heuristics</div>
+                <div class="dns-heuristics-info-body" style="display:${display}; padding: 16px 20px; color: var(--text-muted); font-size: 0.85rem; line-height: 1.7;">
+                    <p style="margin:0 0 10px 0;">This tab groups DNS queries by registrable domain and flags ones that look like DNS tunneling or DGA (Domain Generation Algorithm) malware, based on patterns in <em>this capture only</em>. It's a heuristic, not a rule match - treat a flag as a lead to investigate, not a confirmed verdict.</p>
+                    <p style="margin:0 0 6px 0; color: var(--text-bright);">A domain is flagged when it trips one or more of:</p>
+                    <ul style="margin:0 0 10px 0; padding-left: 20px;">
+                        <li><strong>High-entropy subdomain</strong> - a random-looking label (10+ characters) under an otherwise ordinary parent domain, the classic DNS tunneling shape.</li>
+                        <li><strong>High-entropy domain name (possible DGA)</strong> - the registrable domain itself looks algorithmically generated (high character entropy, few vowels) rather than a real word or brand.</li>
+                        <li><strong>High distinct-subdomain fan-out</strong> - 15 or more unique subdomains queried under the same parent, not just repeated lookups of the same name.</li>
+                        <li><strong>Unusually long query name</strong> - an overall name or single label far longer than typical.</li>
+                        <li><strong>TXT/NULL query type</strong> - record types more associated with tunneling/exfil tooling than ordinary browsing.</li>
+                    </ul>
+                    <p style="margin:0 0 10px 0;">Common CDN/cloud domains (Amazon, Akamai, Cloudflare, Google, Fastly, and similar) are excluded up front, since they legitimately generate random-looking subdomains as part of normal operation.</p>
+                    <p style="margin:0;">Clicking a row jumps to the real <strong>DNS Queries</strong> tab, searched for that domain, so you can see every individual query behind the score.</p>
+                </div>
+            </div>`;
+        }
+
+        function toggleDnsHeuristicsInfo(bar) {
+            const body = bar.nextElementSibling;
+            const collapsed = body.style.display === 'none';
+            body.style.display = collapsed ? 'block' : 'none';
+            bar.textContent = (collapsed ? '▾' : '▸') + ' About DNS Heuristics';
+            if (collapsed) {
+                safeStorageRemove(localStorage, DNS_HEURISTICS_INFO_COLLAPSED_KEY);
+            } else {
+                safeStorageSet(localStorage, DNS_HEURISTICS_INFO_COLLAPSED_KEY, 'true');
+            }
+        }
+
+        function buildDnsHeuristicsSectionContent(sectionId, items) {
+            const container = document.getElementById(sectionId);
+            if (!container) return;
+            let html = '<div class="section-content">';
+            html += dnsHeuristicsInfoCardHtml();
+            if (items.length === 0) {
+                html += `<div class="no-matches">No suspicious DNS activity detected${currentSearch.length > 0 ? ' for the current search' : ''}</div>`;
+            } else {
+                html += renderPaginatedTable({
+                    sectionKey: sectionId,
+                    columns: DNS_HEURISTIC_COLUMNS,
+                    items,
+                    extractFn: extractDnsHeuristicValue,
+                    rowRenderer: dnsHeuristicRowHtml,
+                    rerender: () => buildDnsHeuristicsSectionContent(sectionId, items),
+                });
+            }
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        async function buildDnsHeuristicsSection() {
+            await ensureCappedBatch('dns');
+            const events = tabDataCache['dns'] || [];
+            const items = computeDnsHeuristics(events);
+            buildDnsHeuristicsSectionContent('section-dns_heuristics', items);
         }
 
         function buildLogSectionContent(sectionId, events) {
@@ -5209,46 +8342,158 @@
             container.innerHTML = html;
         }
 
-        // Shared aggregation-table renderer: countsByColumn maps column label ->
-        // {value: count}; columns control display order. Hidden columns and
-        // empty columns are skipped.
-        function _renderAggTablesHtml(countsByColumn, columns, sectionId) {
+        // Builds one column's whole <div class="agg-section">...</div>
+        // block - header/close button, the current page's rows, and
+        // Prev/Next controls if there's more than one page. `entries` is
+        // already the exact [value, count] pairs to display, in display
+        // order; `total`/`page` drive the pagination controls only, no
+        // further slicing happens here. Shared by both the full-section
+        // renderer below (_renderAggTablesHtml) and changeAggPage's
+        // single-table patch, so the two can never render this markup
+        // differently from each other.
+        function _renderOneAggTableHtml(sectionId, col, entries, total, page) {
+            let html = `<div class="section agg-section" data-col="${escapeHtml(col)}"><div class="section-content"><div class="agg-table">
+                <div class="agg-header"><span>${escapeHtml(col)}</span><button class="agg-close" data-action="hide-agg-table" data-section-id="${escapeHtml(sectionId)}" data-col="${escapeHtml(col)}" title="Hide">&times;</button></div>
+                <table><thead><tr><th style="width:60px;text-align:right;">Count</th><th>Value</th></tr></thead><tbody>`;
+            for (const [val, count] of entries) {
+                const escapedVal = escapeHtml(val);
+                const filterVal = val === '(empty)' ? '' : val;
+                // data-agg-pivot (delegated, see the pivot-menu click
+                // listener below), not a direct call to the old
+                // (now-removed) single-value applyFilter helper - val is
+                // arbitrary field content, and the pivot menu needs the raw
+                // value for Hunt/Copy/the lookup sites, not just a
+                // JS-string-escaped one for a single hardcoded call. The
+                // "(empty)" bucket has nothing meaningful to pivot on
+                // (matches pivotDataAttrsHtml/htmlRowText's own empty-value
+                // exclusion) - left without the attribute, so it's not
+                // clickable at all.
+                const pivotAttr = filterVal
+                    ? ` data-agg-pivot="${encodeURIComponent(JSON.stringify([sectionId, col, filterVal]))}"`
+                    : '';
+                html += `<tr class="agg-row"${pivotAttr}>
+                    <td style="text-align:right;color:var(--text-muted);">${count}</td><td class="agg-cell" title="${escapedVal}">${escapedVal}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            if (total > AGG_PAGE_SIZE) {
+                const totalPages = Math.max(1, Math.ceil(total / AGG_PAGE_SIZE));
+                html += `<div class="agg-pagination">
+                    <button type="button" class="agg-page-btn" data-action="change-agg-page" data-section-id="${escapeHtml(sectionId)}" data-col="${escapeHtml(col)}" data-delta="-1" ${page <= 1 ? 'disabled' : ''}>&larr; Prev</button>
+                    <span class="agg-page-info">Page ${page} of ${totalPages}</span>
+                    <button type="button" class="agg-page-btn" data-action="change-agg-page" data-section-id="${escapeHtml(sectionId)}" data-col="${escapeHtml(col)}" data-delta="1" ${page >= totalPages ? 'disabled' : ''}>Next &rarr;</button>
+                </div>`;
+            }
+            html += '</div></div></div>';
+            return html;
+        }
+
+        // Shared aggregation-table renderer: columns control display order,
+        // hidden columns are skipped. countsByColumn shape depends on the
+        // caller:
+        //
+        // - Client-computed callers (log/sigmaalert/binary/'all' client-
+        //   fallback) pass the FULL {value: count} map for every column -
+        //   `totals` is omitted, so this derives each column's total from
+        //   the map's own size and slices out the current page itself. The
+        //   full map is also stashed in aggFullCountsCache so changeAggPage
+        //   can re-slice later without recomputing from events.
+        // - Server-aggregated callers (buildAggregationsSection/
+        //   buildAggregationsSectionAll) pass `totals` (from
+        //   fetchAggregationTotals) plus a countsByColumn that already only
+        //   holds page 1's rows per column (from the bulk
+        //   /api/aggregation-data fetch) - no slicing needed, just render.
+        function _renderAggTablesHtml(countsByColumn, columns, sectionId, totals) {
+            if (!totals) aggFullCountsCache[sectionId] = countsByColumn;
             let html = '';
             for (const col of columns) {
                 if (hiddenAggregations.has(sectionId + ':' + col)) continue;
                 const colCounts = countsByColumn[col] || {};
-                const entries = Object.entries(colCounts).sort((a, b) => b[1] - a[1]).slice(0, CONFIG.AGGREGATION_TOP_N);
-                if (entries.length === 0) continue;
-                html += `<div class="section agg-section" data-col="${escapeHtml(col)}"><div class="section-content"><div class="agg-table">
-                    <div class="agg-header"><span>${escapeHtml(col)}</span><button class="agg-close" onclick="hideAggregationTable('${sectionId}', '${escapeJsString(col)}')" title="Hide">&times;</button></div>
-                    <table><thead><tr><th style="width:60px;text-align:right;">Count</th><th>Value</th></tr></thead><tbody>`;
-                for (const [val, count] of entries) {
-                    const escapedVal = escapeHtml(val);
-                    const filterVal = val === '(empty)' ? '' : val;
-                    // data-agg-pivot (delegated, see the pivot-menu click
-                    // listener below), not a direct call to the old
-                    // (now-removed) single-value applyFilter helper -
-                    // val is arbitrary field content, and the pivot menu
-                    // needs the raw value for Hunt/Copy/the lookup sites,
-                    // not just a JS-string-escaped one for a single
-                    // hardcoded call. The "(empty)" bucket has nothing
-                    // meaningful to pivot on (matches pivotDataAttrsHtml/
-                    // htmlRowText's own empty-value exclusion) - left
-                    // without the attribute, so it's not clickable at all.
-                    const pivotAttr = filterVal
-                        ? ` data-agg-pivot="${encodeURIComponent(JSON.stringify([sectionId, col, filterVal]))}"`
-                        : '';
-                    html += `<tr class="agg-row"${pivotAttr}>
-                        <td style="text-align:right;color:var(--text-muted);">${count}</td><td class="agg-cell" title="${escapedVal}">${escapedVal}</td>
-                    </tr>`;
+                const page = aggPage[sectionId + ':' + col] || 1;
+                let entries, total;
+                if (totals) {
+                    total = totals[col] || 0;
+                    // Re-sorted here too (not just trusted as "already in
+                    // server order") - plain-object key iteration order in
+                    // JS reorders integer-like string keys (e.g. a Dest
+                    // Port column's "443"/"80") numerically ascending ahead
+                    // of every other key, regardless of insertion order, so
+                    // trusting Object.entries() to preserve the server's
+                    // count-descending order would silently misorder any
+                    // numeric-looking value column.
+                    entries = Object.entries(colCounts).sort((a, b) => b[1] - a[1]);
+                } else {
+                    const sorted = Object.entries(colCounts).sort((a, b) => b[1] - a[1]);
+                    total = sorted.length;
+                    const start = (page - 1) * AGG_PAGE_SIZE;
+                    entries = sorted.slice(start, start + AGG_PAGE_SIZE);
                 }
-                html += '</tbody></table></div></div></div>';
+                if (total === 0) continue;
+                html += _renderOneAggTableHtml(sectionId, col, entries, total, page);
             }
             return html;
         }
 
+        function _aggPageSizeSelectorHtml() {
+            const options = AGG_PAGE_SIZE_OPTIONS.map(n =>
+                `<option value="${n}"${n === AGG_PAGE_SIZE ? ' selected' : ''}>${n}</option>`
+            ).join('');
+            return `<div class="agg-page-size-bar"><label for="aggPageSizeSelect">Items per page</label>
+                <select id="aggPageSizeSelect" data-change-action="change-agg-page-size">${options}</select></div>`;
+        }
+
         function _wrapAggPanel(innerHtml) {
-            return '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + innerHtml + '</div></div>';
+            return '<div class="agg-panel"><div class="section-toggle-bar" data-action="toggle-aggregations">▾ Aggregation Tables</div><div class="agg-content">'
+                + _aggPageSizeSelectorHtml() + innerHtml + '</div></div>';
+        }
+
+        // Rebuilds whichever Aggregation Tables view currently applies -
+        // binary analysis mode (no tab sections at all) or the visible
+        // tab's own section - shared by toggleAggregations() (opening the
+        // panel) and changeAggPageSize() (page size changed while already
+        // open), so the section/eventType routing logic can't drift between
+        // the two call sites.
+        async function rebuildVisibleAggregations() {
+            const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
+            if (!visibleSection) {
+                const fileAlerts = allEvents.filter(e => e.event_type === 'filealerts');
+                const filtered = fileAlerts.filter(e => matchesCurrentFilters(e, (ev, col) => extractValue(ev, col, -1)));
+                buildBinaryAggregations(filtered);
+                return;
+            }
+            const eventType = visibleSection.id.replace('section-', '');
+            // needsFullBatch (not an unconditional ensureCappedBatch) so
+            // opening the aggregation view for an eligible pcap per-type tab
+            // with no active filter goes straight through
+            // buildAggregationsSection's own server-aggregation branch
+            // instead of always eagerly fetching the full capped batch.
+            if (needsFullBatch(eventType)) await ensureCappedBatch(eventType);
+            if (eventType === 'all') {
+                await buildAggregationsSectionAll();
+            } else if (isLogAnalysisMode && eventType === 'log') {
+                const events = tabDataCache['log'] || [];
+                buildLogAggregations(getFilteredLogEvents(events), visibleSection.id);
+            } else if (isLogAnalysisMode && eventType === 'sigmaalert') {
+                const alerts = tabDataCache['sigmaalert'] || [];
+                buildSigmaAlertAggregations(getFilteredSigmaAlerts(alerts), visibleSection.id);
+            } else {
+                const events = tabDataCache[eventType] || [];
+                const filtered = getFilteredEvents(visibleSection.id, events, eventType);
+                await buildAggregationsSection(eventType, filtered);
+            }
+        }
+
+        // "Items per page" selector's onchange handler (see
+        // _aggPageSizeSelectorHtml) - applies to every Aggregation Table at
+        // once, not per-column like the old escalating "Show more" tiers
+        // this pagination feature replaced, since a per-table selector
+        // would mean one selector per column and real UI clutter.
+        async function changeAggPageSize(newSize) {
+            const parsed = parseInt(newSize, 10);
+            AGG_PAGE_SIZE = AGG_PAGE_SIZE_OPTIONS.includes(parsed) ? parsed : CONFIG.AGGREGATION_TOP_N;
+            safeStorageSet(localStorage, AGG_PAGE_SIZE_STORAGE_KEY, String(AGG_PAGE_SIZE));
+            aggPage = {}; aggFullCountsCache = {}; aggTotalsCache = {};
+            await rebuildVisibleAggregations();
         }
 
         function buildLogAggregations(events, sectionId) {
@@ -5393,7 +8638,7 @@
                 for (const field of section.fields) {
                     const val = jsonData[field];
                     if (val !== undefined && val !== null && val !== '') {
-                        sectionHtml += htmlRowText(field, String(val), 'mono');
+                        sectionHtml += htmlRowText(field, String(val), 'mono', undefined, true);
                     }
                 }
                 if (sectionHtml) {
@@ -5411,7 +8656,7 @@
             if (remaining.length > 0) {
                 html += htmlSection('Raw Data', '#8b949e');
                 for (const [k, v] of remaining) {
-                    html += htmlRowText(k, String(v), 'mono');
+                    html += htmlRowText(k, String(v), 'mono', undefined, true);
                 }
                 hasAny = true;
             }
@@ -5542,18 +8787,22 @@
             const sectionId = `section-${eventType}`;
 
             if (canUseServerAggregation(eventType)) {
-                const data = await fetchAggregationData(eventType);
+                const [data, totals] = await Promise.all([
+                    fetchAggregationData(eventType),
+                    fetchAggregationTotals(eventType),
+                ]);
+                aggTotalsCache[sectionId] = totals;
                 const countsByColumn = {};
                 for (const [col, entries] of Object.entries(data)) {
                     countsByColumn[col] = {};
                     for (const { value, count } of entries) countsByColumn[col][value] = count;
                 }
-                const html = '<div class="agg-grid">' + _renderAggTablesHtml(countsByColumn, getColumnsForType(eventType), sectionId) + '</div>';
-                aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + html + '</div></div>';
+                const html = '<div class="agg-grid">' + _renderAggTablesHtml(countsByColumn, getColumnsForType(eventType), sectionId, totals) + '</div>';
+                aggContainer.innerHTML = _wrapAggPanel(html);
                 return;
             }
 
-            aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + buildAggregationTables(events, eventType) + '</div></div>';
+            aggContainer.innerHTML = _wrapAggPanel(buildAggregationTables(events, eventType));
         }
         
         // Whether the row table/aggregations/diagram for the currently-visible
@@ -5566,7 +8815,13 @@
 
         function getVisibleEventType() {
             const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
-            return visibleSection ? visibleSection.id.replace('section-', '') : null;
+            const type = visibleSection ? visibleSection.id.replace('section-', '') : null;
+            // DNS Heuristics is a derived view over the same underlying
+            // 'dns' batch (see buildDnsHeuristicsSection) - truncation is
+            // tracked in truncatedTypes under 'dns', not a separate
+            // 'dns_heuristics' key, so this reuses the existing truncation
+            // banner instead of needing a second one.
+            return type === 'dns_heuristics' ? 'dns' : type;
         }
 
         // Actual number of rows currently cached for eventType - used in the
@@ -5583,11 +8838,11 @@
                 html += `<div class="filter-bar"><span class="filter-label">${SEARCH_ICON_SVG} Active:</span>`;
                 for (let i = 0; i < currentSearch.length; i++) {
                     const term = currentSearch[i];
-                    html += `<span class="filter-chip">${SEARCH_ICON_SVG} "${escapeHtml(term)}" <span class="filter-chip-remove" onclick="clearSearchTerm(${i})">&times;</span></span>`;
+                    html += `<span class="filter-chip">${SEARCH_ICON_SVG} "${escapeHtml(term)}" <span class="filter-chip-remove" data-action="clear-search-term" data-index="${i}">&times;</span></span>`;
                 }
                 for (const [col, spec] of Object.entries(currentFilters)) {
                     if (typeof spec === 'string') {
-                        html += `<span class="filter-chip">${escapeHtml(col)}: ${escapeHtml(spec)} <span class="filter-chip-remove" onclick="clearFilter('${escapeJsString(col)}')">&times;</span></span>`;
+                        html += `<span class="filter-chip">${escapeHtml(col)}: ${escapeHtml(spec)} <span class="filter-chip-remove" data-action="clear-filter" data-col="${escapeHtml(col)}">&times;</span></span>`;
                         continue;
                     }
                     // Object shape (pivot menu's include/exclude) - one
@@ -5595,17 +8850,17 @@
                     // one chip per column, since multiple include/exclude
                     // values can be active on the same column at once.
                     for (const val of (spec.include || [])) {
-                        html += `<span class="filter-chip">${escapeHtml(col)}: ${escapeHtml(val)} <span class="filter-chip-remove" onclick="clearFilterValue('${escapeJsString(col)}', 'include', '${escapeJsString(val)}')">&times;</span></span>`;
+                        html += `<span class="filter-chip">${escapeHtml(col)}: ${escapeHtml(val)} <span class="filter-chip-remove" data-action="clear-filter-value" data-col="${escapeHtml(col)}" data-kind="include" data-value="${escapeHtml(val)}">&times;</span></span>`;
                     }
                     for (const val of (spec.exclude || [])) {
-                        html += `<span class="filter-chip filter-chip-exclude">${escapeHtml(col)} ≠ ${escapeHtml(val)} <span class="filter-chip-remove" onclick="clearFilterValue('${escapeJsString(col)}', 'exclude', '${escapeJsString(val)}')">&times;</span></span>`;
+                        html += `<span class="filter-chip filter-chip-exclude">${escapeHtml(col)} ≠ ${escapeHtml(val)} <span class="filter-chip-remove" data-action="clear-filter-value" data-col="${escapeHtml(col)}" data-kind="exclude" data-value="${escapeHtml(val)}">&times;</span></span>`;
                     }
                 }
-                html += '<button class="filter-clear-all" onclick="clearAllFilters()">Clear All</button></div>';
+                html += '<button class="filter-clear-all" data-action="clear-all-filters">Clear All</button></div>';
             }
             if (isCurrentTabTruncated()) {
                 const fetchedCount = getFetchedLengthForType(getVisibleEventType()).toLocaleString();
-                html += `<div class="filter-bar"><span style="color: var(--badge-warning-text);">⚠ Showing the first ${fetchedCount} matching events for this view — results may be incomplete.</span></div>`;
+                html += `<div class="filter-bar"><span style="color: var(--badge-warning-text);">⚠ Showing the first ${fetchedCount} matching events for this view — results may be incomplete (you can raise the limit in <a href="#" data-action="show-settings-modal" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Settings</a>).</span></div>`;
             }
             return html;
         }
@@ -5625,7 +8880,122 @@
         }
         
         let eventStats = {};
-        
+
+        // The Acknowledged Alerts stat card's count (see buildStats()
+        // below) - unlike every other card, this isn't derivable from
+        // eventStats (acknowledged rows are excluded from every other
+        // count by design, see db.py's _build_where_conditions/
+        // _sigma_alert_where), so it needs its own dedicated fetch rather
+        // than reading off the same object every other card already has
+        // in hand. acknowledgedAlertsCountStale starts true (so the very
+        // first buildStats() call after page load fetches it) and gets
+        // set true again by refreshAnalysisData() (which every acknowledge/
+        // un-acknowledge action already calls) - buildStats() itself
+        // fetches and re-renders lazily whenever it sees the stale flag,
+        // rather than this being threaded through every one of buildStats()'s
+        // own several call sites by hand.
+        let acknowledgedAlertsCount = 0;
+        let acknowledgedAlertsCountStale = true;
+        // The analysis the count was computed FOR - buildStats() only
+        // trusts the count when this matches currentMd5, so a number left
+        // over from a previously viewed analysis can never render (or
+        // suppress) a card on the wrong one while a refresh is in flight.
+        let acknowledgedAlertsCountMd5 = null;
+
+        // The DNS Heuristics stat card's count - same lazy-refresh shape
+        // as acknowledgedAlertsCount just above (see its own comment) and
+        // for the same underlying reason: the real number (how many
+        // domains actually scored above 0, see computeDnsHeuristics)
+        // isn't in eventStats at all, and computing it requires the full
+        // 'dns' batch fetched and scored, not just a count. Without this,
+        // the card would have to show the raw DNS event count instead -
+        // which it did briefly, and which reads as "157 suspicious
+        // things" on a card literally labeled DNS Heuristics when only a
+        // handful (or zero) actually scored.
+        let dnsHeuristicsFlaggedCount = 0;
+        let dnsHeuristicsCountStale = true;
+        // See acknowledgedAlertsCountMd5's comment - same wrong-analysis
+        // carry-over protection for this card's count.
+        let dnsHeuristicsCountMd5 = null;
+
+        async function refreshDnsHeuristicsCount() {
+            if (isLogAnalysisMode || !currentMd5) {
+                dnsHeuristicsFlaggedCount = 0;
+                dnsHeuristicsCountMd5 = currentMd5;
+                return;
+            }
+            const md5 = currentMd5;
+            try {
+                // A dedicated fetch, not ensureCappedBatch('dns')/
+                // tabDataCache - this runs fire-and-forget from inside
+                // buildStats() (see the lazy self-refresh block below),
+                // triggered from the FIRST buildStats() call inside
+                // refreshAnalysisData(), which only clears tabDataCache
+                // AFTER that call returns. ensureCappedBatch's cache check
+                // runs synchronously ahead of any real fetch, so it used
+                // to race ahead of that clear and see a stale, narrower
+                // (sometimes even empty) tabDataCache['dns'] left over
+                // from an earlier search-filtered tab visit - scoring the
+                // wrong dataset and then sticking with the wrong count
+                // once dnsHeuristicsCountStale flipped back to false.
+                const qParam = buildSearchQuery();
+                const resp = await fetch(`/api/events?md5=${encodeURIComponent(md5)}&type=dns&limit=${getUserQueryLimit()}${qParam}&t=${Date.now()}`);
+                const events = await resp.json();
+                if (currentMd5 !== md5) {
+                    // The user switched analyses while this fetch was in
+                    // flight - the result belongs to the old one. Re-arm
+                    // the lazy refresh; the switch's own buildStats() call
+                    // re-runs it against the new analysis.
+                    dnsHeuristicsCountStale = true;
+                    return;
+                }
+                if (!Array.isArray(events)) {
+                    // Error payload or analysis still processing (no
+                    // events.db yet) - don't lock in a wrong 0; retry on
+                    // the next buildStats() instead. No tight loop: the
+                    // early return skips this function's own buildStats()
+                    // call, so the retry only fires on an external one.
+                    dnsHeuristicsCountStale = true;
+                    return;
+                }
+                dnsHeuristicsFlaggedCount = computeDnsHeuristics(events).length;
+                dnsHeuristicsCountMd5 = md5;
+            } catch (e) {
+                dnsHeuristicsCountStale = true;
+                return;
+            }
+            buildStats(await computeFilteredStats());
+        }
+
+        async function refreshAcknowledgedAlertsCount() {
+            if (isLogAnalysisMode || !currentMd5) {
+                acknowledgedAlertsCount = 0;
+                acknowledgedAlertsCountMd5 = currentMd5;
+                return;
+            }
+            const md5 = currentMd5;
+            try {
+                const [alertResp, sigmaResp] = await Promise.all([
+                    fetch(`/api/count?md5=${encodeURIComponent(md5)}&type=alert&acknowledged=only&t=${Date.now()}`),
+                    fetch(`/api/sigma-count?md5=${encodeURIComponent(md5)}&acknowledged=only&t=${Date.now()}`)
+                ]);
+                const alertCount = (await alertResp.json()).count || 0;
+                const sigmaCount = (await sigmaResp.json()).count || 0;
+                if (currentMd5 !== md5) {
+                    // See refreshDnsHeuristicsCount - result belongs to a
+                    // previously viewed analysis; re-arm and discard.
+                    acknowledgedAlertsCountStale = true;
+                    return;
+                }
+                acknowledgedAlertsCount = alertCount + sigmaCount;
+                acknowledgedAlertsCountMd5 = md5;
+            } catch (e) {
+                acknowledgedAlertsCountStale = true;
+                return;
+            }
+            buildStats(await computeFilteredStats());
+        }
+
         function eventMatchesFilters(event) {
             if (Object.keys(currentFilters).length === 0) return true;
             return matchesCurrentFilters(event, (ev, col) => {
@@ -5689,12 +9059,68 @@
             return matchesCurrentFilters(alert, extractSigmaValue);
         }
 
+        // Counts a .stat-number element up from 0 to target on a
+        // decelerating ease-out curve instead of snapping straight to the
+        // final value - reads as data "arriving" rather than just
+        // appearing, on every buildStats() call (initial load, filter/
+        // search apply, tab switch). Skipped under prefers-reduced-motion:
+        // reduce, jumping straight to the final value instead - this is
+        // pure decoration, not information the motion itself conveys, so
+        // honoring that preference costs nothing functionally.
+        function animateStatNumber(el, target) {
+            // Count-up is a playful flourish, reserved for the fun themes -
+            // reuses THEMED_LOADING_PHRASES as the single source of truth for
+            // "is this a fun theme" rather than maintaining a second list.
+            const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            if (reducedMotion || !THEMED_LOADING_PHRASES[getCurrentTheme()]) {
+                el.textContent = target.toLocaleString();
+                return;
+            }
+            const duration = 500;
+            const start = performance.now();
+            function tick(now) {
+                const progress = Math.min((now - start) / duration, 1);
+                const eased = 1 - Math.pow(1 - progress, 3);
+                el.textContent = Math.round(target * eased).toLocaleString();
+                if (progress < 1) {
+                    requestAnimationFrame(tick);
+                }
+            }
+            requestAnimationFrame(tick);
+        }
+
         function buildStats(filteredStats) {
             const grid = document.getElementById('statsGrid');
             const stats = [];
+            let allFiltered = 0;
 
             eventTypes.forEach(type => {
                 const filtered = filteredStats ? (filteredStats[type] || 0) : (eventStats[type] || 0);
+                allFiltered += filtered;
+                // Inserted immediately before the real DNS Queries card
+                // (rather than appended after every other card, with
+                // 'all'/'acknowledged') so it reads as "the DNS-specific
+                // view" sitting right next to "DNS Queries", not a
+                // catch-all tacked onto the end of the whole row. Gated on
+                // the lazily-computed flagged-domain count (see
+                // dnsHeuristicsFlaggedCount/refreshDnsHeuristicsCount
+                // below and dnsHeuristicsCountStale's own comment) - NOT
+                // the raw DNS event count, which would read as "this many
+                // suspicious things" on a card literally labeled DNS
+                // Heuristics. Guarded by !isLogAnalysisMode for parity
+                // with 'all'/'acknowledged' below even though 'dns' can't
+                // actually occur in log-analysis mode in practice.
+                if (type === 'dns' && !isLogAnalysisMode) {
+                    stats.push({
+                        id: 'dns_heuristics',
+                        label: 'DNS Heuristics',
+                        // A count computed for a different analysis renders
+                        // as 0 (no card) until this analysis's own refresh
+                        // lands - never another capture's number.
+                        count: dnsHeuristicsCountMd5 === currentMd5 ? dnsHeuristicsFlaggedCount : 0,
+                        color: '#ff9800'
+                    });
+                }
                 stats.push({
                     id: type,
                     label: typeLabels[type] || type.toUpperCase(),
@@ -5704,17 +9130,37 @@
             });
 
             if (!isLogAnalysisMode) {
-                const allFiltered = stats.reduce((a, s) => a + s.count, 0);
                 stats.push({
                     id: 'all',
                     label: 'All Events',
                     count: allFiltered,
                     color: 'var(--text-bright)'
                 });
+                // Not filtered by the current search/filter bar the way
+                // every other card above is (filteredStats has no entry
+                // for it - there's nothing to filter, acknowledged rows
+                // are already excluded from every other query) - always
+                // shows the same count regardless of what's currently
+                // searched/filtered.
+                stats.push({
+                    id: 'acknowledged',
+                    label: 'Acknowledged Alerts',
+                    count: acknowledgedAlertsCountMd5 === currentMd5 ? acknowledgedAlertsCount : 0,
+                    color: 'var(--text-muted)'
+                });
             }
 
             const visibleSection = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
-            const activeType = visibleSection ? visibleSection.id.replace('section-', '') : (stats[0] && stats[0].id);
+            // find(s => s.count > 0), not just stats[0] - a zero-count
+            // entry (e.g. log analysis with sigma alerts disabled/absent,
+            // sorted ahead of 'log' by priority - see sortEventTypes) gets
+            // filtered out of the actual rendered grid below and so can
+            // never really be "active" - falling back to it left NO card
+            // marked tab-active at all (real user report: keyboard
+            // navigation broke identically to the PCAP-mode bugs already
+            // fixed, because activeColumnStatCards()'s own .tab-active
+            // fallback then found nothing either).
+            const activeType = visibleSection ? visibleSection.id.replace('section-', '') : (stats.find(s => s.count > 0) || {}).id;
             // A type only ever reaches eventTypes because it had at least
             // one event in the unfiltered sample (see eventTypes' own
             // derivation from baseEventStats), so count === 0 here only
@@ -5732,15 +9178,39 @@
                 // reliably keep from overflowing.
                 const countDisplay = s.count.toLocaleString();
                 const activeClass = s.id === activeType ? ' tab-active' : '';
+                // Rendered starting at 0, then animated up to countDisplay
+                // by animateStatNumber() below - aria-label carries the
+                // real final value immediately so assistive tech isn't
+                // stuck reading "0" or a mid-animation number.
                 return `
-                    <div class="stat-card${activeClass}" onclick="showTab('section-${s.id}', this)">
-                        <div class="stat-number" style="color: ${s.color}">${countDisplay}</div>
+                    <div class="stat-card${activeClass}" data-action="show-tab" data-section="section-${s.id}">
+                        <div class="stat-number" style="color: ${s.color}" aria-label="${countDisplay}">0</div>
                         <div class="stat-label">${s.label}</div>
                     </div>
                 `;
             }).join('');
+            const numberEls = grid.querySelectorAll('.stat-number');
+            stats.filter(s => s.count > 0).forEach((s, i) => animateStatNumber(numberEls[i], s.count));
+
+            // Lazy self-refresh for the Acknowledged Alerts card - see
+            // acknowledgedAlertsCountStale's own comment for why this
+            // lives here rather than being threaded through every one of
+            // this function's several call sites by hand. Guarded so the
+            // recursive buildStats() call refreshAcknowledgedAlertsCount()
+            // itself makes doesn't loop.
+            if (acknowledgedAlertsCountStale) {
+                acknowledgedAlertsCountStale = false;
+                refreshAcknowledgedAlertsCount();
+            }
+
+            // Lazy self-refresh for the DNS Heuristics card - same
+            // pattern as Acknowledged Alerts just above, same reason.
+            if (dnsHeuristicsCountStale) {
+                dnsHeuristicsCountStale = false;
+                refreshDnsHeuristicsCount();
+            }
         }
-        
+
         function buildSections() {
             const sectionsEl = document.getElementById('sections');
             let html = '';
@@ -5751,6 +9221,8 @@
             });
             
             html += '<div class="section section-hidden" id="section-all"><div class="section-header">All Events</div><div class="loading">Loading...</div></div>';
+            html += '<div class="section section-hidden" id="section-acknowledged"><div class="section-header">Acknowledged Alerts</div><div class="loading">Loading...</div></div>';
+            html += '<div class="section section-hidden" id="section-dns_heuristics"><div class="section-header">DNS Heuristics</div><div class="loading">Loading...</div></div>';
             sectionsEl.innerHTML = html;
             
         }
@@ -5771,7 +9243,8 @@
             const detail = extractValue(e, 'Detail', -1);
             const formatted = formatEvent(e);
             const pivotAttrs = pivotDataAttrsHtml(e, 'all', ALL_EVENTS_COLUMNS, extractAllValue);
-            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs} onclick="toggleRow(this, event)"><td class="timestamp">${escapeHtml(ts)}</td><td>${valueDotSpan(COLORS.EVENT[etype])}${escapeHtml(etype.toUpperCase())}</td><td>${valueDotSpan(DOT_COLORS.PROTO[proto.toUpperCase()])}${escapeHtml(proto)}</td><td class="mono-fixed" title="${escapeHtml(srcIp)}">${escapeHtml(srcIp)}</td><td class="mono-fixed">${escapeHtml(String(srcPort))}</td><td class="mono-fixed" title="${escapeHtml(dstIp)}">${escapeHtml(dstIp)}</td><td class="mono-fixed">${escapeHtml(String(dstPort))}</td><td class="mono">${escapeHtml(detail)}</td>${rowNoteIconHtml('events', e.id, e.row_note)}</tr><tr class="detail-row"><td colspan="9"><div class="detail-content">${formatted}</div></td></tr>`;
+            const communityIdAttr = e.community_id ? ` data-community-id="${escapeHtml(e.community_id)}"` : '';
+            return `<tr data-id="${escapeHtml(String(e.id))}"${pivotAttrs}${communityIdAttr} data-action="toggle-row"><td class="timestamp">${escapeHtml(ts)}</td><td>${valueDotSpan(COLORS.EVENT[etype])}${escapeHtml(etype.toUpperCase())}</td><td>${valueDotSpan(DOT_COLORS.PROTO[proto.toUpperCase()])}${escapeHtml(proto)}</td><td class="mono-fixed" title="${escapeHtml(srcIp)}">${escapeHtml(srcIp)}</td><td class="mono-fixed">${escapeHtml(String(srcPort))}</td><td class="mono-fixed" title="${escapeHtml(dstIp)}">${escapeHtml(dstIp)}</td><td class="mono-fixed">${escapeHtml(String(dstPort))}</td><td class="mono">${escapeHtml(detail)}</td>${rowNoteIconHtml('events', e.id, e.row_note)}</tr><tr class="detail-row"><td colspan="9"><div class="detail-content">${formatted}</div></td></tr>`;
         }
 
         async function buildAllEvents() {
@@ -5824,7 +9297,113 @@
 
             container.innerHTML = html;
         }
-        
+
+        // Fetches both acknowledged-only sets in parallel and hands off to
+        // renderAcknowledgedAlertsGroups() below. Reuses buildAllEventRow()/
+        // buildSigmaAlertRow() exactly as each already is (same columns,
+        // same expand/toggle mechanism, same detail formatter) rather than
+        // a new unified renderer - Network Alerts and Sigma Alerts have no
+        // existing combined view to build on the way "All Events" does for
+        // types that already share the one `events` table, so two
+        // clearly-labeled groups reusing proven code is far less risk than
+        // inventing a shared renderer for what's fundamentally a review bin.
+        async function buildAcknowledgedAlertsSection() {
+            const sectionEl = document.getElementById('section-acknowledged');
+            if (!sectionEl || !currentMd5) return;
+            const qParam = buildSearchQuery();
+            const limit = getUserQueryLimit();
+            const [alertResp, sigmaResp] = await Promise.all([
+                fetch(`/api/events?md5=${encodeURIComponent(currentMd5)}&type=alert&acknowledged=only&limit=${limit}${qParam}&t=${Date.now()}`),
+                fetch(`/api/sigma-alerts?md5=${encodeURIComponent(currentMd5)}&acknowledged=only&limit=${limit}${qParam}&t=${Date.now()}`)
+            ]);
+            acknowledgedAlertsCache = {
+                alert: await alertResp.json(),
+                sigmaalert: await sigmaResp.json(),
+            };
+            renderAcknowledgedAlertsGroups();
+        }
+
+        // When only one of the two types has any acknowledged rows, show it
+        // as a single plain table - sortable/paginated via
+        // renderPaginatedTable, the exact same renderer/columns the real
+        // Network Alerts/Sigma Alerts tab itself uses - instead of the
+        // two-group layout below, which would otherwise pair it with an
+        // empty "No acknowledged ..." group for no reason. Safe to reuse
+        // renderPaginatedTable here (unlike the both-groups case just
+        // below) since exactly one table is ever on screen at a time in
+        // this branch, so there's no fight over the shared
+        // currentPage/currentSort state (see renderPaginatedTable's own
+        // sectionKey handling) the way two simultaneously-visible tables
+        // would cause. rerender re-renders from the already-fetched
+        // acknowledgedAlertsCache, not a fresh server round-trip - a
+        // sort/page click never needs new data, just a different slice of
+        // what buildAcknowledgedAlertsSection already loaded.
+        function renderAcknowledgedSingleTypeTable(eventType) {
+            const sectionEl = document.getElementById('section-acknowledged');
+            const isSigma = eventType === 'sigmaalert';
+            sectionEl.innerHTML = '<div class="section-content">' + renderPaginatedTable({
+                sectionKey: 'section-acknowledged',
+                columns: getColumnsForType(eventType),
+                items: isSigma ? acknowledgedAlertsCache.sigmaalert : acknowledgedAlertsCache.alert,
+                extractFn: isSigma ? extractSigmaValue : extractValue,
+                rowRenderer: isSigma ? buildSigmaAlertRow : buildRowForEvent,
+                rerender: () => renderAcknowledgedSingleTypeTable(eventType),
+            }) + '</div>';
+        }
+
+        // Both-groups (or neither) layout - deliberately NOT
+        // renderPaginatedTable() here, since this branch shows two tables
+        // side by side, which would fight over renderPaginatedTable's one
+        // shared currentPage/currentSort (two distinct sectionKeys
+        // wouldn't fix it - paging one table would still move the other's
+        // currentPage out from under it). Rendering both groups in full
+        // instead - a reasonable scope for what's meant to be a small
+        // review list once both types are present, not a primary
+        // high-volume table the way Network Alerts/Sigma Alerts
+        // themselves are.
+        function renderAcknowledgedAlertsGroups() {
+            const sectionEl = document.getElementById('section-acknowledged');
+            if (!sectionEl) return;
+            const hasAlerts = acknowledgedAlertsCache.alert.length > 0;
+            const hasSigma = acknowledgedAlertsCache.sigmaalert.length > 0;
+            if (hasAlerts && !hasSigma) {
+                renderAcknowledgedSingleTypeTable('alert');
+                return;
+            }
+            if (hasSigma && !hasAlerts) {
+                renderAcknowledgedSingleTypeTable('sigmaalert');
+                return;
+            }
+            // tableHeaderCellsHtml(cols, null) - same shared helper
+            // renderPaginatedTable itself uses (see
+            // renderAcknowledgedSingleTypeTable above), with a null
+            // sectionKey so it never highlights a sort column (neither
+            // group here is sortable - see this function's own comment).
+            // Reused rather than hand-rolled specifically for its
+            // FIXED_COLUMN_WIDTHS styling, so column widths in this
+            // two-group view match every other table in the app instead of
+            // drifting to whatever width each column's content happens to
+            // need.
+            const alertCols = getColumnsForType('alert');
+            const alertHeaderHtml = tableHeaderCellsHtml(alertCols, null) + '<th style="width:32px;"></th>';
+            const alertHtml = hasAlerts
+                ? `<div class="table-scroll-wrapper"><table><thead><tr>${alertHeaderHtml}</tr></thead><tbody>${acknowledgedAlertsCache.alert.map(buildRowForEvent).join('')}</tbody></table></div>`
+                : '<div class="no-matches">No acknowledged network alerts</div>';
+            const sigmaCols = getColumnsForType('sigmaalert');
+            const sigmaHeaderHtml = tableHeaderCellsHtml(sigmaCols, null) + '<th style="width:32px;"></th>';
+            const sigmaHtml = hasSigma
+                ? `<div class="table-scroll-wrapper"><table><thead><tr>${sigmaHeaderHtml}</tr></thead><tbody>${acknowledgedAlertsCache.sigmaalert.map(buildSigmaAlertRow).join('')}</tbody></table></div>`
+                : '<div class="no-matches">No acknowledged Sigma alerts</div>';
+            sectionEl.innerHTML = `
+                <div class="section-content">
+                    <div class="section-header">Network Alerts</div>
+                    ${alertHtml}
+                    <div class="section-header">Sigma Alerts</div>
+                    ${sigmaHtml}
+                </div>
+            `;
+        }
+
         async function buildAggregationsSectionAll() {
             const aggContainer = document.getElementById('aggregations');
             if (!aggContainer) return;
@@ -5838,14 +9417,18 @@
             const sectionId = 'section-all';
 
             if (canUseServerAggregation('all')) {
-                const data = await fetchAggregationData('all');
+                const [data, totals] = await Promise.all([
+                    fetchAggregationData('all'),
+                    fetchAggregationTotals('all'),
+                ]);
+                aggTotalsCache[sectionId] = totals;
                 const countsByColumn = {};
                 for (const [col, entries] of Object.entries(data)) {
                     countsByColumn[col] = {};
                     for (const { value, count } of entries) countsByColumn[col][value] = count;
                 }
-                const html = '<div class="agg-grid">' + _renderAggTablesHtml(countsByColumn, allColumns, sectionId) + '</div>';
-                aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + html + '</div></div>';
+                const html = '<div class="agg-grid">' + _renderAggTablesHtml(countsByColumn, allColumns, sectionId, totals) + '</div>';
+                aggContainer.innerHTML = _wrapAggPanel(html);
                 return;
             }
 
@@ -5855,7 +9438,7 @@
                 filteredEvents = sortedAll.filter(e => matchesCurrentFilters(e, (ev, col) => extractAllValue(ev, col, allColumns.indexOf(col))));
             }
 
-            aggContainer.innerHTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▾ Aggregation Tables</div><div class="agg-content">' + buildAggregationTablesAll(filteredEvents, allColumns) + '</div></div>';
+            aggContainer.innerHTML = _wrapAggPanel(buildAggregationTablesAll(filteredEvents, allColumns));
         }
         
         function extractAllValue(e, col, colIndex) {
@@ -6360,10 +9943,33 @@
                 && (currentSort === null || canServerSortEventType(eventType));
         }
 
-        async function fetchAggregationData(eventType) {
+        // column/page omitted -> the original bulk "every column, page 1"
+        // fetch. column+page together restrict to just that one column's
+        // one page - used by changeAggPage so paging one table doesn't
+        // reset every other column in the section back to page 1. Always
+        // sends the current AGG_PAGE_SIZE (the "Items per page" selector) -
+        // the server has its own fallback default, but every real request
+        // must be explicit so a page-size change and a page-navigation
+        // fetch can never disagree on how many rows a "page" is.
+        async function fetchAggregationData(eventType, column, page) {
             const qParam = buildSearchQuery();
             const typeParam = (eventType && eventType !== 'all') ? `&type=${eventType}` : '';
-            const resp = await fetch(`/api/aggregation-data?md5=${encodeURIComponent(currentMd5)}${typeParam}${qParam}&t=${Date.now()}`);
+            const columnParam = column ? `&column=${encodeURIComponent(column)}` : '';
+            const pageParam = page ? `&page=${page}` : '';
+            const resp = await fetch(`/api/aggregation-data?md5=${encodeURIComponent(currentMd5)}${typeParam}${columnParam}${pageParam}&page_size=${AGG_PAGE_SIZE}${qParam}&t=${Date.now()}`);
+            return await resp.json();
+        }
+
+        // Distinct-value COUNT per column, for the Prev/Next page-count math
+        // in _renderOneAggTableHtml - fetched once per section open/filter
+        // change (see buildAggregationsSection/buildAggregationsSectionAll),
+        // not on every Prev/Next click. See get_aggregation_totals_sqlite's
+        // own docstring for why this is a separate request from the page
+        // data itself.
+        async function fetchAggregationTotals(eventType) {
+            const qParam = buildSearchQuery();
+            const typeParam = (eventType && eventType !== 'all') ? `&type=${eventType}` : '';
+            const resp = await fetch(`/api/aggregation-totals?md5=${encodeURIComponent(currentMd5)}${typeParam}${qParam}&t=${Date.now()}`);
             return await resp.json();
         }
 
@@ -6447,6 +10053,21 @@
         }
 
         var hiddenAggregations = new Set();
+        // sectionId+':'+col -> current 1-indexed page for that one table's
+        // Prev/Next pagination. Reset alongside hiddenAggregations at every
+        // site that resets it - same "starts fresh each time the panel
+        // (re)opens" lifecycle.
+        var aggPage = {};
+        // sectionId -> {col: {value: count}} - the full, unpaged counts map
+        // for client-computed sections only (log/sigmaalert/binary/'all'
+        // client-fallback). Stashed by _renderAggTablesHtml so changeAggPage
+        // can re-slice a new page locally instead of recomputing from
+        // events/tabDataCache on every click.
+        var aggFullCountsCache = {};
+        // sectionId -> {col: totalDistinctValueCount} - for server-aggregated
+        // sections, whose countsByColumn only ever holds the current page
+        // (see fetchAggregationTotals/get_aggregation_totals_sqlite).
+        var aggTotalsCache = {};
         let baseEventStats = {};
         var isLogAnalysisMode = false;
         const ALL_EVENTS_COLUMNS = ['Time', 'Type', 'Protocol', 'Source IP', 'Source Port', 'Dest IP', 'Dest Port', 'Detail'];
@@ -6543,13 +10164,13 @@
             return `<div class="pagination-bar">
                 <span class="pagination-info">Showing ${start + 1}-${end} of ${totalItems}</span>
                 <div class="pagination-controls">
-                    <button class="pagination-btn" onclick="changeTablePage(-1)" ${currentPage <= 1 ? 'disabled' : ''}>&larr; Prev</button>
+                    <button class="pagination-btn" data-action="change-table-page" data-delta="-1" ${currentPage <= 1 ? 'disabled' : ''}>&larr; Prev</button>
                     <span class="pagination-page">Page
-                        <input type="number" id="paginationPageInput" class="pagination-page-input" min="1" max="${totalPages}" value="${currentPage}" onkeydown="if(event.key==='Enter'){jumpToPage()}">
+                        <input type="number" id="paginationPageInput" class="pagination-page-input" min="1" max="${totalPages}" value="${currentPage}" data-enter-action="jump-to-page">
                         of ${totalPages}
                     </span>
-                    <button class="pagination-btn" onclick="jumpToPage()">Go</button>
-                    <button class="pagination-btn" onclick="changeTablePage(1)" ${currentPage >= totalPages ? 'disabled' : ''}>Next &rarr;</button>
+                    <button class="pagination-btn" data-action="jump-to-page">Go</button>
+                    <button class="pagination-btn" data-action="change-table-page" data-delta="1" ${currentPage >= totalPages ? 'disabled' : ''}>Next &rarr;</button>
                 </div>
             </div>`;
         }
@@ -6621,7 +10242,7 @@
         }
 
         const EMPTY_FILTER_STATE_HTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 0.95rem;">${SEARCH_ICON_SVG} No events match the current filters</div>`;
-        const AGG_COLLAPSED_HTML = '<div class="agg-panel"><div class="section-toggle-bar" onclick="toggleAggregations()">▸ Aggregation Tables</div></div>';
+        const AGG_COLLAPSED_HTML = '<div class="agg-panel"><div class="section-toggle-bar" data-action="toggle-aggregations">▸ Aggregation Tables</div></div>';
 
         function hideAggregationTable(sectionId, col) {
             hiddenAggregations.add(sectionId + ':' + col);
@@ -6638,6 +10259,80 @@
                 const aggContainer = document.getElementById('aggregations');
                 if (aggContainer) {
                     aggContainer.innerHTML = AGG_COLLAPSED_HTML;
+                }
+            }
+        }
+
+        // Prev/Next for one table: server-aggregated sections fetch just
+        // that one column's new page (its own single-column request - see
+        // fetchAggregationData's column param); client-computed sections
+        // re-slice the full counts map _renderAggTablesHtml already stashed
+        // in aggFullCountsCache. Either way this patches only that one
+        // table's DOM node in place (via _renderOneAggTableHtml), not a
+        // full section rebuild - the whole point of paging in place is to
+        // keep the surrounding layout (and the user's scroll position)
+        // completely stable across clicks.
+        async function changeAggPage(sectionId, col, delta) {
+            const key = sectionId + ':' + col;
+            const newPage = (aggPage[key] || 1) + delta;
+            if (newPage < 1) return;
+
+            const eventType = sectionId.replace('section-', '');
+            let entries, total;
+            if (sectionId !== 'section-binary' && canUseServerAggregation(eventType)) {
+                const data = await fetchAggregationData(eventType, col, newPage);
+                entries = (data[col] || []).map(e => [e.value, e.count]);
+                const totals = aggTotalsCache[sectionId] || {};
+                total = totals[col] || 0;
+            } else {
+                const fullCounts = (aggFullCountsCache[sectionId] || {})[col] || {};
+                const sorted = Object.entries(fullCounts).sort((a, b) => b[1] - a[1]);
+                total = sorted.length;
+                const start = (newPage - 1) * AGG_PAGE_SIZE;
+                entries = sorted.slice(start, start + AGG_PAGE_SIZE);
+            }
+            // Guards against a stale double-click landing past the last
+            // page (e.g. Next clicked twice before the first response
+            // returns) - Prev/Next are disabled at the true last page in
+            // the rendered controls, so this should be unreachable in
+            // practice, not just a cosmetic clamp.
+            if (newPage > Math.max(1, Math.ceil(total / AGG_PAGE_SIZE))) return;
+
+            aggPage[key] = newPage;
+            const newTableHtml = _renderOneAggTableHtml(sectionId, col, entries, total, newPage);
+            // A keyboard-driven Prev/Next (Enter on a keyboard-selected
+            // button, via activateKeyboardSelection's generic .click()
+            // fallback) has verticalNavSelection pointing at the very
+            // button outerHTML below destroys - without re-pointing it at
+            // the replacement, isConnected goes false and the next arrow
+            // press would self-heal onto the top of the whole flat nav
+            // list (the stat-card grid) instead of staying right where the
+            // user just was (real bug report).
+            const hadFocus = verticalNavSelection && verticalNavSelection.isConnected
+                && verticalNavSelection.classList.contains('agg-page-btn')
+                && verticalNavSelection.closest('.agg-section')?.getAttribute('data-col') === col;
+            // col can contain quotes (attacker-controlled log field names),
+            // so compare attributes directly instead of building a CSS
+            // selector - same technique as hideAggregationTable.
+            document.querySelectorAll('.agg-section').forEach(el => {
+                if (el.getAttribute('data-col') === col) {
+                    el.outerHTML = newTableHtml;
+                }
+            });
+            if (hadFocus) {
+                const replacementTable = Array.from(document.querySelectorAll('.agg-section')).find(t => t.getAttribute('data-col') === col);
+                const buttons = replacementTable ? Array.from(replacementTable.querySelectorAll('.agg-page-btn')) : [];
+                // Same button just pressed (index 1 = Next for delta > 0,
+                // index 0 = Prev for delta < 0) - stays there even if that
+                // button is now disabled (e.g. Next after reaching the
+                // last page), rather than guessing the user wants Prev
+                // instead; Left/Right (navigateAggPaginationButtons) is
+                // already how they'd move off a disabled button.
+                const target = buttons[delta > 0 ? 1 : 0];
+                if (target) {
+                    verticalNavSelection = target;
+                    target.classList.add('keyboard-selected');
+                    scrollKeyboardSelectionIntoView(target);
                 }
             }
         }
@@ -6683,6 +10378,12 @@
                 await ensureBinaryEventsBatch();
                 buildBinaryAnalysisView(allEvents);
                 updateFilterBarVisibility();
+                // Real user report: this early-return path (binary/file
+                // analysis's own Include/Exclude/Only, from the YARA-match
+                // table's pivot menu) was missing the same chip-focus fix
+                // the normal path below already has - see
+                // focusNewestFilterChip's own comment.
+                focusNewestFilterChip();
                 return;
             }
             const eventType = sectionId.replace('section-', '');
@@ -6692,6 +10393,56 @@
             updateFilterBarVisibility();
             buildStats(await computeFilteredStats());
             await updateSankeyDiagram();
+            focusNewestFilterChip();
+        }
+
+        // Real user report: a column filter added via the pivot menu
+        // (Include/Exclude/Only - all routed through applyFilters() above,
+        // not refreshAnalysisData()/huntFilterValue()) produced a chip
+        // with no keyboard focus at all, unlike a typed search -
+        // applyFilters() updates the current tab and stat cards in place
+        // rather than tearing down and rebuilding #statsGrid/#sections
+        // wholesale, so nothing ever disconnects the previous selection
+        // for seedVerticalNavSelectionIfStale() to catch here either.
+        // Always rings the LAST chip in the row (search terms render
+        // first, then column filters, in buildFilterBarHtml()'s own
+        // order) rather than trying to identify exactly which chip
+        // Include/Exclude/Only just added - correct in the common case (a
+        // single active filter) and a reasonable "whatever's newest reads
+        // last" default otherwise. Shared with huntFilterValue(), which
+        // calls this same helper after its own, differently-shaped
+        // rebuild (refreshAnalysisData(), a full teardown) completes.
+        function focusNewestFilterChip() {
+            const chips = filterBarRowItems().filter(el => el.classList.contains('filter-chip'));
+            const chip = chips[chips.length - 1];
+            if (!chip) return;
+            document.querySelectorAll('.keyboard-selected').forEach(el => el.classList.remove('keyboard-selected'));
+            verticalNavSelection = chip;
+            chip.classList.add('keyboard-selected');
+            scrollKeyboardSelectionIntoView(chip);
+        }
+
+        // The clear-a-filter counterpart to focusNewestFilterChip() above -
+        // real user report: after clearing search filters, keyboard focus
+        // should go back to the first data type card (#statsGrid's own
+        // first .stat-card, not necessarily whichever tab happens to be
+        // active), mirroring how adding a filter focuses its own chip.
+        // Falls back to ringing whatever chip remains when the clear was
+        // only partial (e.g. clearFilterValue() removing one Include
+        // among several) - the row is still the current position in that
+        // case, not the top of the page.
+        function focusFilterBarOrFirstCard() {
+            const chips = filterBarRowItems().filter(el => el.classList.contains('filter-chip'));
+            if (chips.length > 0) {
+                focusNewestFilterChip();
+                return;
+            }
+            const firstCard = document.querySelector('#statsGrid .stat-card');
+            if (!firstCard) return;
+            document.querySelectorAll('.keyboard-selected').forEach(el => el.classList.remove('keyboard-selected'));
+            verticalNavSelection = firstCard;
+            firstCard.classList.add('keyboard-selected');
+            scrollKeyboardSelectionIntoView(firstCard);
         }
 
         async function clearFilter(columnName) {
@@ -6703,6 +10454,10 @@
                 await ensureBinaryEventsBatch();
                 buildBinaryAnalysisView(allEvents);
                 updateFilterBarVisibility();
+                // Real user report: same fix as the normal path below (see
+                // focusFilterBarOrFirstCard's own comment) - this early-
+                // return path was missing it.
+                focusFilterBarOrFirstCard();
                 return;
             }
             const eventType = visibleSection.id.replace('section-', '');
@@ -6710,6 +10465,7 @@
             updateFilterBarVisibility();
             buildStats(await computeFilteredStats());
             await updateSankeyDiagram();
+            focusFilterBarOrFirstCard();
         }
 
         // Row-cell pivot menu (Include/Exclude/Only) support below. These
@@ -6781,14 +10537,23 @@
         // keep narrowing the results underneath the new search term,
         // which reads as "Hunt is combining with whatever I had before"
         // even though only currentSearch actually changed.
-        function huntFilterValue(value) {
+        async function huntFilterValue(value) {
             const term = String(value).trim();
             if (!term) return;
             resetPagination();
             currentSearch = [term];
             currentFilters = {};
             updateFilterBarVisibility();
-            return refreshAnalysisData();
+            await refreshAnalysisData();
+            // Real user report: performing a search is a deliberate
+            // action, and its result should already visibly have keyboard
+            // focus - see focusNewestFilterChip's own comment (shared with
+            // applyFilters(), Include/Exclude/Only's own completion point)
+            // for why this is a separate step from
+            // seedVerticalNavSelectionIfStale() (already called inside
+            // refreshAnalysisData() above), which only ever seeds
+            // invisibly.
+            focusNewestFilterChip();
         }
 
         // Generalized form of copyMd5ToClipboard() below (kept separate,
@@ -6976,6 +10741,9 @@
                 await ensureBinaryEventsBatch();
                 buildBinaryAnalysisView(allEvents);
                 updateFilterBarVisibility();
+                // Real user report: same fix as clearFilter()'s own binary
+                // early-return above.
+                focusFilterBarOrFirstCard();
                 return;
             }
             const eventType = visibleSection.id.replace('section-', '');
@@ -6983,6 +10751,7 @@
             updateFilterBarVisibility();
             buildStats(await computeFilteredStats());
             await updateSankeyDiagram();
+            focusFilterBarOrFirstCard();
         }
 
         async function clearAllFilters() {
@@ -6993,6 +10762,12 @@
             if (input) input.value = '';
             updateFilterBarVisibility();
             await refreshAnalysisData();
+            // Real user report: after clearing search filters, keyboard
+            // focus should go back to the first data type card - see
+            // focusFilterBarOrFirstCard's own comment. currentFilters/
+            // currentSearch are both always empty here, so this always
+            // lands on the first stat card, never a remaining chip.
+            focusFilterBarOrFirstCard();
         }
         
         function getFilteredEvents(sectionId, events, eventType) {
@@ -7024,6 +10799,11 @@
             if (input) input.value = '';
             updateFilterBarVisibility();
             await refreshAnalysisData();
+            // Same fix as huntFilterValue() (the search box's own "Hunt"
+            // quick-action counterpart) - see focusNewestFilterChip's own
+            // comment for why a search result should already visibly have
+            // keyboard focus.
+            focusNewestFilterChip();
         }
 
         async function clearSearchTerm(index) {
@@ -7031,6 +10811,11 @@
             currentSearch.splice(index, 1);
             updateFilterBarVisibility();
             await refreshAnalysisData();
+            // Same fix as clearAllFilters()/clearFilter()/clearFilterValue() -
+            // see focusFilterBarOrFirstCard's own comment. Falls back to
+            // whichever chip remains (another search term, or a column
+            // filter) when this was only a partial clear.
+            focusFilterBarOrFirstCard();
         }
 
         // Fetch cheap log-event + sigma-alert *counts* in parallel, optionally
@@ -7082,6 +10867,16 @@
 
         async function refreshAnalysisData() {
             if (!currentMd5) return;
+            // Marks the Acknowledged Alerts stat card's own count stale so
+            // the next buildStats() call (this function's own, below)
+            // re-fetches it - see acknowledgedAlertsCountStale's own
+            // comment. Every acknowledge/un-acknowledge action already
+            // calls this function, so this is the one hook that keeps
+            // that card's count correct after them, without threading a
+            // refresh through setAlertAcknowledged/acknowledgeAllInstances
+            // themselves.
+            acknowledgedAlertsCountStale = true;
+            dnsHeuristicsCountStale = true;
             const gen = bumpFetchGeneration();
             showLoading(currentSearch.length > 0 ? 'Searching...' : 'Loading events...');
 
@@ -7186,6 +10981,21 @@
                     if (sectionEl) {
                         sectionEl.classList.remove('section-hidden');
                         await loadTabData(activeType, null);
+                        // Un-acknowledging the last remaining row (either
+                        // type) empties the tab the user is currently
+                        // looking at - staying there would just show its
+                        // own "No acknowledged ..." empty state, which
+                        // reads as "did that even work?" rather than the
+                        // clear confirmation of landing back on Network
+                        // Alerts and seeing the row reappear. section-alert
+                        // is guaranteed to exist here: buildSections() above
+                        // already re-ran off the fresh (post-un-acknowledge)
+                        // /api/stats counts, so the row just un-acknowledged
+                        // has already made 'alert' a real eventType again.
+                        if (activeType === 'acknowledged' && acknowledgedAlertsCache.alert.length === 0
+                                && acknowledgedAlertsCache.sigmaalert.length === 0 && document.getElementById('section-alert')) {
+                            showTab('section-alert');
+                        }
                     }
                 } else if (eventTypes[0]) {
                     await loadTabData(eventTypes[0], null);
@@ -7193,6 +11003,15 @@
             }
 
             updateFilterBarVisibility();
+            // See seedVerticalNavSelectionIfStale's own comment - a filter/
+            // search change, or any other action that routes through this
+            // function (acknowledging an alert, changing the query limit,
+            // ...), can destroy the DOM node the current keyboard selection
+            // was pointing at (real user report: after applying a search
+            // filter, the first Down landed ON the new chip instead of
+            // past it). Only re-seeds when the old selection is actually
+            // gone - a still-valid selection elsewhere is left alone.
+            seedVerticalNavSelectionIfStale();
             hideLoading();
             } catch(err) {
                 console.error('refreshAnalysisData error:', err);
@@ -7282,7 +11101,7 @@
         function notesIconHtml() {
             const color = currentNotes ? 'var(--accent)' : 'var(--text-muted)';
             const title = currentNotes ? 'View/edit notes' : 'Add notes';
-            return `<span id="appHeaderNotesIcon" onclick="showNotesModal()" style="cursor: pointer; white-space: nowrap; color: ${color};" title="${title}">${NOTES_ICON_SVG}</span>`;
+            return `<span id="appHeaderNotesIcon" data-action="show-notes-modal" style="cursor: pointer; white-space: nowrap; color: ${color};" title="${title}">${NOTES_ICON_SVG}</span>`;
         }
 
         // Lets an analyst re-analyze the currently open sample without going
@@ -7290,7 +11109,15 @@
         // openReanalyzeModal() is already self-contained (just md5/name), so
         // this reuses it as-is rather than a second reanalyze code path.
         function reanalyzeIconHtml() {
-            return `<span onclick="openReanalyzeModal(currentMd5, currentFileName)" style="cursor: pointer; white-space: nowrap; color: var(--text-muted);" title="Re-analyze">${REFRESH_ICON_SVG}</span>`;
+            return `<span data-action="open-reanalyze-modal" style="cursor: pointer; white-space: nowrap; color: var(--text-muted);" title="Re-analyze">${REFRESH_ICON_SVG}</span>`;
+        }
+
+        // Same reasoning as reanalyzeIconHtml() just above - openDeleteAnalysis()
+        // is already self-contained (just md5/name) and confirmDelete() already
+        // handles deleting the currently-open analysis (resets state, returns
+        // to the welcome screen), so this reuses that as-is.
+        function deleteIconHtml() {
+            return `<span class="app-header-delete-icon" data-action="open-delete-analysis" style="cursor: pointer; white-space: nowrap;" title="Delete">${DELETE_ICON_SVG}</span>`;
         }
 
         function updateNotesCountHint() {
@@ -7333,11 +11160,11 @@
             currentRowNoteScope = null;
         }
 
-        // The note-icon's onclick argument is a JS-string-escaped rowId
-        // (see rowNoteIconHtml), not a bare number - HTML attributes are
-        // always strings regardless, and this way the same escaping
-        // discipline covers it as covers the note text itself. Parsed back
-        // to a real number here before it's ever used as row-note state.
+        // The note-icon/edit-link's data-row-id attribute is a string
+        // (HTML attributes always are, and it goes through the same
+        // escapeHtml discipline as the note text itself - see
+        // rowNoteIconHtml/rowNoteDetailValueHtml). Parsed back to a real
+        // number here before it's ever used as row-note state.
         function openRowNoteEditor(table, rowIdStr, note) {
             showNotesModal(table, parseInt(rowIdStr, 10), note);
         }
@@ -7443,8 +11270,19 @@
                     eventTypes = [];
                     currentFilters = {};
                     currentSearch = [];
+                    // Re-arm both lazy stat-card counts for the newly
+                    // opened analysis. Without this, only page load and
+                    // refreshAnalysisData() (search/acknowledge/filter
+                    // paths) ever set these, so switching analyses left
+                    // the previous one's Acknowledged Alerts / DNS
+                    // Heuristics counts in place - the md5 tag gating in
+                    // buildStats() hides the wrong number, but only this
+                    // re-arm makes the right one get computed.
+                    acknowledgedAlertsCountStale = true;
+                    dnsHeuristicsCountStale = true;
                     resetPagination();
                     hiddenAggregations = new Set();
+                    aggPage = {}; aggFullCountsCache = {}; aggTotalsCache = {};
                     tabDataCache = {};
                     clearAnalysisContainers();
                     document.getElementById('searchInput').value = '';
@@ -7488,6 +11326,7 @@
                         <span style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap;">${CALENDAR_ICON_SVG}${escapeHtml(dateDisplay)}</span>
                         ${notesIconHtml()}
                         ${reanalyzeIconHtml()}
+                        ${deleteIconHtml()}
                     `;
                     document.getElementById('appHeaderMd5').onclick = () => copyMd5ToClipboard(currentMd5);
                     document.getElementById('appHeaderRight').innerHTML = renderGearMenu();
@@ -7514,6 +11353,15 @@
                                     const counts = await _fetchLogAnalysisCounts('');
                                     baseEventStats = counts;
                                     await _renderLogAnalysisView(counts);
+                                    // See seedVerticalNavSelectionIfStale's own
+                                    // comment - this branch (log analysis'
+                                    // own async IIFE, unlike the PCAP branch
+                                    // below) was missing this call entirely,
+                                    // so a freshly-opened log analysis's very
+                                    // first Down press landed ON the default
+                                    // tab's own card instead of past it (real
+                                    // user report).
+                                    seedVerticalNavSelectionIfStale();
                                 } catch(e) {
                                     console.error('Failed to load log analysis:', e);
                                     document.getElementById('sections').innerHTML = '<div class="log-events-section"><h3>📋 Log Events</h3><div class="no-matches">Error loading log events</div></div>';
@@ -7524,6 +11372,11 @@
                             await ensureBinaryEventsBatch();
                             baseAllEvents = allEvents;
                             buildBinaryAnalysisView(allEvents);
+                            // See seedVerticalNavSelectionIfStale's own
+                            // comment - same fix as the log-analysis branch
+                            // above, for a freshly-opened binary/file
+                            // analysis's own first Down press.
+                            seedVerticalNavSelectionIfStale();
                         }
                     } else {
 
@@ -7549,17 +11402,27 @@
                         } else if (sankeyPanel) {
                             await updateSankeyDiagram();
                         }
-                        
+                        // See seedVerticalNavSelectionIfStale's own comment -
+                        // right after opening an analysis, nothing is
+                        // keyboard-selected yet, so this seeds the starting
+                        // position (no visible ring) rather than requiring
+                        // an extra, wasted first arrow press.
+                        seedVerticalNavSelectionIfStale();
+
+                        // loadTabData(eventTypes[0]) above already builds the
+                        // aggregation table itself when advancedMode is true,
+                        // scoped to that default tab (e.g. Alerts) - same as
+                        // _renderLogAnalysisView's equivalent comment. This
+                        // used to also unconditionally rebuild the All-Events
+                        // aggregation here, clobbering the per-type one above,
+                        // so the only case left to handle here is collapsing
+                        // the panel when advancedMode is false.
                         const aggContainer = document.getElementById('aggregations');
-                        if (aggContainer) {
-                            if (advancedMode) {
-                                await buildAggregationsSectionAll();
-                            } else {
-                                aggContainer.innerHTML = AGG_COLLAPSED_HTML;
-                            }
+                        if (aggContainer && !advancedMode) {
+                            aggContainer.innerHTML = AGG_COLLAPSED_HTML;
                         }
                     }
-                    
+
                     hideLoading();
                     
                     // Reset URL field for next analysis
@@ -7612,6 +11475,7 @@
                 const result = await resp.json();
                 clearInterval(downloadInterval);
                 notifyIfFilesSkipped(result);
+                notifyIfAdditionalAnalyses(result);
 
                 if (result.status === 'processing') {
                     await checkStatus(result.md5, result.phase || 'network');
@@ -7635,6 +11499,16 @@
             const fileInput = document.getElementById('pcapUpload');
             const file = droppedFile || fileInput.files[0];
             if (!file) return;
+
+            // Fail fast client-side rather than uploading megabytes just
+            // for the server to reject them - same limit the server
+            // enforces via the X-Max-Upload-Size header below.
+            const maxUploadMB = getUserMaxUploadSizeMB();
+            if (file.size > maxUploadMB * 1024 * 1024) {
+                showError(`File exceeds the maximum upload size (${maxUploadMB.toLocaleString()} MB). You can raise the limit in Settings.`);
+                fileInput.value = '';
+                return;
+            }
 
             showLoading('Uploading file... (0s)');
             const uploadStart = Date.now();
@@ -7662,6 +11536,7 @@
                     return;
                 }
                 notifyIfFilesSkipped(result);
+                notifyIfAdditionalAnalyses(result);
 
                 if (result.status === 'ready') {
                     hideLoading();
@@ -7701,14 +11576,118 @@
             }
         }
         
-        async function checkStatus(md5, initialPhase = 'network') {
-            const phaseMessages = {
-                'network': 'Analyzing network traffic...',
-                'files': 'Analyzing files...',
-                'importing': 'Importing data...',
-                'logs': 'Analyzing log file...'
+        // Fun, theme-flavored loading phrases - every theme in THEMES's
+        // 'fun' group gets its own pool here (see AGENTS.md's Theming
+        // Conventions for the fun/dark/light group breakdown); every
+        // non-fun theme just gets the plain default messages below - a
+        // serious/professional theme shouldn't suddenly start joking
+        // mid-analysis. One flat pool per theme, not a separate curated
+        // set per checkStatus() phase (network/files/importing/logs) -
+        // the phase itself isn't something a user actually watches for,
+        // so tying a specific joke to a specific phase added authoring
+        // effort without adding anything the user would notice.
+        // getPhaseMessages() below draws independently for each of the
+        // 4 phase slots (so a single load can show a couple of different
+        // lines as it moves through phases), each draw fixed for that
+        // phase's whole duration (not re-rolled every second) so the
+        // message never flickers mid-phase.
+        const THEMED_LOADING_PHRASES = {
+            hacker: [
+                'Bypassing the firewall...', 'Rerouting through the mainframe...', 'Tracing the IP address...',
+                'Decrypting the stolen files...', 'Cracking the encryption...', 'Brute-forcing the login...',
+                'Uploading to the mainframe...', 'Injecting the payload...', 'Compiling the exploit...',
+                'Erasing the security footage...', 'Wiping the access logs...', 'Looping the security cameras...'
+            ],
+            'dos-blue': [
+                'Formatting C:\\ ...', 'Running CHKDSK...', 'Loading MS-DOS...',
+                'Defragging...', 'Scanning for viruses...', 'Compressing with DoubleSpace...',
+                'Editing config.sys...', 'Setting up device drivers...', 'Expanding the memory manager...',
+                'Editing autoexec.bat...', 'Writing to LPT1...', 'Buffering keyboard input...'
+            ],
+            vaporwave: [
+                'Riding the information superhighway...', 'Connecting to the cyber sea...', 'Dialing into the grid...',
+                'Rewinding the VHS tape...', 'Polishing the marble bust...', 'Adjusting the chrome...',
+                'Downloading more RAM...', 'Loading the Windows 95 startup sound...', 'Rendering the sunset grid...',
+                'Achieving aesthetic...', 'Applying the VHS filter...', 'Syncing the neon palm trees...'
+            ],
+            cga: [
+                'Loading CGA graphics driver...', 'Dialing the BBS...', 'Initializing the modem...',
+                'Reading from floppy disk...', 'Verifying the diskette...', 'Seeking track 0...',
+                'Swapping diskette 2 of 5...', 'Loading interrupt handlers...', 'Copying to expanded memory...',
+                'Beeping the PC speaker...', 'Writing to the printer buffer...', 'Flushing the keyboard buffer...'
+            ],
+            amber: [
+                'Establishing terminal session...', 'Negotiating baud rate...', 'Connecting to the mainframe...',
+                'Paging through the file system...', 'Reading tape drive 0...', 'Listing directory contents...',
+                'Compiling FORTRAN...', 'Writing to core memory...', 'Running the batch job...',
+                'Printing to the line printer...', 'Scrolling the CRT buffer...', 'Archiving to magnetic tape...'
+            ],
+            'breadbin-blue': [
+                'LOAD "*",8,1...', 'Searching for tape...', 'Connecting the modem...',
+                'PEEKing and POKEing...', 'Reading from disk drive 8...', 'Verifying the floppy...',
+                'Running the BASIC program...', 'Loading from datasette...', 'Waiting for SYS 64738...',
+                'Writing to the 1541 drive...', 'Printing to the dot matrix...', 'Saving before the power flickers...'
+            ],
+            'digital-frontier': [
+                'Entering the Grid...', 'Riding the light cycle...', 'Scanning for the MCP...',
+                'Derezzing corrupted programs...', 'Searching the data streams...', 'Decoding the identity disc...',
+                'Compiling for the Grid...', 'Broadcasting across the network grid...', 'Rendering the light cycle trail...',
+                'Reviewing the game grid...', 'Contacting Tron...', 'Bypassing the MCP...'
+            ],
+            'luna-blue': [
+                'Connecting to the network...', 'Detecting new hardware...', 'Establishing dial-up connection...',
+                'Emptying the Recycle Bin...', 'Indexing for Windows Search...', 'Cleaning up temporary files...',
+                'Installing Windows updates...', 'Loading the Start menu...', 'Playing the startup chime...',
+                'Writing to the Event Viewer...', 'Checking for updates...', 'Saving your preferences...'
+            ],
+            'retro-handheld': [
+                'Linking up the Game Link cable...', 'Searching for a signal...', 'Syncing with the cartridge...',
+                'Reading the save cartridge...', 'Checking the battery save...', 'Blowing on the cartridge...',
+                'Loading level data...', 'Saving your progress...', 'Compressing sprite data...',
+                'Showing the low battery warning...', 'Writing to save slot 1...', 'Pausing the game...'
+            ],
+            'mp3-player': [
+                'Loading playlist...', 'Buffering...', 'Ripping the CD...',
+                'Encoding to MP3...', 'Skinning the interface...', 'Scanning ID3 tags...',
+                'Equalizing...', 'Crossfading...', 'Building the playlist...',
+                'Visualizing...', 'Normalizing volume levels...', 'Updating the Now Playing display...'
+            ]
+        };
+
+        function pickRandom(arr) {
+            return arr[Math.floor(Math.random() * arr.length)];
+        }
+
+        function getPhaseMessages() {
+            const pool = THEMED_LOADING_PHRASES[getCurrentTheme()];
+            if (!pool) {
+                return {
+                    'network': 'Analyzing network traffic...',
+                    'files': 'Analyzing files...',
+                    'importing': 'Importing data...',
+                    'logs': 'Analyzing log file...'
+                };
+            }
+            return {
+                network: pickRandom(pool),
+                files: pickRandom(pool),
+                importing: pickRandom(pool),
+                logs: pickRandom(pool)
             };
-            
+        }
+
+        // Gates purely-decorative fun-theme flourishes (the HUD
+        // corner-bracket reticle in CSS, keyed off .fun-theme) behind the
+        // same theme set THEMED_LOADING_PHRASES already defines, so "is
+        // this a fun theme" stays single-sourced rather than maintaining a
+        // second list in CSS.
+        function updateFunThemeClass() {
+            document.documentElement.classList.toggle('fun-theme', !!THEMED_LOADING_PHRASES[getCurrentTheme()]);
+        }
+
+        async function checkStatus(md5, initialPhase = 'network') {
+            const phaseMessages = getPhaseMessages();
+
             const startTime = Date.now();
             let currentPhase = initialPhase;
             let elapsedInterval = null;
@@ -7744,10 +11723,17 @@
                     if (result.status === 'ready') {
                         clearInterval(elapsedInterval);
                         hideLoading();
+                        // No fetch-generation guard here: if the user has
+                        // since navigated to a different analysis (e.g. via
+                        // notifyIfAdditionalAnalyses' "View Recent Analyses"
+                        // link), this still unconditionally yanks them back
+                        // to `md5` once it finishes. Pre-existing gap, not
+                        // introduced by multi-pcap-zip support - just more
+                        // reachable now.
                         await loadAnalysis(md5);
                         return;
                     }
-                    
+
                     if (result.status === 'processing') {
                         if (result.phase) {
                             currentPhase = result.phase;
@@ -7760,21 +11746,45 @@
             
             clearInterval(elapsedInterval);
             hideLoading();
-            showError('Analysis timed out. The file may be very large or analysis may have encountered an error.');
+            showError('Analysis is taking longer than expected. It may still finish in the background - check Previous Analyses in a few minutes.');
         }
         
         let pendingDelete = null;
         let pendingReanalyze = null;
-        
+
+        // Minimal focus management for the confirm/error modals (not a
+        // full focus trap): on open, remember what was focused and move
+        // focus to the modal's least-destructive button (Cancel/Close) so
+        // keyboard users can't accidentally activate the destructive
+        // action; on close, put focus back where it was.
+        let modalReturnFocusEl = null;
+        function focusModalDefault(buttonId) {
+            const active = document.activeElement;
+            if (active && active !== document.body) {
+                modalReturnFocusEl = active;
+            }
+            const btn = document.getElementById(buttonId);
+            if (btn) btn.focus();
+        }
+        function restoreModalFocus() {
+            const el = modalReturnFocusEl;
+            modalReturnFocusEl = null;
+            if (el && el.isConnected && typeof el.focus === 'function') {
+                el.focus();
+            }
+        }
+
         function openDeleteAnalysis(md5, name) {
             pendingDelete = { md5, name };
             document.getElementById('deleteFileName').textContent = name;
             document.getElementById('deleteConfirmModal').classList.add('active');
+            focusModalDefault('deleteCancelBtn');
         }
-        
+
         function closeDeleteModal() {
             pendingDelete = null;
             document.getElementById('deleteConfirmModal').classList.remove('active');
+            restoreModalFocus();
         }
         
         function handleDeleteBackdropClick(event) {
@@ -7786,19 +11796,20 @@
         function showError(message) {
             document.getElementById('errorMessage').textContent = message;
             document.getElementById('errorModal').classList.add('active');
+            focusModalDefault('errorCloseBtn');
         }
-        
+
         function closeErrorModal() {
             document.getElementById('errorModal').classList.remove('active');
+            restoreModalFocus();
         }
 
         async function confirmDelete() {
             if (!pendingDelete) return;
             
             const { md5, name } = pendingDelete;
-            pendingDelete = null;
-            document.getElementById('deleteConfirmModal').classList.remove('active');
-            
+            closeDeleteModal();
+
             try {
                 const resp = await fetch('/api/delete-analysis', {
                     method: 'POST',
@@ -7826,14 +11837,23 @@
         let pendingDeleteAllCount = 0;
         
         function openDeleteAllAnalyses(count) {
+            // Now reachable from inside the Settings modal (Danger Zone) -
+            // .modal all shares one z-index (see socrates.css), so with
+            // both active at once, DOM order (Settings comes after this
+            // modal in the HTML) would otherwise paint Settings on top and
+            // visually hide this confirmation. A no-op if Settings isn't
+            // open (e.g. if this ever gets a second call site).
+            closeSettingsModal();
             pendingDeleteAllCount = count;
             document.getElementById('deleteAllCount').textContent = count;
             document.getElementById('deleteAllConfirmModal').classList.add('active');
+            focusModalDefault('deleteAllCancelBtn');
         }
-        
+
         function closeDeleteAllModal() {
             pendingDeleteAllCount = 0;
             document.getElementById('deleteAllConfirmModal').classList.remove('active');
+            restoreModalFocus();
         }
         
         function handleDeleteAllBackdropClick(event) {
@@ -7844,9 +11864,8 @@
         
         async function confirmDeleteAll() {
             if (!pendingDeleteAllCount) return;
-            pendingDeleteAllCount = 0;
-            document.getElementById('deleteAllConfirmModal').classList.remove('active');
-            
+            closeDeleteAllModal();
+
             try {
                 const resp = await fetch('/api/delete-all-analyses', {
                     method: 'POST',
@@ -7894,11 +11913,13 @@
             document.getElementById('reanalyzeRowNotesWarning').style.display = hasRowNotes ? 'block' : 'none';
             document.querySelector('.reanalyze-confirm-btn').classList.toggle('danger', hasRowNotes);
             document.getElementById('reanalyzeConfirmModal').classList.add('active');
+            focusModalDefault('reanalyzeCancelBtn');
         }
-        
+
         function closeReanalyzeModal() {
             pendingReanalyze = null;
             document.getElementById('reanalyzeConfirmModal').classList.remove('active');
+            restoreModalFocus();
         }
         
         function handleReanalyzeBackdropClick(event) {
@@ -7947,11 +11968,320 @@
             }, CONFIG.SEARCH_DEBOUNCE_MS);
         });
 
+        // Static-shell event wiring - socrates.html carries no inline on*=
+        // handler attributes (CSP hardening: script-src without
+        // 'unsafe-inline' forbids them). Elements declare a data-action
+        // (plus an optional data-arg) and the delegated click listener
+        // below dispatches to this registry. Delegation also keeps
+        // re-rendered copies of the static markup wired (e.g.
+        // renderGearMenu(), which rebuilds the header menu with the same
+        // data-action attributes).
+        const STATIC_ACTIONS = {
+            'show-welcome': () => showWelcome(),
+            'show-about-modal': () => showAboutModal(),
+            'toggle-menu': () => toggleMenu(),
+            'menu-help': () => { showHelpModal(); closeMenu(); },
+            'menu-settings': () => { showSettingsModal(); closeMenu(); },
+            'menu-themes': () => { showThemesModal(); closeMenu(); },
+            'menu-rules': () => { showRulesModal(); closeMenu(); },
+            'menu-about': () => { showAboutModal(); closeMenu(); },
+            'close-error-modal': () => closeErrorModal(),
+            'close-delete-modal': () => closeDeleteModal(),
+            'close-delete-all-modal': () => closeDeleteAllModal(),
+            'close-reanalyze-modal': () => closeReanalyzeModal(),
+            'close-help-modal': () => closeHelpModal(),
+            'close-settings-modal': () => closeSettingsModal(),
+            'close-about-modal': () => closeAboutModal(),
+            'close-security-onion-modal': () => closeSecurityOnionModal(),
+            'close-themes-modal': () => closeThemesModal(),
+            'close-notes-modal': () => closeNotesModal(),
+            'close-rules-modal': () => closeRulesModal(),
+            'close-autocomplete-modal': () => closeAutocompleteModal(),
+            'confirm-delete': () => confirmDelete(),
+            'confirm-delete-all': () => confirmDeleteAll(),
+            'confirm-reanalyze': () => confirmReanalyze(),
+            'save-custom-lookup-site': () => handleSaveCustomLookupSite(),
+            'cancel-edit-custom-lookup-site': () => cancelEditCustomLookupSite(),
+            // Reads settingsAnalysisCount at click time, not render time -
+            // the real count only arrives after showSettingsModal()'s
+            // async fetch (see the variable's own comment).
+            'open-delete-all-analyses': () => openDeleteAllAnalyses(settingsAnalysisCount),
+            'save-settings': () => saveSettings(),
+            'save-notes': () => saveAnalysisNotes(),
+            'check-app-update-now': () => checkForAppUpdateNow(),
+            'update-ruleset': (el) => triggerRulesetUpdate(el.dataset.arg),
+            'perform-search': () => performSearch(),
+            // Modal backdrop: data-arg names the close action to run. A
+            // click anywhere inside the modal bubbles up through the
+            // backdrop div (the .modal-content stopPropagation shims are
+            // gone), so close only when the click landed on the backdrop
+            // itself - the same event.target === backdrop check the old
+            // handleModalBackdropClick()/handle*BackdropClick() inline
+            // handlers made.
+            'backdrop': (el, e) => {
+                if (e.target !== el) return;
+                const closeFn = STATIC_ACTIONS[el.dataset.arg];
+                if (closeFn) closeFn(el, e);
+            },
+
+            // ---- Generated-content actions ----
+            // Everything below is referenced from HTML strings built at
+            // runtime (welcome screen, data tables, modals' dynamic
+            // bodies, ...) rather than the static socrates.html shell.
+            // Same dispatch mechanism: the delegated listeners below run
+            // the CLOSEST [data-action], so an inner element's action
+            // naturally shadows its row/label ancestor's - which is how
+            // the old inline event.stopPropagation() semantics (e.g. a
+            // MITRE tag not toggling its row) are preserved. Scalar
+            // arguments ride in escapeHtml'd data-* attributes (the HTML
+            // parser decodes them before dataset reads them back);
+            // structured payloads keep using the percent-encoded-JSON
+            // idiom (see pivotDataAttrsHtml).
+
+            // Modal openers for links generated into welcome/help/filter
+            // content ('show-about-modal' above predates these).
+            'show-settings-modal': () => showSettingsModal(),
+            'show-themes-modal': () => showThemesModal(),
+            'show-security-onion-modal': () => showSecurityOnionModal(),
+            'show-rules-modal': (el) => showRulesModal(el.dataset.arg === 'expand-sources'),
+
+            // Welcome screen: sample cards, URL import, upload drop zone,
+            // previous-analyses rows.
+            'load-sample-url': (el) => loadSampleUrl(el.dataset.url),
+            'load-from-url': () => loadFromUrl(),
+            'open-upload-picker': () => document.getElementById('pcapUpload').click(),
+            // Real href (?file=md5) kept for copy-link/middle-click;
+            // normal clicks stay in-app, same as the old inline
+            // preventDefault + loadAnalysis() pair.
+            'load-analysis': (el, e) => { e.preventDefault(); loadAnalysis(el.dataset.md5); },
+
+            // Settings modal: custom lookup sites list.
+            'edit-custom-lookup-site': (el) => startEditCustomLookupSite(Number(el.dataset.index)),
+            'delete-custom-lookup-site': (el) => handleDeleteCustomLookupSite(Number(el.dataset.index)),
+
+            // Themes modal tiles (hover/focus preview is delegated
+            // separately below - only the commit is a click action).
+            'commit-theme': (el) => commitTheme(el.dataset.themeOption),
+
+            // Rules modal.
+            'toggle-rule-log': (el) => toggleRuleLog(el.dataset.name),
+            'toggle-suricata-sources': () => toggleSuricataSources(),
+            'enable-all-suricata-sources': () => enableAllSuricataSources(),
+            'reset-suricata-sources': () => resetSuricataSourcesToDefault(),
+            // preventDefault keeps the wrapping <label> from toggling its
+            // checkbox; stopPropagation matches the old inline handler.
+            'show-source-note': (el, e) => { e.preventDefault(); e.stopPropagation(); showToast(el.dataset.note); },
+
+            // An action that exists purely to SHADOW an ancestor's action
+            // (closest() dispatch stops here), replacing the old inline
+            // event.stopPropagation() on e.g. MITRE tags and the rules
+            // modal's "(source)" links - external anchors, so no
+            // preventDefault: the navigation must still happen.
+            'stop-propagation': (el, e) => e.stopPropagation(),
+
+            // Data-table rows + detail panels.
+            'toggle-row': (el, e) => toggleRow(el, e),
+            'toggle-log-row': (el, e) => toggleLogRow(el, el.dataset.detailId, e),
+            'toggle-sigma-row': (el, e) => toggleSigmaRow(el, el.dataset.detailId, e),
+            'toggle-playbook-questions': (el) => togglePlaybookQuestions(el),
+            'toggle-packet': (el) => togglePacket(el),
+            // this.parentNode.parentNode in the old inline form: the
+            // button's .packet-controls bar's parent, i.e. the hexdump
+            // container all the packet blocks live in.
+            'expand-all-packets': (el) => expandAllPackets(el.parentNode.parentNode),
+            'collapse-all-packets': (el) => collapseAllPackets(el.parentNode.parentNode),
+            'switch-stream-view': (el, e) => {
+                const p = el.closest('.stream-payload');
+                if (p) switchStreamView(el.dataset.view, p.dataset.srcIp, p.dataset.srcPort, p.dataset.dstIp, p.dataset.dstPort, el);
+            },
+            'download-stream-pcap': (el) => {
+                const p = el.closest('.stream-payload');
+                if (p) downloadPcap(p.dataset.srcIp, p.dataset.srcPort, p.dataset.dstIp, p.dataset.dstPort);
+            },
+            // The note-icon <td>: clicks that miss the icon must do
+            // nothing (not toggle the row) - shadowing handles that; the
+            // preventDefault/stopPropagation mirror the old inline pair.
+            'row-note-cell': (el, e) => { e.preventDefault(); e.stopPropagation(); },
+            'open-row-note-editor': (el, e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                openRowNoteEditor(el.dataset.table, el.dataset.rowId, el.dataset.note);
+            },
+            'view-dns-heuristic-domain': (el) => viewDnsHeuristicDomain(el.dataset.id),
+            'toggle-dns-heuristics-info': (el) => toggleDnsHeuristicsInfo(el),
+
+            // Sankey / Aggregation panels.
+            'toggle-diagram': () => toggleDiagram(),
+            'toggle-aggregations': () => toggleAggregations(),
+            'hide-agg-table': (el) => hideAggregationTable(el.dataset.sectionId, el.dataset.col),
+            'change-agg-page': (el) => changeAggPage(el.dataset.sectionId, el.dataset.col, Number(el.dataset.delta)),
+
+            // Filter bar chips.
+            'clear-search-term': (el) => clearSearchTerm(Number(el.dataset.index)),
+            'clear-filter': (el) => clearFilter(el.dataset.col),
+            'clear-filter-value': (el) => clearFilterValue(el.dataset.col, el.dataset.kind, el.dataset.value),
+            'clear-all-filters': () => clearAllFilters(),
+
+            // Stat cards + table pagination.
+            'show-tab': (el) => showTab(el.dataset.section, el),
+            'change-table-page': (el) => changeTablePage(Number(el.dataset.delta)),
+            'jump-to-page': () => jumpToPage(),
+
+            // Analysis header icons - all read the current-analysis
+            // globals at click time, same as the old inline handlers did.
+            'show-notes-modal': () => showNotesModal(),
+            'open-reanalyze-modal': () => openReanalyzeModal(currentMd5, currentFileName),
+            'open-delete-analysis': () => openDeleteAnalysis(currentMd5, currentFileName),
+
+            // Live-capture card + modal (welcome screen, macOS/Linux native runs).
+            'show-capture-modal': () => showCaptureModal(),
+            'close-capture-modal': () => closeCaptureModal(),
+            'set-capture-duration': (el) => setCaptureDuration(Number(el.dataset.arg)),
+            'start-capture': () => startCapture(),
+            'stop-capture': () => stopCapture(),
+        };
+
+        // Change-event actions, dispatched from the delegated 'change'
+        // listener below via data-change-action - kept in the same
+        // registry object so action names stay unique app-wide.
+        Object.assign(STATIC_ACTIONS, {
+            'upload-pcap': () => uploadPcap(),
+            'change-agg-page-size': (el) => changeAggPageSize(el.value),
+            'suricata-source-toggle': (el) => handleSuricataSourceToggle(el.dataset.name, el.checked),
+            'protocol-decode-toggle': (el) => handleShowProtocolDecodeAlertsToggle(el.checked),
+        });
+
+        document.addEventListener('click', e => {
+            const el = e.target.closest('[data-action]');
+            if (!el) return;
+            const fn = STATIC_ACTIONS[el.dataset.action];
+            // Unknown names are someone else's data-action (e.g. the
+            // #previousAnalysesList notes buttons handled by their own
+            // delegated listener above) - leave them alone.
+            if (!fn) return;
+            // In-page anchors (href="#" links like show-welcome /
+            // show-about-modal) must not scroll-to-top/change the URL;
+            // preventDefault replaces their old "return false;". Anchors
+            // with a REAL href (MITRE tags, the rules modal's "(source)"
+            // links) must keep navigating, so they're left alone - an
+            // action that needs preventDefault despite a real href (e.g.
+            // 'load-analysis') calls it itself.
+            if (el.tagName === 'A' && el.getAttribute('href') === '#') e.preventDefault();
+            fn(el, e);
+        });
+
+        // change/keydown/focus/mouse delegation for generated content -
+        // each listener attached ONCE here at startup, so re-rendered
+        // HTML stays wired with no per-render (or per-row) binding work.
+        document.addEventListener('change', e => {
+            const el = e.target.closest('[data-change-action]');
+            if (!el) return;
+            const fn = STATIC_ACTIONS[el.dataset.changeAction];
+            if (fn) fn(el, e);
+        });
+
+        // Capture phase, so a focused card's Enter/Space activation runs
+        // BEFORE the app-wide shortcut keydown handler (a bubble-phase
+        // document listener registered earlier) - the same priority the
+        // old inline onkeydown handlers had by running at the element and
+        // calling stopPropagation, which the enter-space branch below
+        // still does (capture-phase stopPropagation keeps the event from
+        // ever reaching that bubble-phase handler).
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                // Keyboard activation for generated role="button" divs
+                // (sample cards, the upload drop zone) - preventDefault/
+                // stopPropagation mirror the old inline onkeydown added
+                // in the accessibility work (Space must not scroll).
+                const btn = e.target instanceof Element && e.target.closest('[data-key-activate="enter-space"]');
+                if (btn) {
+                    const fn = STATIC_ACTIONS[btn.dataset.action];
+                    if (fn) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        fn(btn, e);
+                    }
+                    return;
+                }
+            }
+            if (e.key === 'Enter') {
+                // Enter-to-submit inputs (URL import box, pagination page
+                // input) - a separate attribute from data-action, since a
+                // plain CLICK on these inputs must not trigger anything.
+                // No preventDefault/stopPropagation, matching the old
+                // inline onkeydown (the app-wide handler already ignores
+                // keystrokes targeted at inputs).
+                const input = e.target instanceof Element && e.target.closest('[data-enter-action]');
+                if (input) {
+                    const fn = STATIC_ACTIONS[input.dataset.enterAction];
+                    if (fn) fn(input, e);
+                }
+            }
+        }, true);
+
+        // Theme-tile hover/focus preview - mouseover/mouseout +
+        // relatedTarget checks emulate the old per-tile mouseenter/
+        // mouseleave (enter/leave don't bubble, so they can't be
+        // delegated directly), and focusin/focusout stand in for the
+        // per-tile focus/blur the keyboard-accessibility work added.
+        function _themeTileFromEvent(e) {
+            const tile = e.target.closest('.theme-tile[data-theme-option]');
+            if (!tile) return null;
+            // Moving between descendants of the same tile is not a real
+            // enter/leave.
+            if (e.relatedTarget instanceof Node && tile.contains(e.relatedTarget)) return null;
+            return tile;
+        }
+        document.addEventListener('mouseover', e => {
+            const tile = _themeTileFromEvent(e);
+            if (tile) previewTheme(tile.dataset.themeOption);
+        });
+        document.addEventListener('mouseout', e => {
+            if (_themeTileFromEvent(e)) revertTheme();
+        });
+        document.addEventListener('focusin', e => {
+            const tile = _themeTileFromEvent(e);
+            if (tile) previewTheme(tile.dataset.themeOption);
+            // Clear-on-focus inputs (the welcome screen's URL box, which
+            // starts prefilled with the sample URL).
+            const clearable = e.target.closest('[data-clear-on-focus]');
+            if (clearable) clearable.value = '';
+        });
+        document.addEventListener('focusout', e => {
+            if (_themeTileFromEvent(e)) revertTheme();
+        });
+
+        // Upload drop zone drag & drop (see showWelcome's #dropZone) -
+        // delegated like everything else since the welcome screen is
+        // re-rendered HTML.
+        document.addEventListener('dragover', e => {
+            if (e.target.closest('#dropZone')) handleDragOver(e);
+        });
+        document.addEventListener('dragleave', e => {
+            if (e.target.closest('#dropZone')) handleDragLeave(e);
+        });
+        document.addEventListener('drop', e => {
+            if (e.target.closest('#dropZone')) handleDrop(e);
+        });
+
+        // Inputs the static shell used to wire via inline on*= attributes,
+        // bound directly by id - this script tag sits at the end of the
+        // page, so the elements all exist by now.
+        document.getElementById('searchInput').addEventListener('keydown', e => {
+            if (e.key === 'Enter') performSearch();
+        });
+        document.getElementById('autocompleteInput').addEventListener('input', () => filterAutocomplete());
+        document.getElementById('checkForUpdates').addEventListener('change', e => handleCheckForUpdatesChange(e.target));
+        document.getElementById('syncThemeWithOS').addEventListener('change', e => handleSyncThemeWithOSChange(e.target));
+        document.getElementById('checkForStaleRules').addEventListener('change', e => handleCheckForStaleRulesChange(e.target));
+        document.getElementById('staleThresholdDaysInput').addEventListener('change', e => handleStaleThresholdDaysChange(e.target));
+
         async function init() {
             try {
-                // Initialize theme state, code-rain background, and favicon.
+                // Initialize theme state, ambient theme backgrounds, and favicon.
                 updateThemeMenu();
-                updateCodeRain();
+                updateFunThemeClass();
+                updateAllAmbientThemes();
                 updateFavicon();
                 startThemeSync();
 

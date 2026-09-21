@@ -13,6 +13,7 @@
 set -e
 
 ZIRCOLITE_VERSION="v3.7.1"
+ZIRCOLITE_COMMIT="fcc23164eadff823873c29af5b55f0d80e7f891b"
 DATA_DIR="${DATA_DIR:-$HOME/socrates-data}"
 INSTALL_SIGMA=1
 [ "$1" = "--no-sigma" ] && INSTALL_SIGMA=0
@@ -57,6 +58,15 @@ if [ "$INSTALL_SIGMA" -eq 1 ]; then
         echo "==> Cloning Zircolite $ZIRCOLITE_VERSION into $ZIRCOLITE_DIR..."
         git clone --depth 1 --branch "$ZIRCOLITE_VERSION" \
             https://github.com/wagga40/Zircolite.git "$ZIRCOLITE_DIR"
+        # A tag is mutable: verify the checkout is the exact commit we pinned
+        # before trusting the code, so a retagged upstream can't slip in.
+        got="$(git -C "$ZIRCOLITE_DIR" rev-parse HEAD)"
+        if [ "$got" != "$ZIRCOLITE_COMMIT" ]; then
+            echo "Error: Zircolite $ZIRCOLITE_VERSION resolved to $got, expected $ZIRCOLITE_COMMIT." >&2
+            echo "       The tag may have been moved. Refusing to use it." >&2
+            rm -rf "$ZIRCOLITE_DIR"
+            exit 1
+        fi
         rm -rf "$ZIRCOLITE_DIR/.git"
     else
         echo "==> Zircolite already present at $ZIRCOLITE_DIR — skipping clone"

@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 
 import config
+import macos_sandbox
 from db import import_log_events
 from validators import is_host_reachable, is_file_stale
 
@@ -216,6 +217,12 @@ def setup_sigma_rules(data_dir=None, on_progress=print, network_allowed=True, fo
             try:
                 with gzip.open(baked_in, 'rb') as f_in, open(rules_file, 'wb') as f_out:
                     shutil.copyfileobj(f_in, f_out)
+                # Decompressing writes a brand-new file, so its mtime would
+                # otherwise be "now" (container start) rather than when the
+                # ruleset was actually baked into the image at build time -
+                # carry the compressed source's mtime over so the Rules
+                # modal's "updated" date reflects reality, not uptime.
+                shutil.copystat(baked_in, rules_file)
                 result[ruleset_name] = rules_file
                 continue
             except OSError as e:
@@ -407,8 +414,13 @@ def run_zircolite(log_path, rules_file, output_json, output_db=None, data_dir=No
             '--no-parallel',
             '--no-event-filter',
         ]
+        out_dir = os.path.dirname(output_json)
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=config.SIGMA_RUN_TIMEOUT
+            macos_sandbox.confine(
+                cmd, read=[_resolved_data_dir(data_dir), log_path, rules_file, config_file],
+                write=[out_dir]),
+            capture_output=True, text=True, timeout=config.SIGMA_RUN_TIMEOUT,
+            cwd=out_dir if macos_sandbox.is_active() else None
         )
         if result.returncode != 0:
             # Zircolite may write warnings to stderr; only treat as error

@@ -28,8 +28,6 @@ python3 socrates.py                # opens on http://127.0.0.1:8000/socrates.htm
 
 The ruleset auto-installs into `$DATA_DIR/sigma-rules/` on first run. Regenerate with `python3 scripts/gen-macos-ruleset.py --sigma <path/to/sigmahq> --backend <path/to/pySigma-backend-sqlite>` when SigmaHQ changes.
 
-**Upstream fix.** `db.has_row_notes()` opened `events.db` with `sqlite3.connect()` and no existence check, so `GET /api/status` during an in-progress pcap analysis silently created a 0-byte database. Suricata's completion handler then saw the file as existing and skipped `create_sqlite_db()`, leaving the analysis permanently empty with no error surfaced. Fixed with an `os.path.isfile()` guard.
-
 ## Rest of the app
 
 Everything upstream documents applies: pcap analysis, YARA scanning, Sigma log analysis, the same alert / metadata / transcript / hexdump UI. Full docs at [so-crates.org](https://so-crates.org/), and a macOS-specific installation page at [docs/installation/macos.md](docs/installation/macos.md).
