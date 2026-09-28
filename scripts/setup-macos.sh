@@ -81,6 +81,14 @@ else
     echo "==> Skipping Zircolite (Sigma log analysis will be unavailable)"
 fi
 
+if [ ! -f "$DATA_DIR/cyberchef/index.html" ]; then
+    echo "==> Installing pinned CyberChef into $DATA_DIR/cyberchef..."
+    mkdir -p "$DATA_DIR"
+    sh "$(dirname "$0")/fetch-cyberchef.sh" "$DATA_DIR/cyberchef"
+else
+    echo "==> CyberChef already present at $DATA_DIR/cyberchef — skipping"
+fi
+
 echo ""
 echo "Setup complete. Start SO-CRATES with:"
 echo "    python3 socrates.py"

@@ -189,5 +189,59 @@ class TestRunCaptureCommand(unittest.TestCase):
         self.assertTrue(any('Could not start tcpdump' in m for m in messages), messages)
 
 
+class TestCaptureStopsWithServer(unittest.TestCase):
+    """REGRESSION: the capture thread is a daemon, so a SIGTERM (upstream's
+    clean-exit handler) or Ctrl-C mid-capture ended Python without running
+    run_capture's finally - tcpdump, which has no limit of its own, was
+    orphaned and kept capturing."""
+
+    CHILD = r'''
+import os, signal, subprocess, sys, threading, time
+sys.path.insert(0, {repo!r})
+import live_capture
+if {unregister!r}:
+    import atexit; atexit.unregister(live_capture._terminate_active_procs)
+real_popen = subprocess.Popen
+def fake_popen(cmd, **kw):
+    p = real_popen(['sleep', '300'], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    print(p.pid, flush=True)
+    return p
+live_capture.subprocess.Popen = fake_popen
+def handler(signum, frame):
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, handler)
+threading.Thread(target=live_capture.run_capture,
+                 args=({dest!r}, 'en0', 600),
+                 kwargs={{'on_progress': lambda m: None}}, daemon=True).start()
+try:
+    while True:
+        time.sleep(0.1)
+except SystemExit:
+    pass
+'''
+
+    def _run(self, unregister):
+        repo = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+        with tempfile.TemporaryDirectory() as tmp:
+            code = self.CHILD.format(repo=repo, unregister=unregister,
+                                     dest=os.path.join(tmp, 'c.pcap'))
+            child = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, text=True)
+            pid = int(child.stdout.readline())
+            child.terminate()
+            child.wait(timeout=15)
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            os.kill(pid, 9)
+            return True
+
+    def test_sigterm_terminates_tcpdump(self):
+        self.assertFalse(self._run(unregister=False))
+
+    def test_without_hook_tcpdump_is_orphaned(self):
+        self.assertTrue(self._run(unregister=True))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -13,6 +13,7 @@ escalates privilege or invokes sudo; if that permission is missing,
 capture_support() reports it as unsupported and the UI hides the button.
 """
 
+import atexit
 import os
 import re
 import shutil
@@ -22,6 +23,21 @@ import time
 
 import config
 import macos_sandbox
+
+_active_procs = set()
+
+
+def _terminate_active_procs():
+    for proc in list(_active_procs):
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+atexit.register(_terminate_active_procs)
 
 # Pseudo-interfaces that never carry ordinary host traffic.
 _EXCLUDED_IFACE_PREFIXES = (
@@ -225,6 +241,7 @@ def run_capture(dest_path, interface, duration, on_progress=print,
     except OSError as e:
         on_progress(f'Could not start tcpdump: {e}')
         return False, None
+    _active_procs.add(proc)
 
     started = time.monotonic()
     stopped_early = False
@@ -253,6 +270,7 @@ def run_capture(dest_path, interface, duration, on_progress=print,
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=10)
+        _active_procs.discard(proc)
 
     stderr = proc.stderr.read() if proc.stderr else ''
     if not os.path.exists(dest_path) or os.path.getsize(dest_path) == 0:
