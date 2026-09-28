@@ -7,7 +7,7 @@ SO-CRATES runs natively on macOS, outside a container, using Homebrew for the to
 A helper script installs the tools and, optionally, Zircolite for Sigma log analysis:
 
 ```bash
-# suricata, suricata-update, yara, tshark/tcpdump, and Zircolite
+# suricata, suricata-update, yara, tshark/tcpdump, Zircolite, and CyberChef
 sh scripts/setup-macos.sh
 
 # tools only, skip Zircolite / Sigma log analysis
@@ -22,7 +22,15 @@ To install the tools by hand instead:
 brew install suricata yara wireshark
 ```
 
-`suricata-update` ships with the `suricata` formula and `tcpdump` is already present on macOS. `tshark` comes from either the `wireshark` formula or the Wireshark.app bundle. SO-CRATES reads the base Suricata configuration from the Homebrew location automatically — `/opt/homebrew/etc/suricata` on Apple Silicon, `/usr/local/etc/suricata` on Intel. Zircolite is detected under `DATA_DIR` (`~/socrates-data/zircolite/zircolite.py` by default), which is where `setup-macos.sh` puts it.
+`suricata-update` ships with the `suricata` formula and `tcpdump` is already present on macOS. `tshark` comes from either the `wireshark` formula or the Wireshark.app bundle. SO-CRATES reads the base Suricata configuration from the Homebrew location automatically — `/opt/homebrew/etc/suricata` on Apple Silicon, `/usr/local/etc/suricata` on Intel. Zircolite is detected under `DATA_DIR` (`~/socrates-data/zircolite/zircolite.py` by default), which is where `setup-macos.sh` puts it. CyberChef (Send to CyberChef, `/cyberchef/`) is served from `$DATA_DIR/cyberchef`; `setup-macos.sh` installs the pinned, checksum-verified release there, or run `sh scripts/fetch-cyberchef.sh ~/socrates-data/cyberchef` directly. Set `CYBERCHEF_DIR` to serve a copy from elsewhere.
+
+Run the test suite with:
+
+```bash
+sh scripts/run-tests.sh
+```
+
+It installs the test dependencies into `.venv` on first run and uses that interpreter directly, so there is no venv to activate or deactivate.
 
 ## Capturing live traffic
 

@@ -89,6 +89,13 @@ else
     echo "==> CyberChef already present at $DATA_DIR/cyberchef — skipping"
 fi
 
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+echo "==> Installing test dependencies into $REPO_DIR/.venv..."
+python3 -m venv "$REPO_DIR/.venv"
+"$REPO_DIR/.venv/bin/pip" install --quiet --disable-pip-version-check \
+    -r "$REPO_DIR/requirements-screenshots.txt"
+echo "    OK: run tests with sh scripts/run-tests.sh"
+
 echo ""
 echo "Setup complete. Start SO-CRATES with:"
 echo "    python3 socrates.py"

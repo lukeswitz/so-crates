@@ -930,11 +930,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Content-Length', '0')
         self.end_headers()
 
+    def _drain_rejected_body(self, cap=64 * 1024):
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+        except ValueError:
+            return
+        if 0 < length <= cap:
+            self.rfile.read(length)
+
     def do_POST(self):
         if self._reject_cross_origin(is_post=True):
+            self._drain_rejected_body()
             return
         parsed = urlparse(self.path)
         if self._require_auth(parsed.path, parse_qs(parsed.query)):
+            self._drain_rejected_body()
             return
         handler_name = self.POST_ROUTES.get(self.path)
         if handler_name:
