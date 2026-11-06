@@ -11,7 +11,7 @@ object (written by the pivot menu's Include/Exclude/Only actions -
 table row cell or aggregation-table value is clicked):
 
 ```js
-let currentFilters = {};
+var currentFilters = {};
 // Example: { "Dest Port": "80", "Source IP": { "include": ["10.0.0.1"], "exclude": [] } }
 ```
 
@@ -22,7 +22,7 @@ shapes - a string entry requires an exact match; an object entry ORs
 
 Filters are **global** - they apply across all tabs (Alert, DNS, HTTP, All Events, etc.). When a filter is set on one tab, it persists when switching to another tab.
 
-Search (`currentSearch`) is a separate server-side full-text filter using SQLite FTS5. It is an **array of terms** - typing `tcp 80` creates two chips `[🔍 "tcp" ×] [🔍 "80" ×]`. Each chip is independently removable. Quoted phrases like `"GET /login"` become a single chip. Search terms AND together on the backend. Search complements column filters: you can search for `192.168.1.1` and then further narrow with aggregation filters. Search is cleared when loading a new PCAP or when clicking **Clear All**.
+Search (`currentSearch`) is a separate server-side full-text filter using SQLite FTS5. It is an **array of terms** - typing `tcp 80` creates two chips `[🔍 "tcp" ×] [🔍 "80" ×]`. Each chip is independently removable. Quoted phrases like `"GET /login"` become a single chip. Search terms AND together on the backend. A `country:XX` term (the Traffic Map's click - `toggleCountryFilter()` adds or removes it) isn't text to match: `db.py`'s `_build_search_terms()` sets it apart (`SearchTerms.countries`) and `_build_where_conditions()` turns it into a condition on the event's addresses, through the `geo_country()` SQL function every connection registers (`geo_lookup.country`) - so it filters every server-side query a text term does. Search complements column filters: you can search for `192.168.1.1` and then further narrow with aggregation filters. Search is cleared when loading a new PCAP or when clicking **Clear All**.
 
 ## Scalable Fetch vs. Full-Batch Fallback
 
@@ -30,7 +30,7 @@ With no column filter active, the table, aggregations, and Sankey diagram all us
 
 The moment a column filter is applied (`applyFilters()`, or any of the pivot menu's Include/Exclude/Only actions, all of which write into `currentFilters`), everything falls back to full-batch client-side mode: `canUseScalableFetch()`, `canUseServerAggregation()`, and `canUseServerSankey()` all check `Object.keys(currentFilters).length === 0` and become `false`. This is because arbitrary column-value filtering has no server-side `WHERE`-clause equivalent - only search (`q=`) and `type=` are implemented server-side. `applyFilters()` then calls `ensureCappedBatch(eventType)`, which fetches up to `getUserQueryLimit()` raw rows (default 75,000, user-adjustable up to the server ceiling `MAX_QUERY_LIMIT` = 100,000 - see `GET /api/limits` in [api.md](api.md)) into `tabDataCache`/`allEvents`. From there, filtering, sorting, table pagination, and aggregation (for `log`/`sigmaalert`/`binary`/`mqtt`/`ldap`, which have no server-side aggregation at all) all happen in JS over that in-memory array.
 
-`log`/`sigmaalert`/`binary`/`mqtt`/`ldap` event types always need the full batch for their aggregation view regardless of filters, since their columns are dynamic/data-dependent or (for `binary`) have no scalable path at all - see `needsFullBatch()`.
+`log`/`sigmaalert`/`binary`/`mqtt`/`ldap` event types always need the full batch for their aggregation view regardless of filters, since their columns are dynamic/data-dependent or (for `binary`) have no scalable path at all - see `needsFullBatch()`. So does every tab of an email analysis (`isEmailAnalysisMode`): its columns leave out the network fields the server's aggregation always adds, and a message has few events, so aggregation and sorting stay client-side. An email analysis has no Sankey diagram.
 
 If the true match count exceeds what was fetched, `ensureCappedBatch()` marks the type in `truncatedTypes`, and `isCurrentTabTruncated()` drives a visible warning in the filter bar - filtered/aggregated results are never silently incomplete without an indicator, but they can still be a partial view of a very large, heavily-filtered dataset.
 
@@ -59,12 +59,13 @@ If the true match count exceeds what was fetched, `ensureCappedBatch()` marks th
 | `buildStats(filteredStats)` | Rebuilds stats cards - always shows the filtered count alone (comma-formatted), never "filtered / total"; a data type with a filtered count of zero is dropped from the grid entirely rather than shown disabled |
 | `canUseScalableFetch()` / `canUseServerAggregation(eventType)` / `canUseServerSankey(eventType)` | `true` when no column filter is active (and, for scalable fetch, no client-only sort) - gates server-side pagination/aggregation/Sankey vs. the full-batch fallback |
 | `ensureCappedBatch(eventType)` | Fetches up to `getUserQueryLimit()` raw rows into `tabDataCache`/`allEvents`; no-op if already cached |
-| `needsFullBatch(eventType)` | `true` when the aggregation view (Aggregation toggle ON) can't use its server-side fetch (log/sigmaalert/binary/mqtt/ldap, or any type once a column filter is active), or when the Sankey diagram (Diagram toggle ON) can't (a column filter is active) |
+| `needsFullBatch(eventType)` | `true` when the aggregation view (Aggregation toggle ON) can't use its server-side fetch (log/sigmaalert/binary/mqtt/ldap, every tab of an email analysis, or any type once a column filter is active), or when the Sankey diagram (Diagram toggle ON) can't (a column filter is active) |
 | `getUserQueryLimit()` | Reads/validates the user's configured full-batch row cap from `localStorage`, falling back to `CONFIG.DEFAULT_QUERY_LIMIT` |
 | `computeFilteredStats()` | Counts events by type from the filtered subset |
 | `getSankeyEvents()` | Returns filtered events for the currently visible tab for the Sankey diagram |
 | `refreshCurrentView()` | Rebuilds the current tab's table, aggregations, stats, filter bar, and Sankey diagram |
-| `updateSankeyDiagram()` | Rebuilds the Sankey diagram using events from `getSankeyEvents()` |
+| `updateSankeyDiagram()` | Rebuilds the Sankey diagram using events from `getSankeyEvents()`, and has `updateTrafficMap()` refetch the Traffic Map if the analysis or search changed |
+| `toggleCountryFilter(cc)` | Adds the `country:<cc>` search term, or removes it if present (any case) - the Traffic Map's click |
 
 ## Data Flow
 

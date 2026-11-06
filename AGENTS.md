@@ -4,7 +4,7 @@ This file contains agent-focused guidance for maintaining SO-CRATES.
 
 ## Updating Vendored Dependencies
 
-SO-CRATES bundles D3 and d3-sankey in `static/` so the application works offline and builds remain deterministic.
+SO-CRATES bundles D3, d3-sankey, topojson-client and the Traffic Map's world map in `static/` so the application works offline and builds remain deterministic.
 
 ### D3
 
@@ -26,6 +26,19 @@ If the copyright year changed, update `static/LICENSE` accordingly.
 Check for D3 releases at https://github.com/d3/d3/releases.
 Recommended cadence: every 6–12 months, or immediately if a security CVE is announced.
 
+### World map and topojson-client
+
+The Traffic Map's world is `static/world-110m.json`, built by `scripts/build_world_map.py` from world-atlas's Natural Earth 1:110m countries and i18n-iso-countries' English names, and decoded in the browser by the vendored `static/topojson-client.min.js`. To rebuild it (the shapes rarely change; a new country code from DB-IP with no shape needs a point added to the script's `PLACES`):
+
+```bash
+curl -sL "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json" -o /tmp/countries-110m.json
+curl -sL "https://cdn.jsdelivr.net/npm/i18n-iso-countries@7/langs/en.json" -o /tmp/en.json
+python3 scripts/build_world_map.py /tmp/countries-110m.json /tmp/en.json static/world-110m.json
+curl -sL "https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js" -o static/topojson-client.min.js
+```
+
+Keep `static/LICENSE`'s notices for both in step. The IP-to-country data itself isn't vendored: the Dockerfile's `resources-builder` stage downloads DB-IP's IP to Country Lite (the current month's, or last month's) and converts it with `scripts/build_geoip.py`, so every image build has the latest. DB-IP's CC BY 4.0 license asks for the "IP location data by DB-IP" link the map shows - keep it.
+
 ### CyberChef
 
 Unlike D3, CyberChef is not committed to the repo - the Dockerfile's `resources-builder` stage runs `scripts/fetch-cyberchef.sh`, which downloads a pinned release, verifies it, and installs it to `/usr/share/cyberchef` (`CYBERCHEF_DIR`), served at `/cyberchef/`.
@@ -45,21 +58,30 @@ SO-CRATES's backend is split into domain modules. Do not add new logic directly 
 
 | Module | Add here if... |
 |---|---|
-| `validators.py` | Input validation and the small, focused I/O it depends on (no HTTP framework code). IP/port checks, filename sanitization, URL/SSRF safety (including DNS resolution via `resolve_safe_ips` and TCP reachability via `is_host_reachable`), PCAP magic bytes, ZIP slip prevention, file staleness checks. |
-| `suricata_analyzer.py` | Anything related to Suricata lifecycle: config setup, rule downloads, spawning subprocesses, processing locks, file extraction. |
-| `yara_analyzer.py` | YARA scanning: executable checks, rules download/setup, scanning extracted files, parsing output. |
-| `sigma_analyzer.py` | Sigma rule conversion/execution via Zircolite, importing log events into the events DB. Querying `sigma_alerts` back out is `db.py`'s job, not this module's. |
-| `file_analyzer.py` | Lightweight file metadata extraction (`file`-command magic/MIME type, Shannon entropy, printable strings). No hashing here - MD5/SHA256 are computed in `socrates.py`/`yara_analyzer.py`. |
+| `validators.py` | Input validation and the small, focused I/O it depends on (no HTTP framework code). IP/port checks, filename sanitization, URL/SSRF safety (including DNS resolution via `resolve_safe_ips` and TCP reachability via `is_host_reachable`), PCAP magic bytes, ZIP slip prevention, file staleness checks, and custom Suricata rules' checks that need no Suricata (`check_custom_rules`: size, `CUSTOM_RULE_FORBIDDEN_KEYWORDS`, SID range and duplicates). |
+| `suricata_analyzer.py` | Anything related to Suricata lifecycle: config setup, rule downloads, custom rules (`save_custom_rules`: `validators.check_custom_rules`, then `suricata -T` over them alone, then the saved and active copies - nothing written unless every check passes; turned on or off through `setup_suricata_config(custom_rules_enabled=)`), the ET Pro access code (`save_etpro_code`/`remove_etpro_code`, passed only to `_fetch_single_source` and masked in its messages; while `et/pro` is active, `_superseded_sources`/`_sync_active_sources` leave ET Open's file out but keep it enabled, so it's back if ET Pro goes off or fails), spawning subprocesses, processing locks (an analysis's `.phase`/`.error`: `_set_phase`/`_set_error`, and `read_phase`/`read_error`/`analysis_running`, which treat one older than `config.STALE_THRESHOLD_SECONDS` as left by a server that died), file extraction. |
+| `suricata_sid_ranges.py` | Mapping a Suricata SID to the ruleset it came from - shared by `db.py` and the API. 1000000-1999999 (`SURICATA_LOCAL_SID_RANGE`) is the local range custom rules must use, labeled by range like any source; no curated source may reach into it (a test checks). |
+| `yara_analyzer.py` | YARA scanning: executable checks, rules download/setup, scanning extracted files, parsing output, and a standalone file's whole analysis (`analyze_standalone_file`). |
+| `sigma_analyzer.py` | Sigma rule conversion/execution via Zircolite, importing log events into the events DB - a log's whole analysis is `analyze_log_file`. Querying `sigma_alerts` back out is `db.py`'s job, not this module's. |
+| `file_analyzer.py` | Lightweight file metadata extraction (`file`-command magic/MIME type, Shannon entropy, printable strings). No hashing here - an upload's MD5 comes from `storage.hash_file`, a standalone file's SHA256/SHA1 from `yara_analyzer.scan_single_file`, and an email's attachments are hashed in `email_analyzer.py`. |
 | `exif_analyzer.py` | EXIF metadata extraction for image/media files. |
 | `ohmydebn_colors.py` | Deriving a full theme (CSS custom properties) from an OhMyDebn/Aether color palette (`colors.toml`/`alacritty.toml`) for the Themes modal's OhMyDebn sync toggle. Pure functions, no I/O. |
 | `playbook_lookup.py` | Security Onion Playbooks lookup - reading the baked-in gzip-compressed indexes (`BAKED_IN_PLAYBOOKS_DIR`/`PLAYBOOKS_DIR`), exact-rule/engine-fallback resolution, in-process caching. No fetch/refresh logic - see "Detection Rule Freshness" below for why. |
+| `geo_lookup.py` | IP address to country (`country()`: an ISO alpha-2 code, `LAN` for an address that doesn't route, `??` for none), from the DB-IP index baked into `GEOIP_DIR` (`scripts/build_geoip.py`'s format), read once into memory. Baked-in only, like the playbooks - no runtime refresh. `db.py` registers it as the `geo_country()` SQL function on every connection, for `country:` search terms. |
+| `traffic_map.py` | The Traffic Map's data (`get_traffic_map_data`, for `GET /api/traffic-map`): Suricata flows grouped into (time bin, source country, destination country) buckets, and alerts (the most severe `MAX_ALERTS`), honoring a search. The map itself is `createTrafficMap()` in `static/socrates.js`. |
 | `ai_summary_lookup.py` | AI-generated per-rule summary lookup - same baked-in gzip-compressed-index/in-process-caching shape as `playbook_lookup.py` (`AI_SUMMARIES_DIR`), but exact-match only, no engine-wide fallback, and covers `nids`/`sigma`/`yara` (one more type than Playbooks). No fetch/refresh logic - see "Detection Rule Freshness" below. |
 | `url_fetch.py` | Downloading a user-supplied URL (`fetch_url_safely`): connecting only to the IPs `validators.py` validated (`Pinned*Connection`) and re-validating every redirect hop. The URL checks themselves stay in `validators.py`. |
-| `storage.py` | Files on disk for uploads and analyses: the upload scratch directory, ZIP extraction, hashing, an analysis directory's `.meta`/pcap lookup, and the artifact lists reanalyze removes. Takes `data_dir` as a parameter rather than reading `socrates.DATA_DIR`. |
-| `analysis_cache.py` | In-memory caches of unfiltered Sankey/aggregation results per analysis, the lock guarding them, and their eviction. |
+| `storage.py` | Files on disk for uploads and analyses: the upload scratch directory, the startup sweep of what a server that died left in `/tmp` (`cleanup_stale_tmp`), ZIP extraction, hashing, an analysis directory's `.meta`/pcap lookup, its display name and uploaded file (`resolve_display_name`, `non_artifact_files`), the artifact lists reanalyze removes (`remove_artifacts`), and which analyses have results to list (`finished_analysis_dirs`). Takes `data_dir` as a parameter rather than reading `socrates.DATA_DIR`. |
+| `analysis_cache.py` | In-memory caches of unfiltered Sankey/aggregation/Traffic Map results per analysis, the lock guarding them, and their eviction. |
 | `cyberchef.py` | The bundled CyberChef: where it lives (`CYBERCHEF_DIR`) and the Content-Security-Policy `/cyberchef/` responses get (`build_csp`/`get_csp`). Serving itself stays in `socrates.py`'s `do_GET`. |
-| `stream_payload.py` | Exact-byte stream payloads for `/api/raw-stream`: building the `tshark` follow command and parsing its raw output per direction. Carving the flow out of the capture first stays in the handler, alongside the other stream endpoints. |
-| `db.py` | SQLite schema changes, new query functions, index optimization, bulk loading logic. |
+| `email_analyzer.py` | Email message (`.eml`) analysis: parsing a message (standard library `email`/`html.parser` only) into `email`/`link` events, and storing its attachments in `filestore/` (Suricata's layout, so `/api/extracted-file` works) and YARA-scanning them. Detection is `validators.is_email_file`; dispatch is `socrates.py`'s `_detect_file_type`/`_analyze_by_type`. |
+| `samples.py` | Sample files built into the app (`SAMPLES`, served by `POST /api/load-sample`) - generated on request, deterministic so a second load dedups, and with the EICAR string kept split in the source so no file in the image carries the signature. |
+| `stream_payload.py` | A stream's payload: exact bytes for `/api/raw-stream` (building the `tshark` follow command and parsing its raw output per direction), the ASCII transcript's `tshark` command and parsing (`transcript_lines`), and parsing `tcpdump -X`'s hexdump (`parse_hexdump`). Carving the flow out of the capture first stays in the handler, alongside the other stream endpoints. |
+| `shark_analyzer.py` | tshark's part of a PCAP analysis - it adds the protocols Suricata doesn't parse. Queued when Suricata starts (`suricata_analyzer.spawn_suricata`); `analyze` runs the build (`build`) as a child process (`python3 -m shark_analyzer build`) at the lowest CPU and I/O priority, in its own process group (cancelling kills it and its tshark together), under a timeout and a memory watchdog (`SHARK_MAX_MEMORY_BYTES`). The child's `TMPDIR` is a folder of the run's own in `/tmp` (`RUN_TMP_PREFIX`), which `analyze` removes however the child ends - a temp file the child made anywhere else would be left behind when a cancel kills it. The build runs tshark over every packet for just the fields flows need (`_FIRST_PASS_FIELDS`: plain field output, Community ID on - tshark's time grows with every field asked for, whether a packet has it or not) and groups them into flows, oriented by the first request or reply (`_is_reply`; a protocol that marks its requests and replies belongs there). A tunneled packet (GRE, VXLAN, Geneve, Teredo, AYIYA, GTP-U, IP in IP, 6in4...) is split first (`_split_tunnel`): its inner flow is keyed, named and counted from the inner network layer on, its tunnel's outer flow (but GRE's, which Suricata doesn't log) gets the packet too, with a Community ID computed here (`_community_id` - tshark's is the inner flow's), and `_Tunnels` keeps one `tunnel` record per tunnel; an outer flow is never a connection row. It notes the frames of each flow carrying a protocol with records here, from the flow's start (TCP reassembly needs it); a second run (`_protocol_pass`) reads only those frames, copied out by `pcap_subset`, asking for the fields of the protocols present, and feeds `shark_protocols`. A capture made almost wholly of such protocols (an ICS capture of one of them) would be read twice that way, so `_mostly_recorded` first samples windows spread across it, and when three quarters of the sample is theirs, one pass asks for the fields of the protocols the sample held instead (`_combined_fields` - not every protocol's, which made each new protocol slow such captures down), and any other protocol with records still found gets the protocol pass over just its flows. Flows and records are streamed into the analysis's `shark.db` - a staging store, read only by the merge and `probe_only_protocols`, so it has no full-text index and no index but the event type's (`db._SHARK_SCHEMA`; they cost most of a big capture's write time). The second passes (`_LaterPasses`) run in a thread of their own once the first pass is done, their tshark working while the flows' records are written; their records follow the flows'. `merge` - called by whichever of Suricata's import and the tshark run finishes last, or by a status request for an older analysis - copies into `events.db` (tagged `source: tshark`, replaced by a later run's) only what Suricata lacks: records of protocols it doesn't parse and connection rows (`conn_<protocol>`, for protocols with neither Suricata parsing nor records here; `SURICATA_APP_PROTOS`), never on a flow Suricata identified (a protocol backed by its own records) - except TLS failures (`_TLSFailures`: the TLS alerts a TCP connection sent while they were readable, from one first-pass field, since TLS is too much of most captures to read twice), which Suricata never logs, and which take the certificate and SNI from Suricata's `tls` record of the connection (`db.suricata_tls_records`); a protocol Suricata recognizes but logs nothing about (Telnet, IMAP - `SURICATA_RECORDED_APP_PROTOS` leaves them out) can have records here. Connection rows stay out of all-events queries (`db._build_where_conditions`: Suricata's flow rows already list them) but in the per-type counts. A structured pass (`_structured_pass`: tshark as JSON over just the flows that need it, copied out the same way) is there for a protocol whose messages nest, which flat fields run together - OPC UA. It enables only the dissectors it needs (`_STRUCTURED_BASE`: link layers, IP, transports, then the protocol's), so a capture whose link layer isn't listed there (loopback is `null`) decodes nothing. Tests can't mock inside the child: test `build`/`run_tshark` directly, or mock `_child_command`. |
+| `findings.py` | The Findings tab's rules (`RULES`, most severe first): each an SQL condition over one record type's `json_data`, with a detail line made from the record that never carries a password. `query_findings` runs each rule's count and groups its matches - the same detail line on the same server is one finding, with its record and source-host counts (`MAX_PER_RULE` groups shown, from at most `MAX_SCAN` records) - narrowed by a search like any tab, or lists one group's records (`group`); `GET /api/findings` serves them (`counts=1` for the stat card, which counts groups). |
+| `shark_protocols.py` | Records for protocols Suricata doesn't parse or logs nothing about (LLMNR, NBNS, DHCPv6, syslog, DTLS, ONC RPC, SOCKS, RADIUS, STUN, CoAP, SLP, IPMI, L2TP, RIP, XDMCP, SSDP, S7comm, Telnet, IEC 104, BACnet, OPC UA, GOOSE, Windows Browser, LLDP, CDP so far): for each, the tshark fields it needs and how requests pair with responses. Never one Suricata parses - Suricata stays the source of truth for those (it recognizes protocols by content, tshark mostly by port), and an earlier attempt to match its records for DNS, HTTP, TLS, Modbus, FTP and SMB field for field was removed as duplication. To add a protocol, add a class here and to `PROTOCOLS` (its `app_protos` take it off the connection tabs), give its records UI columns, aggregations and a detail panel, add it to a fixture in `tests/protocol_fixtures.py`, and bump `shark_analyzer.SHARK_FORMAT_VERSION` so existing `shark.db`s are rebuilt. If its records can show a weakness, a control action or a probe, add a rule for it to `findings.py` (and a matching record to `tests/test_findings.py`'s `MATCHES`). A protocol only receives packets whose own application protocol is in its `app_protos` (tshark reuses fields across dissectors - LLMNR carries `dns.*`, SSDP `http.*`), and fields are requested from tshark once even when several read them. A field can be `vals(<field>)` (tshark's name for each value - BACnet's vendors and properties) or `@<protocol>` (its raw bytes, for what tshark only shows as text). Real captures catch what fixtures don't: check a change with `scripts/sweep_shark_suricata.py` over a corpus of them. |
+| `pcap_subset.py` | Copying chosen frames out of a capture (classic pcap or pcapng) for tshark's second passes - any number of frame ranges, where editcap keeps at most 512 and silently drops the rest. A capture it can't read (compressed) falls back to editcap (`shark_analyzer._subset`). |
+| `db.py` | SQLite schema changes, new query functions, index optimization, bulk loading logic. Search terms (`_build_search_terms`) are text terms plus `country:` terms (`SearchTerms.countries`), which `_build_where_conditions` turns into conditions on the addresses - so every query that takes `q` filters by country without knowing it. |
 | `models.py` | New Suricata event field extraction helpers (parsing JSON fields into typed values). |
 | `config.py` | Application-wide constants: size limits, timeouts, thresholds. Adjust here for different deployments. |
 | `socrates.py` | Only HTTP handler methods, request/response formatting, and thin orchestration that calls other modules. |
@@ -76,7 +98,7 @@ The frontend is four files - `socrates.html` in the repo root, the rest under `s
 
 | File | Content |
 |---|---|
-| `socrates.html` | HTML shell - no inline CSS or JS at all |
+| `socrates.html` | HTML shell - no inline `<script>` or `<style>` blocks |
 | `static/theme-boot.js` | The theme restore that runs before first paint (prevents a flash of the default theme) |
 | `static/socrates.css` | All styles |
 | `static/socrates.js` | All JavaScript |
@@ -95,7 +117,7 @@ SO-CRATES supports themes via CSS custom properties. The full, current list (nam
 - **Don't define a variable in every theme block "for completeness" without a real consumer.** `--accent-rgb` and `--filter-bar-bg` were defined identically in all 23 theme blocks but never referenced via `var(--name)` anywhere in CSS/JS/HTML - removed as dead CSS (`test_dead_theme_vars_removed` locks this in). If you add a new per-theme variable, grep for `var(--your-name` before considering it done.
 - **`--bg-hover` and `--border-color` are deliberately separate variables.** `--bg-hover` is for hover-state background *fills* (table row hover, button hover); `--border-color` is for border/outline *decorations* (panel borders, header/footer dividers, input borders). Most themes set both to the same value since a muted color works fine for both roles, but don't assume they must match - CGA sets `--border-color` to a bright cyan (`#55ffff`, the real CGA light-cyan RGBI value) while keeping `--bg-hover` a much more muted teal (`#008080`), since a hover *fill* that bright would hurt text contrast but a 1px *border* reads fine at full brightness. `test_border_color_split_from_bg_hover` enforces that every theme defines both and that border declarations reference `var(--border-color)`, not `var(--bg-hover)`.
 - **A theme can override structural colors per-selector, not just per-variable, when a single shared variable can't express the look.** CGA's header/footer use `background: #55ffff` (bright light cyan) directly on `[data-theme="cga"] .app-header, [data-theme="cga"] .footer`, rather than repointing `--bg-secondary` (which every other panel/card also uses and would go bright cyan too), and override `--text-bright`/`--text-muted` scoped to the same selector for legibility against the new background. See `test_cga_header_footer_light_cyan`. **If you add an override like this, only reset the same variables on an element that is an actual DOM descendant of the overridden selector and that actually reads those variables** - CSS custom properties cascade strictly through DOM nesting, not visual/menu grouping, so a modal or panel that merely *opens from* the header (e.g. `#themesModal`, a top-level sibling in the DOM, not a child of `.app-header`) never inherits the override in the first place and needs no reset. A `#themesModal` reset rule existed here for exactly this non-reason - it silently duplicated the theme's own root values - and was removed once `test_cga_header_footer_light_cyan` was checked against the current markup and found to be a no-op.
-- **`--interactive-highlight` is an optional per-theme override for hover/focus/active border feedback.** Every hover/focus/active border rule (`.app-header-filename-input:focus`, `.stat-card:hover`, `.stat-card.tab-active`, `.pagination-page-input:focus`, `.settings-number-input:focus`, `.notes-textarea:focus`, `.settings-text-input:focus`, `.drop-zone-active`, `.view-tab.active`, `.search-input:focus`, `.sample-card:hover`, `.theme-tile:hover`, `.app-logo-text:focus-visible`, `.stat-card.keyboard-selected`, `.sample-card.keyboard-selected`, `.previous-analysis-row.keyboard-selected`, `tr[data-id].keyboard-selected`, `.theme-tile.keyboard-selected`, `.section-toggle-bar.keyboard-selected`, `.agg-row[data-agg-pivot].keyboard-selected`, `.pivot-menu-item.keyboard-selected`, `.filter-chip.keyboard-selected`, `.filter-clear-all.keyboard-selected`, `.stream-btn.keyboard-selected`, `.cyberchef-file-btn.keyboard-selected`, `.view-tab.keyboard-selected`, `.row-note-edit-link.keyboard-selected`, `.packet-header.keyboard-selected`, `.packet-control-btn.keyboard-selected`, `.detail-value-pivot.keyboard-selected`, `.autocomplete-item.keyboard-selected`, `.agg-page-btn.keyboard-selected`) reads `var(--interactive-highlight, var(--accent))` - a CSS fallback, so themes that don't define `--interactive-highlight` get exactly the old behavior (`--accent`) with zero risk. A theme needs this when its `--accent` is intentionally identical to `--border-color`/`--text-primary` (a deliberate flat, monochrome look) - without a separate highlight color, hovering/focusing would produce no visible change at all. Breadbin Blue (the original case, formerly named C64), Luna Blue, and DOS Blue all define this for exactly that reason, each to a distinct color from their own palette rather than a jarring color swap. If you add a new theme where `--accent` intentionally matches `--border-color`, check whether it needs `--interactive-highlight` too.
+- **`--interactive-highlight` is an optional per-theme override for hover/focus/active border feedback.** Every hover/focus/active border rule (`.app-header-filename-input:focus`, `.stat-card:hover`, `.stat-card.tab-active`, `.pagination-page-input:focus`, `.settings-number-input:focus`, `.notes-textarea:focus`, `.settings-text-input:focus`, `.drop-zone-active`, `.view-tab.active`, `.search-input:focus`, `.sample-card:hover`, `.theme-tile:hover`, `.app-logo-text:focus-visible`, `.stat-card.keyboard-selected`, `.sample-card.keyboard-selected`, `.previous-analysis-row.keyboard-selected`, `tr[data-id].keyboard-selected`, `.theme-tile.keyboard-selected`, `.section-toggle-bar.keyboard-selected`, `.agg-row[data-agg-pivot].keyboard-selected`, `.pivot-menu-item.keyboard-selected`, `.filter-chip.keyboard-selected`, `.filter-clear-all.keyboard-selected`, `.stream-btn.keyboard-selected`, `.cyberchef-file-btn.keyboard-selected`, `.view-tab.keyboard-selected`, `.row-note-edit-link.keyboard-selected`, `.packet-header.keyboard-selected`, `.packet-control-btn.keyboard-selected`, `.detail-value-pivot.keyboard-selected`, `.autocomplete-item.keyboard-selected`, `.agg-page-btn.keyboard-selected`, `.tm-top button.on`, `.tm-play:hover`/`.tm-play:focus-visible`) reads `var(--interactive-highlight, var(--accent))` - a CSS fallback, so themes that don't define `--interactive-highlight` get exactly the old behavior (`--accent`) with zero risk. A theme needs this when its `--accent` is intentionally identical to `--border-color`/`--text-primary` (a deliberate flat, monochrome look) - without a separate highlight color, hovering/focusing would produce no visible change at all. Breadbin Blue (the original case, formerly named C64), Luna Blue, and DOS Blue all define this for exactly that reason, each to a distinct color from their own palette rather than a jarring color swap. If you add a new theme where `--accent` intentionally matches `--border-color`, check whether it needs `--interactive-highlight` too.
 - **Use `currentColor`** for inline SVG icons so they inherit the surrounding text color and adapt automatically.
 - **Avoid emojis** for UI icons when possible - use inline SVGs instead, since emojis render as full-color system glyphs that ignore CSS `color` and may be invisible in one theme.
 
@@ -112,7 +134,7 @@ To add a new theme:
 
 ## Detection Rule Freshness
 
-Suricata/YARA/Sigma rule refreshes only ever happen two ways: fully local (startup, `network_allowed=False` - cached/baked-in only, no reachability check) or fully explicit (Rules modal → `force=True`, an actual click is the consent). **Analysis itself must never trigger a network rule refresh as a side effect of scanning a file** - `_analyze_standalone_file`'s `setup_yara_rules(DATA_DIR, network_allowed=False)` call and `run_sigma_pipeline`'s `setup_sigma_rules(data_dir, network_allowed=False)` call both deliberately pass `network_allowed=False` for this reason. This used to not be the case - YARA/Sigma rules were silently refreshed over the network mid-analysis if `config.RULES_MAX_AGE_HOURS` had elapsed, no consent asked - until unprompted outbound connections were judged the worse tradeoff for a security-focused tool than occasionally analyzing with rules a bit older than that window. (Suricata never had this auto-refresh-on-analysis behavior in the first place - see `suricata_analyzer.py`'s lack of any `is_file_stale`/staleness concept; it either updates unconditionally when `network_allowed=True` or not at all.)
+Suricata/YARA/Sigma rule refreshes only ever happen two ways: fully local (startup, `network_allowed=False` - cached/baked-in only, no reachability check) or fully explicit (Rules modal → `force=True`, an actual click is the consent). **Analysis itself must never trigger a network rule refresh as a side effect of scanning a file** - `yara_analyzer.analyze_standalone_file`'s `setup_yara_rules(data_dir, network_allowed=False)` call and `run_sigma_pipeline`'s `setup_sigma_rules(data_dir, network_allowed=False)` call both deliberately pass `network_allowed=False` for this reason. This used to not be the case - YARA/Sigma rules were silently refreshed over the network mid-analysis if `config.RULES_MAX_AGE_HOURS` had elapsed, no consent asked - until unprompted outbound connections were judged the worse tradeoff for a security-focused tool than occasionally analyzing with rules a bit older than that window. (Suricata never had this auto-refresh-on-analysis behavior in the first place - see `suricata_analyzer.py`'s lack of any `is_file_stale`/staleness concept; it either updates unconditionally when `network_allowed=True` or not at all.)
 
 **Security Onion Playbooks are baked-in only, with no runtime refresh
 mechanism at all** - unlike Suricata/YARA/Sigma above, there is no
@@ -186,9 +208,13 @@ Before cutting a release:
    (one-time; Playwright's video muxing needs its own bundled ffmpeg,
    separate from any system ffmpeg) then `python3 scripts/record_demo.py
    --base-url http://127.0.0.1:<port>/socrates.html` against the container
-   from step 2. This re-records the workflow end-to-end (sample pcap → each
-   data type → All Events → Aggregation Tables filtering → drill-down →
-   ASCII Transcript → Hexdump) and publishes `docs/videos/demo.mp4` (silent,
+   from step 2. This re-records the workflow end-to-end (the URL box's
+   default pcap → wait for tshark's cards → collapse the Sankey Diagram with
+   the keyboard → each card in turn, drilling into a Network Alert along the
+   way: pivot menu, Expand Row, AI Summary, Playbook, acknowledge and
+   un-acknowledge → All Events → expand Aggregation Tables with the keyboard
+   → filter to one event → expand it from its timestamp → ASCII Transcript →
+   Hexdump → the command palette opening Themes) and publishes `docs/videos/demo.mp4` (silent,
    H.264 video only - Playwright's page recording has no audio source, so
    there is no audio track to re-encode) and `docs/videos/demo-poster.jpg`
    (a still frame grabbed from the same raw capture, used as the `<video
@@ -203,7 +229,8 @@ Before cutting a release:
    left untrimmed, that showed up as the thumbnail X/LinkedIn/etc.
    auto-extract when someone uploads `demo.mp4` directly (small upper-left
    region of real content against an otherwise flat grey frame). The video
-   is embedded on the Home page just above Screenshots. If `ffmpeg` isn't on
+   is embedded in the Home page's "See it run" section, above "Follow an
+   investigation". If `ffmpeg` isn't on
    PATH, it falls back to publishing the raw `docs/videos/demo.webm` instead
    with a warning - see the script's module docstring. Re-run whenever the
    recorded workflow's on-screen text/labels change (e.g. a renamed button
@@ -216,7 +243,7 @@ Before cutting a release:
    theoretical.** `record_demo.py`'s captions are keyed to exact strings
    from the sample's own analysis (e.g. a specific aggregation-row value);
    running `capture_screenshots.py` against the same container first (its
-   own "Sample pcap file" click triggers the identical analysis) left that
+   own Load from URL of the same pcap triggers the identical analysis) left that
    value's own locator un-findable within `record_demo.py`'s wait window
    once run second - `Locator.scroll_into_view_if_needed: Timeout 30000ms
    exceeded` on an `.agg-row` lookup, even though the exact same analysis
@@ -232,27 +259,37 @@ Before cutting a release:
    selected - `_arrow_down_to` - which may have been the real cause of the
    ordering failure above too.)
 
-   Also re-record the Home page's "CyberChef, built in" video with
-   `python3 scripts/record_cyberchef_demo.py --base-url
+   Also re-record the Home page's "Follow an investigation" video with
+   `python3 scripts/record_story_demo.py --base-url
    http://127.0.0.1:<port>/socrates.html`, against its **own** fresh
-   container (it uploads a capture generated by
-   `scripts/make_cyberchef_demo_pcap.py`, which would replace the sample
-   analysis the other two scripts depend on). It publishes
-   `docs/videos/cyberchef.mp4` and `docs/videos/cyberchef-poster.jpg`,
-   splicing each CyberChef tab's separate Playwright recording into the
-   SO-CRATES tab's - see its module docstring. Re-run it when the Send to
-   CyberChef buttons, the transcript selection pivot menu, or the bundled
-   CyberChef version change.
+   container (it loads the four built-in samples, which would show up in
+   the screenshots' Previous Analyses list). It walks the sample story
+   (`samples.py`, docs/usage/sample-story.md) and publishes
+   `docs/videos/story.mp4` and `docs/videos/story-poster.jpg`, splicing
+   each CyberChef tab's separate Playwright recording into the SO-CRATES
+   tab's - see its module docstring. It needs no internet access. Re-run
+   it when the samples, email analysis, the pivot menu's CyberChef entry,
+   or the bundled CyberChef version change.
 4. **Regenerate screenshots.** Run `pip install -r requirements-screenshots.txt
    && python3 scripts/capture_screenshots.py --base-url
    http://127.0.0.1:<port>/socrates.html` against the same container, now
-   that step 3's video is done with it. This refreshes all 8
-   `docs/images/so-crates-*.png` (Home page) and all 35
-   `docs/images/themes/*.png` (Themes page) against the app's own default
-   sample pcap (`DEFAULT_SAMPLE_URL` in `static/socrates.js` - a one-click
-   convenience link to an external pcap on malware-traffic-analysis.net, not
-   something bundled with the app) - no local fixture or hardcoded MD5
-   needed. Run this on every release, not just when the UI visibly changes -
+   that step 3's video is done with it. This refreshes all 10
+   `docs/images/so-crates-*.png` (the Usage page's Screenshot Tour; the
+   Home page uses 3 of them) and all 35
+   `docs/images/themes/*.png` (Themes page) against the URL box's default
+   pcap (`DEFAULT_SAMPLE_URL` in `static/socrates.js` - a real infection's
+   traffic on malware-traffic-analysis.net, loaded with the Go button; the
+   main screen's Sample PCAP file card is a smaller built-in one, see
+   `samples.py`) - no local fixture or hardcoded MD5 needed, but it does
+   need internet access. `so-crates-traffic-map.png` loads a second capture
+   the same way (`GEO_SAMPLE_URL`, a week of scans hitting a web server,
+   also on malware-traffic-analysis.net - 207,000 flows from 136 countries,
+   where the default sample's 10 reach four) and captures the Traffic Map 24
+   seconds into its replay; `--only traffic-map` re-runs just that one. The
+   last, `so-crates-findings.png`, loads a third capture the same way (`TSHARK_SAMPLE_URL`, a 140 MB 4SICS ICS capture
+   from Netresec - the default sample has no protocol tshark adds but
+   Windows LAN chatter, and no Findings) and waits for tshark to finish on
+   it, which takes a few minutes; `--only findings` re-runs just that one. Run this on every release, not just when the UI visibly changes -
    stale screenshots (e.g. showing an old default value in the Welcome
    modal) are easy to miss otherwise. If a new theme was added since the
    last release, make sure it was also added to the separate hardcoded

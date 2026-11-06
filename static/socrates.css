@@ -1303,6 +1303,16 @@
         .app-header-filename-input:focus { outline: none; border-color: var(--interactive-highlight, var(--accent)); }
         .app-header-right { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; justify-content: flex-end; }
         .app-header-meta { display: flex; align-items: center; gap: 15px; margin-left: 15px; }
+        /* The tshark line (PCAP analyses), between the header and the search box: what tshark is adding - its dot is the key to the cards' */
+        .tshark-line { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--border-color); margin-bottom: 15px; }
+        .tshark-line[hidden] { display: none; }
+        .analysis-warnings { border-bottom: 1px solid var(--border-color); margin-bottom: 15px; padding: 8px 0; }
+        .analysis-warnings[hidden] { display: none; }
+        .analysis-warning { color: var(--badge-warning-text); font-size: 0.8rem; }
+        .tshark-line-status { color: var(--text-muted); font-size: 0.8rem; padding: 8px 0; }
+        .tshark-line-status a { color: var(--accent); font-weight: 600; }
+        .tshark-line-status .stat-badge-dot { margin-right: 6px; vertical-align: 1px; }
+        .tshark-line-timer { font-variant-numeric: tabular-nums; }
         /* Centers in the full header bar (.app-header is position: fixed,
            so it's the containing block here), independent of how wide the
            left-side icon/filename group happens to be - same reasoning as
@@ -1336,8 +1346,53 @@
         .container { width: 100%; padding: 20px; box-sizing: border-box; padding-bottom: 80px; padding-top: 56px; }
         header { background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); padding: 30px; border-radius: 12px; margin-bottom: 20px; border: 1px solid var(--border-color); }
         #mainHeader { padding: 0; background: transparent; border: none; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px; margin-bottom: 20px; }
-        .stat-card { background: var(--bg-secondary); padding: 20px; border-radius: 10px; border: 1px solid var(--border-color); text-align: center; cursor: pointer; container-type: inline-size; position: relative; }
+        /* Every card the same width, in sections or not, so every card
+           reads the same - a row's spare width is left at its end */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, 112px); gap: 8px; margin-bottom: 20px; }
+        /* A PCAP analysis's sections (socrates.js STAT_GROUPS): a panel each,
+           sharing rows, each as wide as its cards (--cards) - so a small
+           section sits beside the next, and one too big for what's left of
+           a row starts the next, its cards wrapping inside it. The panel is
+           solid, like the cards: the fun themes animate the page background
+           behind the grid, and bare text over it was unreadable (CGA's
+           dithering, Vaporwave's sun). */
+        .stats-grid.stats-grid-grouped { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; }
+        /* At least as wide as its heading's name, which never wraps (a
+           one-card panel squeezed "PROTOCOL RECORDS" onto two lines) - and,
+           while the heading carries tshark's finished line, as wide as the
+           whole heading on one line, up to the row's width: in a one-card
+           panel it stacked a word or two to a line */
+        .stats-group { flex: 0 1 calc(var(--cards) * 120px + 14px); min-width: min-content; padding: 8px 10px 10px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 10px; }
+        .stats-group.collapsed { flex: 0 1 auto; padding-bottom: 8px; }
+        .stats-group-cards { display: grid; grid-template-columns: repeat(auto-fill, 112px); gap: 8px; }
+        /* the cards' label color (.stat-label): readable on every theme, where
+           --text-primary isn't always (Breadbin Blue's is the dimmer one) */
+        .stats-grid-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; padding: 0 2px 8px; color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+        .stats-grid-heading.collapsed { padding-bottom: 0; }
+        .stats-grid-heading { cursor: pointer; user-select: none; }
+        .stats-grid-heading:hover { color: var(--text-bright); }
+        .stats-group:has(.stats-grid-heading-aside:not([hidden])) { min-width: fit-content; }
+        .stats-grid-heading-toggle { all: unset; white-space: nowrap; display: inline-flex; align-items: baseline; gap: 6px; cursor: pointer; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; }
+        .stats-grid-heading-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+        .stats-grid-heading-summary { font-weight: normal; text-transform: none; letter-spacing: normal; color: var(--text-bright); }
+        .stats-grid-heading-summary[hidden] { display: none; }
+
+        /* A Findings group's records, in its expanded row (loadFindingMembers) */
+        .finding-members-summary { color: var(--text-muted); font-size: 0.85rem; margin: 2px 0 10px; }
+        .finding-members-note { color: var(--text-muted); font-size: 0.85rem; padding: 6px 0; }
+        .finding-members-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .finding-members-table th { text-align: left; color: var(--text-muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--border-color); }
+        .finding-members-table td { padding: 4px 8px; border-bottom: 1px solid var(--border-color); }
+        .finding-members-table tr[data-action] { cursor: pointer; }
+        .finding-members-table tr[data-action]:hover { background: var(--bg-hover); }
+        .stat-card.stat-card-collapsed { display: none; }
+        .stats-grid-heading-aside { margin-left: auto; font-weight: normal; text-transform: none; letter-spacing: normal; }
+        .stats-grid-heading-aside[hidden] { display: none; }
+        .stats-grid-heading-aside .stat-badge-dot { margin-right: 6px; vertical-align: 1px; }
+        /* Every card one height - room for a two-line label ("DNS
+           HEURISTICS"), its number and label centered - so a section whose
+           labels wrap isn't taller than the one beside it */
+        .stat-card { background: var(--bg-secondary); padding: 10px 8px; min-height: 76px; display: flex; flex-direction: column; justify-content: center; border-radius: 10px; border: 1px solid var(--border-color); text-align: center; cursor: pointer; position: relative; }
         .stat-card:hover { border-color: var(--interactive-highlight, var(--accent)); }
         .stat-card.tab-active { border-color: var(--interactive-highlight, var(--accent)); background: var(--bg-tertiary); }
         /* A stat-card gets .keyboard-selected from Up/Down (the active tab's
@@ -1382,20 +1437,24 @@
         .fun-theme .stat-card::after { bottom: 0; background-position: bottom left, bottom left, bottom right, bottom right; }
         .fun-theme .stat-card:hover::before, .fun-theme .stat-card:hover::after,
         .fun-theme .stat-card.tab-active::before, .fun-theme .stat-card.tab-active::after { opacity: 1; }
-        /* Fluid, not fixed - a large sample can have 20+ event-type cards
-           in the auto-fit grid below, squeezing each card down to its
-           140px minmax floor; a fixed 2.5rem digit size overflowed cards
-           that narrow once counts hit 6-7 digits (e.g. "207,010"). Scaled
-           off the card's own width (container query, not viewport) so it
-           adapts to however many columns actually end up on screen,
-           clamped so it never shrinks below legible or grows past the
-           original 2.5rem on a roomy card. buildStats() always shows a
-           single plain count now (never a longer "filtered / total"
-           string - see its own comment), so white-space: nowrap is safe:
-           a lone number has no space to wrap on anyway. */
-        .stat-number { font-size: clamp(1.15rem, 15cqw, 2.5rem); font-weight: bold; white-space: nowrap; }
-        .stat-label { color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; word-break: keep-all; overflow-wrap: normal; line-height: 1.2; }
-        @media (max-width: 600px) { .stat-card { padding: 15px 10px; } .stat-number { font-size: 1.8rem; } .stat-label { font-size: 0.75rem; letter-spacing: 0.5px; } }
+        /* One size on every card, as every card is one width (.stats-grid):
+           sized to the card, it grew on a section's roomier cards and set
+           them apart. 1.25rem keeps a 7-digit count ("1,234,567") inside a
+           112px card. buildStats() always shows a single plain count (never
+           a longer "filtered / total" string - see its own comment), so
+           white-space: nowrap is safe: a lone number has no space to wrap
+           on anyway. */
+        .stat-number { font-size: 1.25rem; font-weight: bold; white-space: nowrap; line-height: 1.25; }
+        /* Never breaks inside a word - a word too long for its card is
+           scaled down to fit instead (socrates.js fitStatLabels) */
+        .stat-label { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; word-break: keep-all; overflow-wrap: normal; line-height: 1.2; }
+        /* tshark: a tab for a protocol Suricata doesn't parse - a dot in
+           the card's corner (the tshark line, which starts with the same dot, says what it
+           means), so the card keeps its two lines */
+        .stat-badge, .stat-badge-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+        .stat-badge { position: absolute; top: 6px; right: 6px; }
+        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+        @media (max-width: 600px) { .stat-label { font-size: 0.7rem; letter-spacing: 0.5px; } }
         .section { background: var(--bg-secondary); overflow: hidden; }
         .section-hidden { display: none; }
         .section-header { background: var(--bg-tertiary); padding: 15px 20px; font-size: 1.1rem; font-weight: 600; color: var(--text-bright); }
@@ -1408,6 +1467,8 @@
         th { text-align: left; padding: 12px; background: var(--bg-tertiary); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); cursor: pointer; position: sticky; top: 0; z-index: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         th:hover { background: var(--bg-hover); }
         td { padding: 12px; border-bottom: 1px solid var(--border-color); overflow-wrap: break-word; vertical-align: top; }
+        /* Log values (e.g. a long CommandLine) have no spaces to break at; let them wrap so the table fits the page */
+        #section-log td, #section-sigmaalert td { overflow-wrap: anywhere; }
         tr { cursor: pointer; }
         tr:hover { background: var(--bg-tertiary); }
         /* Arrow-key (Up/Down) row navigation highlight - an inset outline
@@ -1629,6 +1690,39 @@
         .settings-number-input { width: 120px; }
         .settings-text-input { width: 100%; box-sizing: border-box; text-align: left; padding: 6px 8px; font-size: 0.85rem; }
         .notes-textarea { width: 100%; min-height: 160px; resize: vertical; padding: 8px 10px; font-size: 0.9rem; box-sizing: border-box; }
+        .custom-rules-hint { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 10px; }
+        /* The editor's text is drawn twice: transparent in the textarea (caret,
+           selection, typing) and in color in the <pre> behind it - every
+           property placing a character must match between the two. No bold or
+           italic: a font's bold can be wider and push the layers apart */
+        .custom-rules-editor { position: relative; }
+        .custom-rules-textarea, .custom-rules-highlight { font-family: monospace; font-size: 0.8rem; line-height: 1.5; padding: 8px 10px; tab-size: 8; white-space: pre; overflow-wrap: normal; letter-spacing: normal; }
+        .custom-rules-textarea { position: relative; z-index: 1; display: block; min-height: 280px; overflow-x: auto; background: transparent; color: transparent; caret-color: var(--text-primary); }
+        .custom-rules-textarea::placeholder { color: var(--text-muted); }
+        .custom-rules-textarea::selection { color: transparent; background: color-mix(in srgb, var(--accent) 35%, transparent); }
+        .custom-rules-highlight { position: absolute; inset: 0; margin: 0; overflow: hidden; pointer-events: none; box-sizing: border-box; border: 1px solid transparent; border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); }
+        .custom-rules-highlight-lines { display: inline-block; min-width: 100%; }
+        .cr-line { display: block; }
+        .cr-problem { background: color-mix(in srgb, var(--badge-warning-text) 12%, transparent); box-shadow: inset 0 -1px 0 var(--badge-warning-text); }
+        .cr-comment { color: var(--text-muted); }
+        .cr-action { color: var(--tag-red-text); }
+        .cr-proto { color: var(--tag-purple-text); }
+        .cr-dir, .cr-paren { color: var(--text-bright); }
+        .cr-keyword { color: var(--tag-blue-text); }
+        .cr-string { color: var(--tag-green-text); }
+        .cr-hex, .cr-number { color: var(--tag-orange-text); }
+        .cr-forbidden { color: var(--badge-danger-text); text-decoration: underline wavy; }
+        /* Light themes whose tag colors are too pale for small monospace text -
+           darker colors from the same palettes, for the editor only */
+        [data-theme="catppuccin-latte"] .cr-proto { color: #8839ef; }
+        [data-theme="catppuccin-latte"] .cr-hex, [data-theme="catppuccin-latte"] .cr-number { color: #e64553; }
+        [data-theme="rose-pine"] .cr-comment { color: #797593; }
+        [data-theme="rose-pine"] .cr-hex, [data-theme="rose-pine"] .cr-number { color: #b4637a; }
+        .custom-rules-problems { color: var(--badge-warning-text); font-size: 0.85rem; margin: 10px 0 0; padding-left: 20px; max-height: 160px; overflow-y: auto; }
+        .custom-rules-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.85rem; color: var(--text-primary); }
+        .custom-rules-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+        .custom-rules-row .custom-rules-meta { color: var(--text-muted); }
+        .custom-rules-row button { margin-left: auto; background: none; color: var(--accent); border: none; padding: 0; cursor: pointer; font-size: 0.8rem; text-decoration: underline; }
         .pagination-btn { background: var(--accent); color: var(--bg-primary); border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
         .pagination-btn:hover:not(:disabled) { background: var(--accent-hover); }
         .pagination-btn:disabled { opacity: 0.4; cursor: default; }
@@ -1653,7 +1747,7 @@
            copyright links either side of it. */
         @media (max-width: 760px) { .footer-center { display: none; } }
         .drop-zone-active { border-color: var(--interactive-highlight, var(--accent)) !important; background: var(--bg-drop-active) !important; }
-        .sankey-panel { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 20px; position: relative; overflow: hidden; }
+        .sankey-panel, .traffic-map-panel { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 20px; position: relative; overflow: hidden; }
         .agg-panel { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 20px; position: relative; overflow: hidden; }
         .data-panel { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 20px; position: relative; overflow: hidden; }
         /* Same HUD corner-bracket accent as .stat-card/.pivot-menu (see
@@ -1737,6 +1831,72 @@
         .sankey-title { fill: var(--text-muted); font-size: 12px; font-weight: 600; text-transform: uppercase; }
         .search-bar { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 15px; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; }
         body.file-analysis #sankeyPanel { display: none !important; }
+        body.file-analysis #trafficMapPanel { display: none !important; }
+        /* Traffic Map (createTrafficMap() in socrates.js): two canvases
+           stacked in .tm-stage, translucent panels over the map's
+           oceans, and the timeline under it. Colors are the theme's own;
+           alerts' severity colors come in from the script (--sev). */
+        .tm-loading { padding: 20px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
+        .traffic-map { border-top: 1px solid var(--border-color); }
+        .tm-stage { position: relative; height: 480px; overflow: hidden; background: var(--bg-secondary); }
+        .tm-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+        .tm-panel { position: absolute; top: 12px; width: 210px; max-height: calc(100% - 24px); overflow: hidden; padding: 10px 12px; border-radius: 8px; font-size: 0.78rem;
+            background: color-mix(in srgb, var(--bg-tertiary) 72%, transparent); border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+            backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+        .tm-panel-left { left: 12px; }
+        .tm-panel-right { right: 12px; width: 270px; }
+        .tm-panel h4 { margin: 8px 0 4px; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .1em; color: var(--text-muted); }
+        .tm-panel-right h4 { margin-top: 0; }
+        .tm-stats { display: flex; gap: 12px; }
+        .tm-stat { display: flex; flex-direction: column; }
+        .tm-stat span { font-size: 1.15rem; font-weight: 600; color: var(--text-bright); font-variant-numeric: tabular-nums; line-height: 1.2; }
+        .tm-stat small { font-size: 0.66rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .08em; }
+        .tm-stat-alert span { color: var(--badge-danger-text); }
+        .tm-top { list-style: none; margin: 0; padding: 0; }
+        .tm-top button { display: grid; grid-template-columns: 24px 1fr auto; gap: 6px; align-items: center; width: 100%; padding: 2px 4px; border: 0; border-radius: 4px;
+            background: none; color: var(--text-primary); font: inherit; text-align: left; cursor: pointer; }
+        .tm-top button:hover, .tm-top button:focus-visible { background: var(--bg-hover); outline: none; }
+        .tm-top button.on { background: var(--bg-hover); box-shadow: inset 2px 0 0 var(--interactive-highlight, var(--accent)); }
+        .tm-top .cc { font-family: monospace; font-size: 0.7rem; color: var(--text-muted); }
+        .tm-top .nm { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; position: relative; }
+        .tm-top .bar { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--accent); border-radius: 1px; opacity: .8; }
+        .tm-top .n { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 0.72rem; }
+        .tm-feed { list-style: none; margin: 0; padding: 0; }
+        .tm-feed li { position: relative; padding: 5px 8px 5px 12px; margin-bottom: 5px; border-radius: 6px; background: color-mix(in srgb, var(--bg-secondary) 70%, transparent); animation: tm-feed-in .45s ease-out; }
+        .tm-feed li::before { content: ''; position: absolute; left: 0; top: 5px; bottom: 5px; width: 3px; border-radius: 2px; background: var(--sev); }
+        .tm-feed .sig { color: var(--text-bright); line-height: 1.3; font-size: 0.74rem; }
+        .tm-feed .meta { color: var(--text-muted); font-size: 0.68rem; margin-top: 2px; font-family: monospace; overflow-wrap: anywhere; }
+        .tm-feed .empty { color: var(--text-muted); background: none; animation: none; padding-left: 0; }
+        .tm-feed .empty::before { display: none; }
+        @keyframes tm-feed-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+        @media (prefers-reduced-motion: reduce) { .tm-feed li { animation: none; } }
+        .tm-tooltip { position: absolute; z-index: 2; pointer-events: none; padding: 6px 10px; border-radius: 6px; font-size: 0.76rem; white-space: nowrap;
+            background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); box-shadow: 0 4px 18px rgba(0,0,0,.35); }
+        .tm-tooltip b { color: var(--text-bright); }
+        .tm-tip-hint { color: var(--text-muted); font-size: 0.7rem; }
+        .tm-note { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 60%; padding: 10px 16px; border-radius: 8px; text-align: center;
+            background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-muted); font-size: 0.85rem; }
+        .tm-credit { position: absolute; right: 10px; bottom: 6px; font-size: 0.66rem; color: var(--text-muted); text-decoration: none; opacity: .8; }
+        .tm-credit:hover { color: var(--accent); opacity: 1; }
+        .tm-timeline { display: grid; grid-template-columns: auto auto 1fr auto auto auto; gap: 14px; align-items: center; padding: 8px 14px;
+            border-top: 1px solid var(--border-color); font-size: 0.78rem; }
+        .tm-play { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; display: grid; place-items: center; }
+        .tm-play:hover, .tm-play:focus-visible { background: color-mix(in srgb, var(--accent) 15%, transparent); border-color: var(--interactive-highlight, var(--accent)); outline: none; }
+        .tm-clock { display: flex; flex-direction: column; min-width: 84px; }
+        .tm-clock span { font-family: monospace; font-size: 0.95rem; color: var(--text-bright); }
+        .tm-clock small { color: var(--text-muted); font-size: 0.68rem; }
+        .tm-track { position: relative; height: 40px; cursor: pointer; touch-action: none; }
+        .tm-track canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+        .tm-head { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text-bright); border-radius: 1px; box-shadow: 0 0 6px var(--accent); pointer-events: none; }
+        .tm-opt { color: var(--text-muted); display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+        .tm-opt select { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 2px 4px; font: inherit; max-width: 150px; }
+        @media (max-width: 900px) {
+            .tm-stage { height: 360px; }
+            .tm-panel-left { display: none; }
+            .tm-panel-right { top: auto; bottom: 22px; left: 12px; right: 12px; width: auto; max-height: 35%; }
+            .tm-timeline { grid-template-columns: auto 1fr; }
+            .tm-clock, .tm-opt { display: none; }
+        }
         .file-info-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; margin-bottom: 20px; }
         .file-info-card h3 { color: var(--accent); margin: 0 0 15px 0; font-size: 1rem; text-transform: uppercase; }
         .file-info-grid { display: grid; grid-template-columns: 200px 1fr; gap: 8px 12px; font-size: 0.9rem; }

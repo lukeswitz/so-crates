@@ -10,7 +10,10 @@ import os
 import socket
 import ssl
 import tempfile
+import time
 from urllib.parse import urljoin, urlparse
+
+import config
 
 from validators import resolve_safe_ips, validate_url_safety
 
@@ -60,7 +63,24 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
-def fetch_url_safely(url, timeout, max_size, tmp_dir, chunk_size=64 * 1024):
+def _network(call, *args):
+    """A request, response or read - with what the network can go wrong
+    with (refused, reset, a certificate that won't verify, a timeout, a
+    malformed reply) raised as the ValueError the caller reports, rather
+    than as whatever http.client or ssl raised. Not the file writes: a full
+    disk is no network error."""
+    try:
+        return call(*args)
+    except ssl.SSLCertVerificationError as e:
+        raise ValueError(f"The server's certificate could not be verified ({e.verify_message})") from e
+    except (TimeoutError, socket.timeout) as e:
+        raise ValueError('The server took too long to answer') from e
+    except (OSError, http.client.HTTPException) as e:
+        reason = getattr(e, 'strerror', None) or str(e) or type(e).__name__
+        raise ValueError(f'Could not download the URL: {reason}') from e
+
+
+def fetch_url_safely(url, timeout, max_size, tmp_dir, chunk_size=64 * 1024, max_seconds=None):
     """Download a URL while guarding against SSRF.
 
     Every hop -- including redirect targets -- is validated with
@@ -74,9 +94,17 @@ def fetch_url_safely(url, timeout, max_size, tmp_dir, chunk_size=64 * 1024):
     Returns the path to a temp file (under tmp_dir) containing the
     downloaded body -- streamed directly to disk rather than buffered in
     memory, so peak memory doesn't scale with the response size.
-    Raises ValueError on validation/protocol failures, or FileTooLargeError
-    if the body exceeds max_size.
+    Raises ValueError on validation, network or protocol failures, or a
+    download that takes longer than max_seconds in all
+    (config.URL_DOWNLOAD_MAX_SECONDS by default - timeout is each read's),
+    or FileTooLargeError if the body exceeds max_size.
     """
+    deadline = time.monotonic() + (config.URL_DOWNLOAD_MAX_SECONDS if max_seconds is None else max_seconds)
+
+    def read(resp):
+        if time.monotonic() > deadline:
+            raise ValueError('The download took too long')
+        return _network(resp.read, chunk_size)
     current_url = url
     for _ in range(MAX_URL_REDIRECTS + 1):
         validate_url_safety(current_url)
@@ -92,8 +120,8 @@ def fetch_url_safely(url, timeout, max_size, tmp_dir, chunk_size=64 * 1024):
         conn_cls = PinnedHTTPSConnection if parsed.scheme == 'https' else PinnedHTTPConnection
         conn = conn_cls(hostname, pinned_ips, port, timeout)
         try:
-            conn.request('GET', path, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = conn.getresponse()
+            _network(lambda: conn.request('GET', path, headers={'User-Agent': 'Mozilla/5.0'}))
+            resp = _network(conn.getresponse)
 
             if resp.status in (301, 302, 303, 307, 308):
                 location = resp.getheader('Location')
@@ -103,7 +131,7 @@ def fetch_url_safely(url, timeout, max_size, tmp_dir, chunk_size=64 * 1024):
                 # before we ever look at Location.
                 total = 0
                 while True:
-                    chunk = resp.read(chunk_size)
+                    chunk = read(resp)
                     if not chunk:
                         break
                     total += len(chunk)
@@ -122,7 +150,7 @@ def fetch_url_safely(url, timeout, max_size, tmp_dir, chunk_size=64 * 1024):
                 total = 0
                 with os.fdopen(fd, 'wb') as f:
                     while True:
-                        chunk = resp.read(chunk_size)
+                        chunk = read(resp)
                         if not chunk:
                             break
                         total += len(chunk)

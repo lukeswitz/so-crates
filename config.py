@@ -30,6 +30,7 @@ MAX_HEXDUMP_PACKETS = 500
 # Timeouts (seconds)
 STREAM_TIMEOUT_SECONDS = 60
 URL_DOWNLOAD_TIMEOUT = 30
+URL_DOWNLOAD_MAX_SECONDS = 3600            # a whole download (URL_DOWNLOAD_TIMEOUT is per read, which a trickle never trips)
 SQLITE_TIMEOUT_SECONDS = 30
 FILE_COMMAND_TIMEOUT = 10
 RULES_DOWNLOAD_TIMEOUT = 60
@@ -37,7 +38,12 @@ YARA_SCAN_TIMEOUT = 300
 SURICATA_UPDATE_TIMEOUT = 60
 SURICATA_SOURCE_RECONCILE_TIMEOUT = 30      # per enable-source/disable-source subprocess call
 SURICATA_RUN_TIMEOUT = 300                 # 5 minutes max for a single PCAP
+SURICATA_TEST_TIMEOUT = 30                 # `suricata -T` checking saved custom rules - they load alone, in well under a second
+CUSTOM_RULES_MAX_BYTES = 1024 * 1024       # 1 MB of custom Suricata rules text
+CUSTOM_RULES_MAX_COUNT = 5000              # custom Suricata rules
 SIGMA_RUN_TIMEOUT = 300                    # 5 minutes max for Zircolite log analysis
+SHARK_RUN_TIMEOUT = 1800                   # 30 minutes max for one tshark run - it runs in the background at low priority, after Suricata
+STALE_TMP_SECONDS = 2 * 3600               # what a dead server left in /tmp is removed at startup once this old (storage.cleanup_stale_tmp) - well past the longest anything there lives, a tshark run's folder (SHARK_RUN_TIMEOUT, plus the 10 minutes the build gets after it)
 
 # Live capture (user-initiated only - see live_capture.py)
 CAPTURE_DEFAULT_DURATION = 60              # seconds pre-filled in the Capture dialog
@@ -89,9 +95,35 @@ MAX_STRINGS_READ_SIZE = 2 * 1024 * 1024    # 2 MB cap for string extraction
 MAX_ZIP_MEMBERS = 100                      # files per uploaded ZIP - each member becomes its own analysis (and pcaps each spawn a Suricata process), so an unbounded count is a fork-bomb vector
 MAX_STREAM_TEXT_OUTPUT = 4 * 1024 * 1024   # 4 MB cap on raw tshark/tcpdump text read for transcripts/hexdumps - the response is trimmed to MAX_TRANSCRIPT_* far below this; without a read cap a huge stream buffers fully in RAM first
 MAX_STREAM_DOWNLOAD_SIZE = 200 * 1024 * 1024  # 200 MB cap on a carved-stream pcap download; larger streams get a 413 rather than a partial (corrupt) file
+MAX_TRANSCRIPT_CARVE_SIZE = 16 * 1024 * 1024  # 16 MB cap on the flow carved for an ASCII transcript - it's held in memory, and written to /tmp (often RAM), and the transcript shows no more than MAX_TRANSCRIPT_LINES/MAX_TRANSCRIPT_SIZE anyway; a longer flow is read up to the cut and marked truncated
 MAX_ENTROPY_READ_SIZE = 10 * 1024 * 1024   # 10 MB cap for entropy calculation
 MAX_RAW_STREAM_SIZE = 10 * 1024 * 1024     # 10 MB cap on /api/raw-stream's exact payload bytes - it feeds the browser (CyberChef), which gets sluggish well before MAX_STREAM_DOWNLOAD_SIZE; larger payloads get a 413, never a truncated one
 MAX_EXTRACTED_FILE_SIZE = 25 * 1024 * 1024  # 25 MB cap on /api/extracted-file, for the same reason
+
+# Email (.eml) analysis - see email_analyzer.py. These bound the memory,
+# event count and nesting a crafted message can produce; what they cut off
+# is reported as a warning on the email.
+MAX_EMAIL_ATTACHMENTS = 100                # attachments decoded and analyzed per message (nested forwards included)
+MAX_EMAIL_LINKS = 1000                     # link events per message
+MAX_EMAIL_DEPTH = 5                        # levels of forwarded messages (message/rfc822 parts) parsed
+MAX_EMAIL_MESSAGES = 50                    # forwarded messages parsed per upload, at any depth
+MAX_EMAIL_SIZE = 100 * 1024 * 1024         # bigger .eml files are analyzed as plain files - parsing holds the message and its decoded attachments in memory
+MAX_EMAIL_BODY_CHARS = 65536               # characters of body text kept in the email event
+
+# tshark (shark_analyzer.py) - a run's memory grows with a capture's
+# packet count (its connections, really), not its size: tshark's own and
+# the build's flow table together, ~1.1 KB per packet measured - 2.9 GB
+# for the 2.27 million packets of a 209 MB capture, 3.9 GB for 3.53
+# million. A run whose processes together pass SHARK_MAX_MEMORY_BYTES is
+# stopped, and only captures up to SHARK_BACKGROUND_MAX_PACKETS are
+# analyzed without being asked - bigger ones run when the user requests
+# them (and may hit the memory limit). 3 million keeps a run that starts
+# on its own about 0.7 GB under the limit.
+SHARK_MAX_MEMORY_BYTES = 4 * 1024 ** 3
+SHARK_BACKGROUND_MAX_PACKETS = 3_000_000
+# ... and only up to this size when the packets can't be counted (no capinfos)
+SHARK_BACKGROUND_MAX_BYTES = 250 * 1024 * 1024
+SHARK_MEMORY_CHECK_SECONDS = 0.5
 
 # Thresholds
 STALE_THRESHOLD_SECONDS = 600              # 10 minutes

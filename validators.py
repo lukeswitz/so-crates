@@ -29,6 +29,7 @@ BLOCKED_NETWORKS = [
     # listing here: it's where Tailscale tailnets and ISP-internal hosts live.
     ipaddress.ip_network('100.64.0.0/10'),
 ]
+_NAT64_NETWORK = ipaddress.ip_network('64:ff9b::/96')
 
 
 def _ip_is_blocked(ip):
@@ -38,12 +39,19 @@ def _ip_is_blocked(ip):
     network list could miss (0.0.0.0 -> localhost on Linux, fe80::/10,
     multicast, reserved); the BLOCKED_NETWORKS loop is kept as an explicit,
     version-independent floor, and is the only thing that catches CGNAT.
-    An IPv4-mapped IPv6 address (::ffff:a.b.c.d) is judged as the IPv4
-    address it maps to, so it can't route around that list.
+    An IPv6 address carrying an IPv4 one - mapped (::ffff:a.b.c.d), 6to4
+    (2002:aabb:ccdd::) or NAT64 (64:ff9b::a.b.c.d) - is judged as that
+    IPv4 address too, so it can't route around that list on a host with
+    6to4 or NAT64 routing.
     """
     mapped = getattr(ip, 'ipv4_mapped', None)
     if mapped is not None:
         return _ip_is_blocked(mapped)
+    sixtofour = getattr(ip, 'sixtofour', None)
+    if sixtofour is not None and _ip_is_blocked(sixtofour):
+        return True
+    if ip.version == 6 and ip in _NAT64_NETWORK and _ip_is_blocked(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)):
+        return True
     if (ip.is_unspecified or ip.is_loopback or ip.is_link_local
             or ip.is_reserved or ip.is_multicast or ip.is_private):
         return True
@@ -76,17 +84,22 @@ def validate_port(port_str):
 
 
 RESERVED_FILENAMES = {
-    'events.db', 'eve.json', 'name.txt', 'notes.txt', '.meta', '.phase', '.error',
+    'events.db', 'eve.json', 'name.txt', 'notes.txt', '.meta', '.phase', '.error', '.warnings',
+    # SQLite's files beside events.db (WAL mode - see db.py)
+    'events.db-wal', 'events.db-shm',
     # Analyzer output artifacts: an upload with one of these names would be
     # overwritten mid-scan (result spoofing) or deleted by reanalyze's
     # artifact sweep. Keep in sync with PCAP_ANALYSIS_ARTIFACTS /
-    # FILE_ANALYSIS_ARTIFACTS in socrates.py.
+    # FILE_ANALYSIS_ARTIFACTS in storage.py.
     'yara_matches.json', 'sigma_matches.json', 'zircolite.log',
     '.zircolite_events.db', 'file_metadata.json',
     # Suricata's own outputs - an upload named stats.log would be appended
     # to by Suricata while Suricata is reading it; 'filestore' is the
     # directory it extracts files into.
     'fast.log', 'stats.log', 'suricata.log', 'filestore',
+    # tshark (shark_analyzer.py): its database (and SQLite's WAL/SHM
+    # siblings), the one it builds before renaming, and its error file.
+    'shark.db', 'shark.db-wal', 'shark.db-shm', 'shark.db.tmp', '.shark_error',
 }
 
 
@@ -111,7 +124,24 @@ def sanitize_filename(filename):
         raise ValueError(f'Reserved filename not allowed: {safe}')
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in safe):
         raise ValueError(f'Filename contains control characters: {filename!r}')
-    return safe
+    return _shortened(safe)
+
+
+# Filesystems take 255 bytes a name; this leaves room for the suffixes the
+# app adds to one (a download's temp name)
+_MAX_FILENAME_BYTES = 200
+
+
+def _shortened(name):
+    """A name too long to save, cut to fit - keeping its extension, which
+    its type is detected by."""
+    if len(name.encode('utf-8')) <= _MAX_FILENAME_BYTES:
+        return name
+    stem, ext = os.path.splitext(name)
+    if len(ext.encode('utf-8')) > 20:
+        stem, ext = name, ''
+    budget = _MAX_FILENAME_BYTES - len(ext.encode('utf-8'))
+    return stem.encode('utf-8')[:budget].decode('utf-8', 'ignore') + ext
 
 
 def is_safe_path(base, path):
@@ -345,6 +375,7 @@ def is_file_stale(path, max_age_hours):
 
 
 LOG_EXTENSIONS = ('.evtx', '.json', '.jsonl', '.csv', '.xml', '.log')
+EMAIL_EXTENSIONS = ('.eml',)
 OFFICE_EXTENSIONS = ('.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
                      '.docm', '.xlsm', '.pptm', '.odt', '.ods', '.odp')
 
@@ -363,6 +394,62 @@ def _is_mostly_text(data):
     text_chars = set(bytes(range(32, 127)) + b'\t\n\r')
     text_count = sum(1 for b in data if b in text_chars)
     return text_count / len(data) > 0.7
+
+
+# A header field: a token-like name (RFC 5322 allows more, but real header
+# names are letters, digits and hyphens - and a JSON line's '{"Key":' must
+# not pass), then ':' and whitespace ("Date: Tue, 3 Feb 2026 ...").
+_MAIL_HEADER_RE = re.compile(rb'^([A-Za-z][A-Za-z0-9-]*):[ \t]')
+# Header names only a mail message has, one of which must appear - so a
+# file of 'Key: value' lines (a config, a plain-text log) isn't an email.
+_MAIL_HEADER_NAMES = {
+    b'from', b'to', b'cc', b'subject', b'date', b'received', b'return-path',
+    b'message-id', b'mime-version', b'delivered-to', b'reply-to',
+    b'x-mailer', b'authentication-results', b'dkim-signature', b'x-received',
+}
+
+
+def _looks_like_mail_headers(data):
+    """True if data starts with an email message's header block (.eml):
+    at least two 'Name: value' fields, one of them a mail header (From,
+    Subject, Received, ...), allowing folded continuation lines (which
+    start with whitespace). Checked ahead of the CSV test in
+    is_log_file, which a header line with a comma in it - 'Date: Tue, 3
+    Feb ...' is a common first one - would otherwise pass, sending the
+    message to Sigma as a CSV log and leaving an empty analysis. A CSV
+    whose header row happens to look like a field still has data rows
+    that don't, so it isn't caught by this."""
+    # The last line may be cut off mid-way by the prefix length.
+    lines = data[:4096].split(b'\n')[:-1]
+    fields = 0
+    mail_header = False
+    for line in lines:
+        line = line.rstrip(b'\r')
+        if not line:
+            break
+        if line[:1] in (b' ', b'\t'):
+            if not fields:
+                return False
+            continue
+        m = _MAIL_HEADER_RE.match(line)
+        if not m:
+            return False
+        fields += 1
+        mail_header = mail_header or m.group(1).lower() in _MAIL_HEADER_NAMES
+        if fields >= 2 and mail_header:
+            return True
+    return False
+
+
+def is_email_file(data):
+    """Detect an email message (.eml) by its content - see
+    _looks_like_mail_headers."""
+    return _looks_like_mail_headers(data)
+
+
+def is_email_file_by_extension(filename):
+    """Check if filename has an email message extension (.eml)."""
+    return filename.lower().endswith(EMAIL_EXTENSIONS)
 
 
 def is_log_file(data):
@@ -422,6 +509,9 @@ def is_log_file(data):
         if first_line.startswith('<!doctype html') or first_line.startswith('<html'):
             return False
         return True
+    # An email message (.eml), not a CSV - see _looks_like_mail_headers
+    if _looks_like_mail_headers(data):
+        return False
     # CSV: detectable by commas in first line and newline
     first_line = data.split(b'\n')[0]
     if b',' in first_line and len(first_line) < 4096 and _is_mostly_text(first_line):
@@ -433,3 +523,148 @@ def is_log_file_by_extension(filename):
     """Check if filename has a known log file extension."""
     lower = filename.lower()
     return any(lower.endswith(ext) for ext in LOG_EXTENSIONS)
+
+
+# Custom Suricata rules (suricata_analyzer.save_custom_rules) are refused
+# outright if they use any of these: dataset/datarep can load a file by any
+# path and dataset can save one, iprep reads reputation files, the Lua
+# keywords run a script, and filemd5/filesha1/filesha256 load a hash list
+# by any path - a custom rule has no list of its own to point them at, so
+# all they could do is probe which files exist. A pasted rule can come from
+# anywhere, so these are screened out rather than sandboxed - the curated
+# sources keep their own use of them (IPFire DBL relies on datasets).
+CUSTOM_RULE_FORBIDDEN_KEYWORDS = frozenset({'dataset', 'datarep', 'iprep', 'lua', 'luajit', 'luaxform',
+                                            'filemd5', 'filesha1', 'filesha256'})
+
+
+def _rule_file_lines(text):
+    """('rule', line number, rule) for each rule in a rules file's text, read
+    the way Suricata's loader reads it: lines end at '\\n' only, a line
+    starting with '#', a space or a tab is skipped, and a rule continued
+    onto the next line with a trailing backslash is joined up, numbered by
+    its first line. ('indented', line number, text) for a skipped line that
+    holds more than a comment - a rule Suricata would never load."""
+    pending, start = None, 0
+    for number, line in enumerate(text.split('\n'), 1):
+        line = line.rstrip('\r')
+        if pending is None:
+            if not line.strip() or line.startswith('#'):
+                continue
+            if line[0] in ' \t':
+                if not line.strip().startswith('#'):
+                    yield 'indented', number, line.strip()
+                continue
+            pending, start = '', number
+        if line.rstrip().endswith('\\'):
+            pending += line.rstrip()[:-1]
+            continue
+        yield 'rule', start, pending + line.strip()
+        pending = None
+    if pending is not None:
+        yield 'rule', start, pending
+
+
+def custom_rule_lines(text):
+    """(line number, rule) for each rule Suricata would load from a rules
+    file's text - see _rule_file_lines."""
+    return [(number, rule) for kind, number, rule in _rule_file_lines(text) if kind == 'rule']
+
+
+# Characters Python would take for the end of a line but Suricata wouldn't
+# (or would read as part of the rule): a rule checked line by line here
+# must be the rule Suricata loads, or a forbidden keyword could hide behind
+# a stray carriage return
+_RULE_TEXT_CONTROL_RE = re.compile('[\x00-\x08\x0b-\x1f\x7f\x85\u2028\u2029]')
+
+
+def rule_options(rule):
+    """A Suricata rule's options as (keyword, value) pairs - keyword
+    lowercased, value None for a bare keyword. None when the rule has no
+    parenthesized options. Split on ';' the way Suricata does: only a
+    backslash-escaped ';' doesn't end an option, quotes or not. A keyword's
+    name inside content:"..." or msg:"..." is never mistaken for it."""
+    open_paren, close_paren = rule.find('('), rule.rfind(')')
+    if open_paren < 0 or close_paren < open_paren:
+        return None
+    options, current, i = [], '', 0
+    body = rule[open_paren + 1:close_paren]
+    while i < len(body):
+        ch = body[i]
+        if ch == '\\' and i + 1 < len(body):
+            current += body[i:i + 2]
+            i += 2
+            continue
+        if ch == ';':
+            options.append(current)
+            current = ''
+        else:
+            current += ch
+        i += 1
+    options.append(current)
+    pairs = []
+    for option in options:
+        if not option.strip():
+            continue
+        keyword, sep, value = option.partition(':')
+        pairs.append((keyword.strip().lower(), value.strip() if sep else None))
+    return pairs
+
+
+# An Emerging Threats Pro access code goes into its download URL's path
+# (suricata-update's et/pro source), so letters and digits only - nothing
+# that could change where the URL points.
+_ETPRO_CODE_RE = re.compile(r'[A-Za-z0-9]{8,64}')
+
+
+def is_valid_etpro_code(code):
+    return isinstance(code, str) and bool(_ETPRO_CODE_RE.fullmatch(code))
+
+
+def check_custom_rules(text, sid_range):
+    """The checks on custom Suricata rules that need no Suricata: size,
+    forbidden keywords, and each rule's sid - present, inside sid_range
+    (min, max), and used once. Returns (rule count, problems), problems a
+    list of {'line', 'message'} (line None for the whole text); Suricata's
+    own parser check comes after these pass."""
+    size = len(text.encode('utf-8'))
+    if size > config.CUSTOM_RULES_MAX_BYTES:
+        return 0, [{'line': None, 'message': f'The rules are {size:,} bytes - at most {config.CUSTOM_RULES_MAX_BYTES:,} are allowed'}]
+    if '\x00' in text:
+        return 0, [{'line': None, 'message': 'The rules contain a NUL byte - is this a text file?'}]
+    text = text.replace('\r\n', '\n')
+    control = _RULE_TEXT_CONTROL_RE.search(text)
+    if control:
+        return 0, [{'line': text.count('\n', 0, control.start()) + 1,
+                    'message': f'a control character (U+{ord(control.group()):04X}) - only tabs and line breaks belong in rules'}]
+    rules = custom_rule_lines(text)
+    if len(rules) > config.CUSTOM_RULES_MAX_COUNT:
+        return len(rules), [{'line': None, 'message': f'{len(rules):,} rules - at most {config.CUSTOM_RULES_MAX_COUNT:,} are allowed'}]
+    sid_min, sid_max = sid_range
+    problems, first_line_of_sid = [], {}
+    for kind, number, _line in _rule_file_lines(text):
+        if kind == 'indented':
+            problems.append({'line': number, 'message': 'starts with a space or tab - Suricata skips such a line, so this rule would never load'})
+    for number, rule in rules:
+        options = rule_options(rule)
+        if options is None:
+            problems.append({'line': number, 'message': 'not a rule - no options in parentheses'})
+            continue
+        for keyword, _value in options:
+            if keyword in CUSTOM_RULE_FORBIDDEN_KEYWORDS:
+                problems.append({'line': number, 'message': f'{keyword} is not allowed in custom rules'})
+        sids = [value for keyword, value in options if keyword == 'sid']
+        if not sids:
+            problems.append({'line': number, 'message': 'no sid'})
+            continue
+        try:
+            sid = int(sids[0])
+        except (TypeError, ValueError):
+            problems.append({'line': number, 'message': f'sid {sids[0]} is not a number'})
+            continue
+        if not sid_min <= sid <= sid_max:
+            problems.append({'line': number, 'message': f'sid {sid} is outside {sid_min}-{sid_max}, the range custom rules use'})
+        elif sid in first_line_of_sid:
+            problems.append({'line': number, 'message': f'sid {sid} is already used on line {first_line_of_sid[sid]}'})
+        else:
+            first_line_of_sid[sid] = number
+    return len(rules), problems

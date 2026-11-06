@@ -2190,5 +2190,68 @@ class TestRelatedFilePath(unittest.TestCase):
             self.assertEqual(events[0]['filealerts']['rule_name'], 'MALWARE_Test')
 
 
+
+class TestBulkImport(unittest.TestCase):
+    """create_sqlite_db loads a new events.db in batches, with its indexes
+    and full-text index built at the end (db._BulkLoad)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.db_file = os.path.join(self.tmpdir, 'events.db')
+        self.eve_file = os.path.join(self.tmpdir, 'eve.json')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _write_eve(self, events):
+        with open(self.eve_file, 'w') as f:
+            for e in events:
+                f.write((e if isinstance(e, str) else json.dumps(e)) + '\n')
+
+    def _index_names(self):
+        with sqlite3.connect(self.db_file) as conn:
+            return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index' "
+                                               "AND tbl_name = 'events' AND sql IS NOT NULL")}
+
+    def test_batches_keep_file_order_and_a_fileinfos_rowid(self):
+        events = [{'event_type': 'dns', 'timestamp': f'2026-01-01T00:00:{i:02d}', 'src_ip': f'10.0.0.{i}',
+                   'dns': {'rrname': f'host{i}.example'}} for i in range(10)]
+        events.insert(5, {'event_type': 'fileinfo', 'timestamp': '2026-01-01T00:00:05', 'fileinfo': {'sha256': 'd' * 64}})
+        self._write_eve(events)
+        with open(self.db_file.replace('events.db', 'file_metadata.json'), 'w') as f:
+            json.dump({'d' * 64: {'unique_marker': 'merged_into_the_right_row'}}, f)
+        with unittest.mock.patch.object(db, '_BULK_BATCH', 3):
+            db.create_sqlite_db(self.db_file, self.eve_file)
+        with sqlite3.connect(self.db_file) as conn:
+            rows = conn.execute('SELECT id, event_type, src_ip FROM events ORDER BY id').fetchall()
+            self.assertEqual([r[1] for r in rows], ['dns'] * 5 + ['fileinfo'] + ['dns'] * 5)
+            self.assertEqual([r[0] for r in rows], list(range(1, 12)))
+            marker = conn.execute("SELECT id FROM events WHERE json_data LIKE '%merged_into_the_right_row%'").fetchall()
+        self.assertEqual(marker, [(6,)], "the metadata went to the fileinfo's row")
+        for term in ('host0.example', 'host9.example', 'merged_into_the_right_row'):
+            self.assertEqual(len(db.query_events_sqlite(self.db_file, q=term)), 1, term)
+        with sqlite3.connect(self.db_file) as conn:
+            conn.execute("INSERT INTO events_fts(events_fts, rank) VALUES('integrity-check', 1)")
+        self.assertTrue({'idx_event_type', 'idx_timestamp', 'idx_src_dest_ip'} <= self._index_names())
+
+    def test_a_database_with_events_gets_them_row_by_row(self):
+        self._write_eve([{'event_type': 'dns', 'timestamp': '2026-01-01T00:00:00', 'dns': {'rrname': 'first.example'}}])
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        self._write_eve([{'event_type': 'dns', 'timestamp': '2026-01-01T00:00:01', 'dns': {'rrname': 'second.example'}}])
+        db.create_sqlite_db(self.db_file, self.eve_file)
+        for term in ('first.example', 'second.example'):
+            self.assertEqual(len(db.query_events_sqlite(self.db_file, q=term)), 1, term)
+
+    def test_an_import_that_fails_still_has_its_indexes(self):
+        """Never committed, it leaves no events - and, its indexes dropped
+        in the same transaction, all of them still there."""
+        self._write_eve([{'event_type': 'dns', 'timestamp': '2026-01-01T00:00:00', 'dns': {'rrname': 'kept.example'}},
+                         {'event_type': 'fileinfo', 'timestamp': '2026-01-01T00:00:01', 'fileinfo': 'not an object'}])
+        with self.assertRaises(AttributeError):
+            db.create_sqlite_db(self.db_file, self.eve_file)
+        self.assertTrue({'idx_event_type', 'idx_timestamp', 'idx_src_dest_ip'} <= self._index_names())
+        self.assertEqual(db.query_events_sqlite(self.db_file, q='kept.example'), [])
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

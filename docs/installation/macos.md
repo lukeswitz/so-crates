@@ -7,7 +7,7 @@ SO-CRATES runs natively on macOS, outside a container, using Homebrew for the to
 A helper script installs the tools and, optionally, Zircolite for Sigma log analysis:
 
 ```bash
-# suricata, suricata-update, yara, tshark/tcpdump, Zircolite, and CyberChef
+# suricata, suricata-update, yara, tshark/tcpdump, Zircolite, CyberChef, country data, Playbooks, and AI summaries
 sh scripts/setup-macos.sh
 
 # tools only, skip Zircolite / Sigma log analysis
@@ -24,6 +24,14 @@ brew install suricata yara wireshark
 
 `suricata-update` ships with the `suricata` formula and `tcpdump` is already present on macOS. `tshark` comes from either the `wireshark` formula or the Wireshark.app bundle. SO-CRATES reads the base Suricata configuration from the Homebrew location automatically — `/opt/homebrew/etc/suricata` on Apple Silicon, `/usr/local/etc/suricata` on Intel. Zircolite is detected under `DATA_DIR` (`~/socrates-data/zircolite/zircolite.py` by default), which is where `setup-macos.sh` puts it. CyberChef (Send to CyberChef, `/cyberchef/`) is served from `$DATA_DIR/cyberchef`; `setup-macos.sh` installs the pinned, checksum-verified release there, or run `sh scripts/fetch-cyberchef.sh ~/socrates-data/cyberchef` directly. Set `CYBERCHEF_DIR` to serve a copy from elsewhere.
 
+SO-CRATES runs `tshark` on every pcap to add the protocols Suricata doesn't parse, so `tshark` must be on your `PATH`. The `capinfos` and `editcap` tools that come with it should be there too. Without `capinfos`, SO-CRATES judges a capture by its size rather than its packet count when it decides whether to run `tshark` automatically.
+
+The Traffic Map and the `country:` search term need DB-IP's IP to Country Lite data (CC BY 4.0). `setup-macos.sh` downloads it and builds the index at `$DATA_DIR/geoip/country.bin.gz`. DB-IP publishes new data monthly, and the script skips the download once the index exists. To refresh it, run `sh scripts/fetch-geoip.sh ~/socrates-data/geoip`. Without the index, public addresses have no country. Set `GEOIP_DIR` to read the index from elsewhere.
+
+Alert details show Security Onion Playbooks and AI-generated rule summaries. `setup-macos.sh` clones the two Security Onion repositories that hold them and builds indexes at `$DATA_DIR/playbooks` and `$DATA_DIR/ai-summaries`. The script skips this step once the indexes exist. To refresh them, run `sh scripts/fetch-so-resources.sh ~/socrates-data`. Without the indexes, alert details leave those sections out. Set `PLAYBOOKS_DIR` or `AI_SUMMARIES_DIR` to read the indexes from elsewhere.
+
+If a capture has no packets, SO-CRATES skips Suricata and shows an empty analysis with a warning.
+
 Run the test suite with:
 
 ```bash
@@ -34,7 +42,7 @@ It installs the test dependencies into `.venv` on first run and uses that interp
 
 ## Capturing live traffic
 
-When SO-CRATES can open a capture device, the Welcome screen shows a **Capture live traffic from this Mac** option. It asks which interface and how long to capture, shows elapsed time, bytes and packet count while it runs, and hands the finished pcap straight to the normal Suricata pipeline. **Stop & Analyze Now** ends a capture early and keeps what it already recorded.
+When SO-CRATES can open a capture device, the Welcome screen shows a **Capture live traffic from this Mac** option. It asks which interface and how long to capture, shows elapsed time, bytes and packet count while it runs, and hands the finished pcap straight to the normal Suricata and `tshark` analysis. **Stop & Analyze Now** ends a capture early and keeps what it already recorded.
 
 Capture requires your user to hold packet-capture permission, which installing Wireshark provides via its ChmodBPF helper. Without it the option does not appear at all, rather than appearing and failing. SO-CRATES never invokes `sudo`: it captures as its own user or not at all, and it runs `tcpdump` non-promiscuously, so your interface's mode is never changed.
 
@@ -68,3 +76,6 @@ The token is generated on first run and persisted `0600` at `$DATA_DIR/.auth-tok
 | `BIND_ADDRESS` | `127.0.0.1` | Address to bind the HTTP server to |
 | `PORT` | `8000` | HTTP server port |
 | `AUTH_TOKEN` | generated | Session token; a literal value pins it, `off` disables the gate |
+| `GEOIP_DIR` | `$DATA_DIR/geoip` | Directory holding `country.bin.gz`, the country index |
+| `PLAYBOOKS_DIR` | `$DATA_DIR/playbooks` | Directory holding the Security Onion Playbooks indexes |
+| `AI_SUMMARIES_DIR` | `$DATA_DIR/ai-summaries` | Directory holding the AI summary indexes |

@@ -2,7 +2,7 @@
 
 ## Pivot Menu
 
-Clicking a value in a data table row, an expanded row's detail panel, or an aggregation table opens a pivot menu instead of immediately filtering or expanding the row:
+Clicking a value in a data table row, an expanded row's detail panel, or an aggregation table opens a pivot menu instead of immediately filtering or expanding the row. Right-clicking one opens the same menu; anywhere else, on a link, with text selected, or with Shift held, a right-click shows the browser's own menu instead (so Copy and Open in New Tab still work), and a right-click never expands or collapses a row:
 
 - **Expand Row / Collapse Row** - expand or collapse the row's detail panel (the row's timestamp cell also does this directly on click, without opening the menu)
 - **Acknowledge this alert / Acknowledge all instances of this alert** - on a Network Alert or Sigma Alert row, immediately removes it from view (or every row sharing the same signature/rule, for "all instances") and moves it into the **Acknowledged Alerts** tab. Reduced counts show up everywhere else the alert would have counted - its own tab, All Events, and the Sankey diagram
@@ -20,7 +20,7 @@ Values in a row's detail panel that aren't also a table column get a shorter men
 
 The menu also works on selected text. Select part of a detail-panel value - a drag or a double-clicked word inside it, such as a domain in an AI Summary or Playbook description - and the menu opens for just that text instead of the whole value. Selecting text in an ASCII transcript opens it too (see [Stream Analysis](#stream-analysis)). A selection gets the shorter menu, since a fragment isn't a value you can filter on.
 
-The **Acknowledged Alerts** stat-card tab (PCAP analyses only) is the only place acknowledged alerts still show, for review or undo - acknowledging is per-analysis and does not affect any other analysis. It groups Network Alerts and Sigma Alerts under separate sub-sections only when both have acknowledged rows; with just one type present, it displays as a single sortable table identical to that type's own tab. Un-acknowledging the last row switches you back to Network Alerts automatically.
+The **Acknowledged Alerts** stat-card tab (PCAP and log analyses, once something is acknowledged) is the only place acknowledged alerts still show, for review or undo - acknowledging is per-analysis and does not affect any other analysis. It groups Network Alerts and Sigma Alerts under separate sub-sections only when both have acknowledged rows; with just one type present, it displays as a single sortable table identical to that type's own tab. Un-acknowledging the last row switches you back to Network Alerts - or, in a log analysis, Sigma Alerts - automatically.
 
 ## AI Summary
 
@@ -44,4 +44,4 @@ Click a row's timestamp cell (or use the pivot menu's **Expand Row** entry) to e
 - **Download PCAP** - carve that specific stream into a standalone `.pcap` file
 - **Send to CyberChef** - open the stream's exact payload bytes in the built-in CyberChef, in a new tab: **Both** directions, or just the bytes sent by the **Source** or **Dest** side (their dots match the ASCII Transcript's red/blue direction colors). Unlike the transcript, nothing is replaced or trimmed, so XOR keys, compressed data and shellcode survive intact. Payloads up to 16 KB open with CyberChef's **Magic** operation already applied to suggest decodings; larger ones open with an empty recipe, since Magic can take minutes on them. Payloads over 10 MB aren't sent
 
-Expanded **File Info** rows for files Suricata extracted from the traffic have their own **Send to CyberChef** button, which opens the file's exact bytes the same way (up to 25 MB). Nothing is saved to disk by SO-CRATES either way, but CyberChef's own save button can, so treat what you save as potentially live malware.
+Expanded **File Info** rows for files Suricata extracted from the traffic - and for an email's attachments - have their own **Send to CyberChef** button, which opens the file's exact bytes the same way (up to 25 MB). Nothing is saved to disk by SO-CRATES either way, but CyberChef's own save button can, so treat what you save as potentially live malware.

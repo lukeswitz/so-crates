@@ -2,17 +2,17 @@
 
 Base URL: `http://localhost:8000`
 
-All endpoints return `Content-Type: application/json` unless noted. Errors return `{"error": "<message>"}` with the appropriate HTTP status code.
+All endpoints return `Content-Type: application/json` unless noted. Errors return `{"error": "<message>"}` with the appropriate HTTP status code - except `501` for an unsupported method, which is the HTTP server's own HTML error page.
 
 ## Request Requirements
 
 These apply to every request, before any endpoint-specific checks:
 
-- **Host header:** a DNS name other than `localhost` is rejected with `403` unless it's allowed by the `ALLOWED_HOSTS` environment variable (see [Configuration](configuration.md)); IP literals always work
+- **Host header:** a DNS name other than `localhost` or a `*.localhost` name is rejected with `403` unless it's allowed by the `ALLOWED_HOSTS` environment variable (see [Configuration](configuration.md)); IP literals always work, as does a request with no Host header (curl, scripts)
 - **Cross-site POSTs:** a POST whose `Origin` names an untrusted host, or whose `Sec-Fetch-Site` is `cross-site`, is rejected with `403`
-- **JSON bodies:** every POST endpoint that takes a JSON body - all of them except `/api/upload` (multipart) and `/api/csp-report` - requires `Content-Type: application/json` (`415` otherwise) and a JSON object body of at most 1 MB (`MAX_REQUEST_BODY_SIZE`)
+- **JSON bodies:** every POST endpoint that takes a JSON body - all of them except `/api/upload` (multipart) and `/api/csp-report` - requires `Content-Type: application/json` (`415` otherwise) and a JSON object body of at most 1 MB (`MAX_REQUEST_BODY_SIZE`) - `/api/custom-rules` takes up to about 2 MB, so 1 MB of rules still fits once JSON-escaped
 - **Methods:** only GET and POST are served. `HEAD` returns `405` with `Allow: GET, POST` and no body; other methods return `501`
-- **Unknown paths** return `404` with a JSON error
+- **Unknown paths** return `404` with a JSON error - except a missing file under `/socrates.html`, `/static/*` or `/cyberchef/*`, which gets the HTTP server's own HTML `404` page
 
 ## Static Paths
 
@@ -24,6 +24,10 @@ These apply to every request, before any endpoint-specific checks:
 | `/favicon.ico` | `204`, no body (each theme sets its own favicon) |
 
 Directory listings are never served (`404`).
+
+## Search Terms
+
+Every endpoint with a `q` parameter takes any number of them, ANDed together. A term is matched against the whole event (SQLite FTS5, or `LIKE` without it) - except a term of the form `country:XX`, which instead keeps events whose source or destination address is in country `XX` (an ISO 3166-1 alpha-2 code, any case), `country:LAN` (addresses that don't route on the internet) or `country:??` (no known country). It's the Traffic Map's click; two of them keep the traffic between those two countries. Countries come from the image's IP location data (`geo_lookup.py`) - without it, every public address is `??`. Sigma alerts have no addresses to place, so `/api/sigma-alerts` and `/api/sigma-count` ignore `country:` terms.
 
 ## GET Endpoints
 
@@ -37,15 +41,15 @@ Redirects to `/socrates.html`.
 
 Returns the running SO-CRATES version.
 
-**Response:** `{"version": "4.3.0"}`
+**Response:** `{"version": "5.2.0"}`
 
 ---
 
 ### `GET /api/version-check`
 
-Checks GitHub's releases API for a newer SO-CRATES version. Only ever called by the frontend if the user has opted in (the "Check GitHub for newer releases" checkbox in the About modal, or its manual "Check Now" button) - never fetched automatically otherwise.
+Checks GitHub's releases API for a newer SO-CRATES version. Only ever called by the frontend if the user has opted in (the "Check GitHub for newer SO-CRATES releases" checkbox in the About modal, or its manual "Check Now" button) - never fetched automatically otherwise.
 
-**Response:** `{"currentVersion": "<version>", "latestVersion": <string or null>, "updateAvailable": <boolean>}` - `latestVersion`/`updateAvailable` stay `null`/`false` on any failure to reach GitHub (never surfaces an error to the caller).
+**Response:** `{"currentVersion": "<version>", "latestVersion": <string or null>, "updateAvailable": <boolean>}` - `latestVersion` is `null` unless GitHub's latest release is newer than this one, and `latestVersion`/`updateAvailable` stay `null`/`false` on any failure to reach GitHub (never surfaces an error to the caller).
 
 ---
 
@@ -67,14 +71,14 @@ Tells the frontend whether the "Sync theme to OhMyDebn theme" toggle could ever 
 
 ### `GET /api/events`
 
-Returns event data from Suricata's eve.json (via SQLite index or direct JSON parse).
+Returns event data from the analysis's events.db (Suricata's eve.json events, imported).
 
 **Query Parameters:**
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
 | `md5` | Yes | - | MD5 hash of a historical analysis (`400` if omitted) |
-| `type` | No | all | Filter by event type - any `event_type` Suricata's eve.json can produce (see [Event Types](architecture/event-types.md)), plus the app's own synthetic types (`filealerts`, `log`, `protocol_decode`). Sigma alerts live in their own table and are served by `GET /api/sigma-alerts`, not here. |
+| `type` | No | all | Filter by event type - any `event_type` Suricata's eve.json can produce (see [Event Types](architecture/event-types.md)), plus the app's own synthetic types (`filealerts`, `log`, `protocol_decode`, and `email`/`link` in an email analysis). Sigma alerts live in their own table and are served by `GET /api/sigma-alerts`, not here. |
 | `q` | No | none | Full-text search query (searches all event JSON). Multiple `q` params AND together. |
 | `offset` | No | `0` | Pagination offset. A non-integer `offset` or `limit` returns an empty list (`200`), not an error |
 | `limit` | No | `1000` | Max events to return (capped at `MAX_QUERY_LIMIT`, 100,000 by default - see `GET /api/limits`) |
@@ -108,12 +112,13 @@ Returns event-type counts for the current or specified analysis.
 | `md5` | Yes | - | MD5 hash of a historical analysis |
 | `q` | No | none | Full-text search query (counts only matching events). Multiple `q` params AND together. |
 
-**Response:** `{"counts": <event type to count map>, "date_range": {"min": <timestamp or null>, "max": <timestamp or null>}}`
+**Response:** `{"counts": <event type to count map>, "date_range": {"min": <timestamp or null>, "max": <timestamp or null>}, "tshark_types": [<event type>, ...]}` - `tshark_types` lists the types tshark added to a PCAP analysis (protocols Suricata doesn't parse: records like `s7comm`, and connection types like `conn_openvpn`), empty until it has
 
 **Example:**
 ```json
-{"counts": {"alert": 42, "dns": 1500, "http": 380, "tls": 95, "flow": 2200},
- "date_range": {"min": "2026-02-03T11:13:50.123456+0000", "max": "2026-02-03T11:16:02.654321+0000"}}
+{"counts": {"alert": 42, "dns": 1500, "http": 380, "tls": 95, "flow": 2200, "s7comm": 310, "conn_openvpn": 2},
+ "date_range": {"min": "2026-02-03T11:13:50.123456+0000", "max": "2026-02-03T11:16:02.654321+0000"},
+ "tshark_types": ["conn_openvpn", "s7comm"]}
 ```
 
 ---
@@ -135,6 +140,23 @@ Returns total event count, optionally filtered by type or search query.
 
 ---
 
+### `GET /api/findings`
+
+Returns the analysis's findings: what its protocol records show is worth a look - a weakness, a control action, a probe - from every protocol, as the **Findings** tab lists them. The rules are in `findings.py`.
+
+**Query Parameters:**
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `md5` | Yes | - | MD5 hash of a historical analysis |
+| `q` | No | none | Full-text search query (only matching records). Multiple `q` params AND together. |
+| `counts` | No | none | `1` returns only each rule's `count` and `groups`, with an empty `findings` list |
+| `rule`, `detail`, `dest_ip`, `dest_port` | No | none | One finding's own records instead: its rule id, detail line and server, as the finding gives them (an empty `dest_port` for a record without one) |
+
+**Response:** `{"rules": [{"id", "title", "severity", "event_type", "why", "count", "groups"}], "findings": [{"rule", "severity", "title", "detail", "event", "count", "sources", "first", "last"}]}` - only the rules that matched. A rule's matches are grouped: the records with the same `detail` on the same server (`dest_ip` and `dest_port`) are one finding, whose `event` is the first of them, `count` how many there are, `sources` how many source hosts they came from, and `first` and `last` their earliest and latest times. `severity` is `high`, `medium` or `low`; `findings` are in the rules' order (most severe first), then by time, at most 500 per rule. A rule's `count` (its records) is always the full number, and `groups` the number of findings it makes - of its first 100,000 records, for a rule with more. Given `rule` (and the rest), `findings` holds that finding's records instead, one each with a `count` of 1, oldest first, at most 500, and the rule's `count` says how many there are. `event` is a record as `GET /api/events` returns it. A `detail` never has a password in it, even when the record does.
+
+---
+
 ### `GET /api/limits`
 
 Returns server-enforced limits the client should respect (e.g. when validating the user-configurable query-limit setting).
@@ -147,9 +169,9 @@ Returns server-enforced limits the client should respect (e.g. when validating t
 
 Returns on-disk rule counts, last-updated times, and staleness for all three rulesets, for the Rules modal (gear menu > Rules) and the opt-in stale-rules notification (`checkForStaleRules()`). Purely a snapshot of what's currently on disk - no job/update state involved (that's `/api/rule-update-status`'s job), and no network access either.
 
-**Response:** `{"suricata": {"count": <number or null>, "updated": <epoch or null>, "stale": <boolean or null>}, "yara": {"count": ..., "updated": ..., "stale": ...}, "sigma": {"windows": {"count": ..., "updated": ..., "stale": ...}, "linux": {...}}, "staleThresholdHours": <number>}` - `count`/`updated`/`stale` are all `null` if that ruleset has never been set up (rather than `stale: true`, since "never downloaded" is a different, more urgent problem the Rules modal's counts already surface, distinct from "downloaded but old"). `stale` is `true` once `updated` is older than `staleThresholdHours` (the server's `config.RULES_MAX_AGE_HOURS`) - the single source of truth both the Rules modal's own date-color warning and the notification read, rather than each hardcoding its own threshold.
+**Response:** `{"suricata": {"count": <number or null>, "updated": <epoch or null>, "stale": <boolean or null>}, "yara": {"count": ..., "updated": ..., "stale": ...}, "sigma": {"windows": {"count": ..., "updated": ..., "stale": ...}, "linux": {...}}, "staleThresholdHours": <number>}` - `count`/`updated`/`stale` are all `null` if that ruleset has never been set up (rather than `stale: true`, since "never downloaded" is a different, more urgent problem the Rules modal's counts already surface, distinct from "downloaded but old"). `stale` is `true` once `updated` is older than `staleThresholdHours` (the server's `config.RULES_MAX_AGE_HOURS`). The Rules modal's date-color warning and the stale-rules notification don't read `stale`: they work it out from `updated` and `staleThresholdHours` - or the user's own threshold, set in the Rules modal, which the server can't know. For Suricata, `updated` is the oldest active rule source's time.
 
-The `suricata` object additionally carries the rule-source configuration the Rules modal edits via `POST /api/update-rules`: `enabledSources` (currently enabled slugs), `showProtocolDecodeAlerts` (boolean), `availableSources` (map of every known slug to its metadata, each with a `bakedIn` boolean telling the modal whether enabling that source for the first time needs internet), `defaultSources` (what "Revert to Default" restores - served here so the frontend can't drift from `DEFAULT_SURICATA_SOURCES`), and `sidRanges` (an array of `{"min", "max", "label"}` signature-ID ranges, the single source of truth `classifyRuleset()` in `static/socrates.js` uses to attribute an alert's `signature_id` to its ruleset).
+The `suricata` object additionally carries the rule-source configuration the Rules modal edits via `POST /api/update-rules`: `enabledSources` (currently enabled slugs), `showProtocolDecodeAlerts` (boolean), `availableSources` (map of every known slug to its metadata, each with a `bakedIn` boolean telling the modal whether enabling that source for the first time needs internet), `defaultSources` (what "Revert to Default" restores - served here so the frontend can't drift from `DEFAULT_SURICATA_SOURCES`), `sidRanges` (an array of `{"min", "max", "label"}` signature-ID ranges, the single source of truth `classifyRuleset()` in `static/socrates.js` uses to attribute an alert's `signature_id` to its ruleset - the built-in ranges first, then 1000000-1999999 as "Local / Custom Rules", then the curated sources), and `custom` (`{"count", "updated", "enabled", "allowed"}` for the [custom rules](#get-apicustom-rules) - `count`/`updated` `null` when none are saved; never their text, since the Rules modal polls this every 2 seconds), and `etpro` (`{"codeSet": <boolean>, "codeHint": <last 4 characters or null>}` for the [ET Pro access code](#post-apietpro-code) - never the code itself).
 
 ---
 
@@ -165,11 +187,45 @@ Returns the live/last-run state of each ruleset's update job, polled by the Rule
 
 Starts an update for one ruleset, or all three. Triggered by the Rules modal's per-ruleset "Update" buttons and its "Update All" button.
 
-**Request body:** `{"ruleset": "suricata"|"yara"|"sigma"|"all"}` - plus two optional Suricata-only fields (ignored for the other rulesets even under `"all"`): `sources`, a list of Suricata rule-source slugs to enable (validated against `SURICATA_RULE_SOURCES`), and `showProtocolDecodeAlerts`, a boolean.
+**Request body:** `{"ruleset": "suricata"|"yara"|"sigma"|"all"}` - plus two optional Suricata-only fields (ignored for the other rulesets even under `"all"`): `sources`, a list of Suricata rule-source slugs to enable (validated against `SURICATA_RULE_SOURCES`), and `showProtocolDecodeAlerts`, a boolean. `sources` may also include `"custom"`, which turns the saved custom rules on - leaving it out of a `sources` list turns them off (they stay saved); omitting `sources` leaves them as they are.
 
 **Response:** `{"status": "started"}`
 
 **Errors:** `400` if `ruleset` isn't one of the four allowed values, if `sources` isn't a list of strings or names an unknown slug, or if `showProtocolDecodeAlerts` isn't a boolean. `409` ("Rule update already in progress") if the targeted ruleset (or, for `"all"`, any one of the three) is already running.
+
+---
+
+### `GET /api/custom-rules`
+
+The custom Suricata rules, for the Rules modal's editor.
+
+**Response:** `{"rules": <text>, "count": <number or null>, "updated": <epoch or null>, "enabled": <boolean>, "allowed": <boolean>, "sidRange": {"min": 1000000, "max": 1999999}}` - `rules` is `""` and `count`/`updated` are `null` when none are saved. `allowed` is `false` when the server runs with `ALLOW_CUSTOM_RULES=false`.
+
+---
+
+### `POST /api/etpro-code`
+
+Saves the Emerging Threats Pro access code, used to download the `et/pro` source, or with an empty code removes it - which also turns ET Pro off, deletes its downloaded rules, and puts ET Open back if it's enabled. Saving doesn't download anything: the next `POST /api/update-rules` with `et/pro` in `sources` does (the Rules modal starts one straight after).
+
+**Request body:** `{"code": <string>}` - 8 to 64 letters and digits (surrounding spaces are trimmed), or `""` to remove it
+
+**Response:** `{"codeSet": <boolean>, "codeHint": <last 4 characters or null>, "warnings": [<string>, ...]}` - the code itself is never sent back
+
+**Errors:** `400` if `code` isn't a string or isn't 8-64 letters and digits, `409` while a Suricata rules update is running, `415` without `Content-Type: application/json`.
+
+---
+
+### `POST /api/custom-rules`
+
+Checks custom Suricata rules and, only if every rule passes, saves them and turns them on for the next analysis. Empty text deletes them.
+
+**Request body:** `{"rules": <text>}`
+
+The checks, in order (each stops the save): at most 1 MB and 5,000 rules, and no control character but tabs and line breaks (Windows line endings are fine); then, together, no rule indented with a space or tab (Suricata skips the line), no `dataset`, `datarep`, `iprep`, `lua`, `luajit`, `luaxform`, `filemd5`, `filesha1` or `filesha256` in any rule, and every rule's `sid` present, in 1000000-1999999, and used once; then `suricata -T` over the rules alone.
+
+**Response:** `{"saved": true, "count": <number>}`
+
+**Errors:** `400` `{"error": "The rules were not saved", "problems": [{"line": <number or null>, "message": <string>}, ...]}` when a check fails - nothing is written; `line` is `null` for a problem with the whole text. `400` if `rules` isn't a string, `415` without `Content-Type: application/json`, `403` when the server runs with `ALLOW_CUSTOM_RULES=false`.
 
 ---
 
@@ -196,6 +252,32 @@ Unfiltered (no `q`) responses are cached server-side per `(md5, type)` and inval
 
 ---
 
+### `GET /api/traffic-map`
+
+The Traffic Map's data: an analysis's Suricata flows and alerts by country over time (`traffic_map.py`). Flows are placed at their start and grouped into `bins` time bins per source and destination country, so the payload stays small however many flows there are; alerts are listed one by one.
+
+**Query Parameters:**
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `md5` | Yes | - | MD5 hash of the analysis |
+| `q` | No | none | Search terms, as for every other endpoint - `country:` terms included (see [Search Terms](#search-terms)). |
+
+**Response:**
+```json
+{"start": 1784926838.08, "span": 604800.57, "bins": 1200,
+ "buckets": [[0, "FR", "US", 11, 11562], ...],
+ "alerts": [[12.5, "CN", "US", 2, "ET SCAN Zmap User-Agent (Inbound)", "1.2.3.4", "203.0.113.8"], ...],
+ "totals": {"US": [207010, 39914993], "FR": [86840, 10831078], ...},
+ "flows": 207010, "alertCount": 157,
+ "geo": {"source": "DB-IP IP to Country Lite", "date": "2026-11"}}
+```
+`start` is the first flow's or alert's time (epoch seconds) and `span` the seconds to the last. Each bucket is `[bin, source country, destination country, flows, bytes]`; each alert is `[seconds after start, source country, destination country, severity, signature, source IP, destination IP]`, at most 2,000 of them, in time order - when there are more, the 2,000 most severe are kept (`alertCount` is the full count). `totals` is flows and bytes per country, as source or destination. A country is an ISO 3166-1 alpha-2 code, `LAN` for an address that doesn't route on the internet, or `??` when there's none. `geo` is `null` when the image's IP location data isn't installed (a local development run), in which case every public address is `??`. An analysis with no flows or alerts gets `"start": null` and empty lists.
+
+Unfiltered (no `q`) responses are cached per analysis, like `/api/sankey-data`.
+
+---
+
 ### `GET /api/aggregation-data`
 
 Returns per-column frequency tables (one page of values by count, 10 per page by default) for the given event type, computed server-side - the data behind the "Aggregations" panel.
@@ -205,7 +287,7 @@ Returns per-column frequency tables (one page of values by count, 10 per page by
 | Parameter | Required | Default | Description |
 |---|---|---|---|
 | `md5` | Yes | - | MD5 hash of the analysis |
-| `type` | No | all (merged view) | Event type (see [Event Types](architecture/event-types.md)), or omitted for the merged "All Events" view. Not supported for event types whose fields have no static JSON path to aggregate on server-side - currently `log`/`sigmaalert`/`binary` (dynamic/untrusted columns) and `mqtt`/`ldap` (dynamically keyed by message/operation subtype) - these fall back to client-side computation instead; see `AGGREGATION_JSON_PATHS` in `db.py` for the authoritative, current list. |
+| `type` | No | all (merged view) | Event type (see [Event Types](architecture/event-types.md)), or omitted for the merged "All Events" view. Not supported for event types whose fields have no static JSON path to aggregate on server-side - currently `log`/`sigmaalert`/`binary` (dynamic/untrusted columns), `mqtt`/`ldap` (dynamically keyed by message/operation subtype) and `email`/`link`. These fall back to client-side computation instead (the UI also computes every tab of an email analysis client-side); see `AGGREGATION_JSON_PATHS` in `db.py` for the authoritative, current list. |
 | `q` | No | none | Full-text search query. Multiple `q` params AND together. |
 | `column` | No | none (all columns) | Restrict the response to a single column label, for paginating one column at a time |
 | `page` | No | `1` | Page number for Prev/Next pagination; non-numeric values fall back to `1` |
@@ -242,6 +324,8 @@ Unfiltered (no `q`) responses are cached server-side per `(md5, type)`, same as 
 
 ---
 
+The four stream endpoints below (`download-stream`, `ascii-stream`, `hexdump-stream`, `raw-stream`) share their parameter checks: `400` for an invalid IP, port or MD5, `404` if the analysis has no PCAP, and `500` if the packet tool times out or (`ascii-stream`, `raw-stream`) can't read the capture - in addition to each one's own errors.
+
 ### `GET /api/download-stream`
 
 Carves a single TCP/UDP stream from the PCAP using `tcpdump` and returns it as a `.pcap` download.
@@ -266,7 +350,7 @@ Carves a single TCP/UDP stream from the PCAP using `tcpdump` and returns it as a
 
 ### `GET /api/ascii-stream`
 
-Extracts ASCII payload from a TCP/UDP stream using `tshark`. Tries TCP first, falls back to UDP. Capped to the first 500 lines (`MAX_TRANSCRIPT_LINES`) and to 100,000 characters (`MAX_TRANSCRIPT_SIZE`), whichever is hit first.
+Extracts ASCII payload from a TCP/UDP stream: the flow is carved with `tcpdump` into a file in `/tmp`, then read with `tshark`. Tries TCP first, falls back to UDP. Capped to the first 500 lines (`MAX_TRANSCRIPT_LINES`) and to 100,000 characters (`MAX_TRANSCRIPT_SIZE`), whichever is hit first - and `truncated` is also true for a flow over 16 MB (`MAX_TRANSCRIPT_CARVE_SIZE`), read up to that much.
 
 **Query Parameters:**
 
@@ -304,7 +388,7 @@ Extracts per-packet hex dumps from a TCP/UDP stream using `tcpdump -X`. Truncate
 
 ### `GET /api/raw-stream`
 
-Returns a TCP/UDP stream's exact payload bytes - nothing decoded, replaced or trimmed, unlike `/api/ascii-stream`. The flow is carved with `tcpdump`, then reassembled with `tshark`'s `follow ... raw` mode, which drops retransmitted segments and orders out-of-order ones. Tries TCP first, falls back to UDP.
+Returns a TCP/UDP stream's exact payload bytes - nothing decoded, replaced or trimmed, unlike `/api/ascii-stream`. The flow is carved with `tcpdump` into a file in `/tmp`, then reassembled with `tshark`'s `follow ... raw` mode, which drops retransmitted segments and orders out-of-order ones. Tries TCP first, falls back to UDP.
 
 **Query Parameters:**
 
@@ -319,13 +403,13 @@ Returns a TCP/UDP stream's exact payload bytes - nothing decoded, replaced or tr
 
 **Response:** `application/octet-stream` download.
 
-**Errors:** `400` for invalid parameters, `404` if the flow has no payload in that direction, `413` if the payload is over 10 MB (`MAX_RAW_STREAM_SIZE`) - never a truncated payload. The size check covers the whole flow, so asking for one small direction of a flow whose other direction is huge also returns `413`.
+**Errors:** `400` for invalid parameters, `404` if the flow has no payload in that direction, `413` if the payload is over 10 MB (`MAX_RAW_STREAM_SIZE`), or the carved flow is over 200 MB (`MAX_STREAM_DOWNLOAD_SIZE`) - never a truncated payload. The size check covers the whole flow, so asking for one small direction of a flow whose other direction is huge also returns `413`.
 
 ---
 
 ### `GET /api/extracted-file`
 
-Returns a file Suricata extracted from the analysis's traffic, by its SHA256 (the `fileinfo.sha256` field of a `fileinfo` event).
+Returns a file Suricata extracted from the analysis's traffic - or, for an email analysis, the message itself or one of its attachments - by its SHA256 (the `fileinfo.sha256` field of a `fileinfo` event).
 
 **Query Parameters:**
 
@@ -363,7 +447,7 @@ Loads a historical analysis by MD5.
 {"success": true, "md5": "<hash>", "file_name": "<filename>", "notes": "<notes text or empty string>"}
 ```
 
-**Errors:** `400` if MD5 is invalid or path is unsafe. `404` if analysis not found. `400` if eve.json exceeds size limit.
+**Errors:** `400` if MD5 is invalid or path is unsafe. `404` if analysis not found. `400` if a not-yet-imported eve.json exceeds the size limit.
 
 ---
 
@@ -377,7 +461,7 @@ Returns the filename (not the full filesystem path) of the PCAP file within an a
 |---|---|---|
 | `md5` | Yes | MD5 hash of the analysis |
 
-**Response:** Plain text path. `404` if no PCAP found.
+**Response:** Plain text - the PCAP's filename only. `404` if no PCAP found.
 
 ---
 
@@ -399,18 +483,44 @@ or
 ```json
 {"status": "processing", "phase": "network", "meta": {...}, "hasRowNotes": false}
 ```
-or, if analysis (Suricata/YARA/Zircolite) failed:
+or, if analysis (Suricata/YARA/Zircolite/email parsing) failed:
 ```json
-{"status": "error", "message": "<failure reason>"}
+{"status": "error", "message": "<failure reason>", "hasRowNotes": false}
 ```
 
 `meta` is present whenever `.meta` exists for the analysis (written after the file type is detected) and is omitted otherwise; it's absent entirely from the `error` response.
 
-`hasRowNotes` is `true` if the analysis has at least one row-level note (see `POST /api/row-note`) - used by the reanalyze confirmation dialog to conditionally warn that reanalyzing deletes them. This field is added only on this GET route, not on the identically-shaped `POST /api/check-status` response below - that endpoint is polled every 2 seconds during active processing, and the extra lookup has no reason to run that often.
+A `ready` analysis can also have `warnings`, a list of what went wrong without failing it - a YARA scan that failed or timed out, so its File Alerts may be missing (e.g. `"The YARA scan failed - File Alerts may be missing: <reason>"`; the wording varies with what was scanned), tshark's rows failing to join a PCAP's, or a log's Sigma scan not running. Omitted when there are none.
+
+`hasRowNotes` is `true` if the analysis has at least one row-level note, and always `false` while it isn't ready (see `POST /api/row-note`) - used by the reanalyze confirmation dialog to conditionally warn that reanalyzing deletes them. This field is added only on this GET route, not on the identically-shaped `POST /api/check-status` response below - that endpoint is polled every 2 seconds during active processing, and the extra lookup has no reason to run that often.
 
 **Errors:** `400` for invalid or malformed MD5. There is no `404` for a well-formed MD5 that doesn't correspond to an existing analysis directory - the directory's absence just reads the same as "not ready yet" (`{"status": "processing", "phase": ""}`), since this endpoint never separately checks for the directory's existence.
 
 ---
+
+### `GET /api/shark-status`
+
+Where tshark stands for a PCAP analysis. Alongside Suricata, tshark decodes the capture (captures up to `SHARK_BACKGROUND_MAX_PACKETS`, 3 million packets by default - or, when the packets can't be counted, up to `SHARK_BACKGROUND_MAX_BYTES`, 250 MB; bigger ones only on request - see `POST /api/shark-start`. A run whose processes pass `SHARK_MAX_MEMORY_BYTES`, 4 GB by default, is stopped with an error), and once both are done, what Suricata lacks - records of protocols it doesn't parse, and connection rows (`conn_<protocol>`) - joins Suricata's in the analysis's `events.db`, so every data endpoint returns it (`GET /api/stats`'s `tshark_types` lists those types). Rows from tshark carry `"source": "tshark"`. An analysis that has never been queued (one from before tshark ran alongside Suricata, or whose queued run was lost to a server restart) is queued by its first status request, if it's under the packet limit. While tshark is switched off (`POST /api/shark-settings`), every PCAP analysis's status is `disabled` and nothing runs.
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|---|---|---|
+| `md5` | Yes | MD5 hash of the analysis (`400` if invalid, `404` if it doesn't exist) |
+
+**Response:** `{"status": "<status>"}`, where status is one of:
+
+| Status | Meaning |
+|---|---|
+| `ready` | Done. Adds `seconds` (how long the run took - absent for a `shark.db` built before runs recorded it) and `merged` (whether its rows have joined Suricata's in the analysis's `events.db`; a status request that finds them not yet merged starts the merge) - and, once merged, `types`: the event types tshark added, as `GET /api/stats`'s `tshark_types` lists them (`[]` when it added nothing). Adds `damaged: true` when tshark read the capture only up to a cut-off or damaged end |
+| `queued` | Waiting for another analysis's run to finish. Adds `position` (1 = next) |
+| `running` | tshark is analyzing the capture. Adds `elapsed` (whole seconds since the run started) |
+| `waiting` | Suricata hasn't finished yet (tshark, which starts alongside it, has finished or not started); while both run, the status is tshark's own - `queued`, `running`, `error` or `too_large` |
+| `too_large` | Over the background size limit - start it with `POST /api/shark-start` |
+| `error` | The last run failed. Adds `message` |
+| `not_started` | Not queued yet |
+| `unavailable` | Not a PCAP analysis |
+| `disabled` | tshark is switched off in Settings |
 
 ### `GET /api/sigma-alerts`
 
@@ -514,9 +624,9 @@ no engine-wide fallback - a summary for the wrong rule would be misleading.
 
 Uploads a file for analysis. Accepts multipart form data.
 
-**Request:** Multipart form with a file field. Accepts any file type, detected by content rather than name: PCAPs (by magic bytes, whatever the extension - e.g. `.pcap`, `.pcapng`, `.cap`, `.trace`, or none at all) get full Suricata network analysis; log files (recognized by content, or by a `.evtx`, `.json`, `.jsonl`, `.csv`, `.xml` or `.log` extension) get Zircolite Sigma detection; everything else gets YARA scanning. The same detection applies to each member of an uploaded ZIP.
+**Request:** Multipart form with a file field. Accepts any file type, detected by content rather than name: PCAPs (by magic bytes, whatever the extension - e.g. `.pcap`, `.pcapng`, `.cap`, `.trace`, or none at all) get full Suricata network analysis; log files (recognized by content, or by a `.evtx`, `.json`, `.jsonl`, `.csv`, `.xml` or `.log` extension) get Zircolite Sigma detection; email messages (an `.eml` extension, or content that starts with an email's header block) get email analysis - headers, links and decoded attachments, each YARA-scanned - unless over 100 MB (`MAX_EMAIL_SIZE`), when they're scanned as a plain file; everything else gets YARA scanning. A known extension decides before content does. The same detection applies to each member of an uploaded ZIP.
 
-**Size limit:** 1000 MB by default (`DEFAULT_UPLOAD_SIZE`). An `X-Max-Upload-Size` header (in bytes) can raise it, up to 5000 MB (`MAX_UPLOAD_SIZE`). A body over the limit is rejected with `400` ("Invalid Content-Length"), and `507` means the server doesn't have the disk space for it. A ZIP with more than 100 members (`MAX_ZIP_MEMBERS`) is rejected with `400`; members whose names start with `.` or `__` (e.g. `__MACOSX/`) are ignored.
+**Size limit:** 1000 MB by default (`DEFAULT_UPLOAD_SIZE`). An `X-Max-Upload-Size` header (in bytes) can raise it, up to 5000 MB (`MAX_UPLOAD_SIZE`). A body over the limit is rejected with `400` ("Invalid Content-Length"), and `507` means the server's free space is less than that limit (not the file's own size) plus 100 MB (`DISK_SPACE_SAFETY_MARGIN`). A ZIP with more than 100 members (`MAX_ZIP_MEMBERS`) is rejected with `400`; files whose own names start with `.` or `__` (e.g. `.DS_Store`, or anything under `__MACOSX/`) are ignored, whatever their type, but still count toward that limit.
 
 **Response (new file):**
 ```json
@@ -535,7 +645,13 @@ or for log files:
 {"status": "processing", "md5": "<hash>", "phase": "logs"}
 ```
 
-If the upload was a ZIP archive containing more than one supported file, every extracted file is analyzed, each as its own independent analysis - PCAPs get network analysis, everything else gets log/binary analysis. One exception: hidden non-PCAP members (dotfiles such as `.DS_Store`) are silently ignored - they get no analysis and are not counted anywhere. The response describes the primary file (a PCAP takes priority; otherwise the first non-hidden file) and gains an `additionalMd5s` array with the MD5 of every other file's analysis; a `filesSkipped` field appears only if individual files genuinely failed (hashing, commit, or filename-validation errors), with that count:
+or for email messages:
+
+```json
+{"status": "processing", "md5": "<hash>", "phase": "email"}
+```
+
+If the upload was a ZIP archive containing more than one supported file, every extracted file is analyzed, each as its own independent analysis - PCAPs get network analysis, everything else gets log, email, or binary analysis. One exception: hidden members (see the size-limit note above) are silently ignored - they get no analysis and aren't counted in `filesSkipped`. The response describes the primary file (a PCAP takes priority; otherwise the first non-hidden file) and gains an `additionalMd5s` array with the MD5 of every other file's analysis; a `filesSkipped` field appears only if individual files genuinely failed (hashing, commit, or filename-validation errors), with that count:
 
 ```json
 {"status": "processing", "md5": "<hash>", "phase": "network", "additionalMd5s": ["<hash>", "<hash>"], "filesSkipped": 1}
@@ -549,15 +665,31 @@ If the upload was a ZIP archive containing more than one supported file, every e
 **Processing flow:**
 1. Detects file type (PCAP magic bytes, log content, or ZIP `PK` magic bytes - except files with Office extensions like `.docx`/`.xlsx`, which are ZIPs internally but analyzed as regular files)
 2. Computes MD5 hash
-3. If already analyzed (`eve.json` for PCAPs, `events.db` for non-PCAPs), returns `ready`
+3. If already analyzed (`eve.json` or `events.db` for PCAPs, `events.db` for non-PCAPs), returns `ready`
 4. For PCAPs: saves file, spawns Suricata in background thread, returns `processing` with `phase: "network"`
 5. For log files: saves the file and imports it into `events.db` in the background, returns `processing` with `phase: "logs"`
-6. For other files: saves file, runs YARA/EXIF scans in the background, returns `processing` with `phase: "files"`
-7. When analysis finishes, results are available in `events.db` (or `eve.json` for PCAPs)
+6. For email messages: saves the message, then in the background parses it into `email`/`link` events and stores and YARA-scans the message and each decoded attachment (in the analysis's `filestore/`, the same layout Suricata uses), returns `processing` with `phase: "email"`
+7. For other files: saves file, runs YARA/EXIF scans in the background, returns `processing` with `phase: "files"`
+8. When analysis finishes, results are available in `events.db` (a PCAP's `eve.json` is removed once imported)
 
 **Special handling:** Password-protected zips are auto-decrypted using the common `infected` password; if the filename contains a `YYYY-MM-DD` date, the MTA-style dated password (`infected_YYYYMMDD`) is also tried.
 
 **Client should poll** `POST /api/check-status` with the returned MD5 to know when analysis is complete.
+
+---
+
+### `POST /api/load-sample`
+
+Analyzes one of the sample files built into SO-CRATES - the main screen's **Sample PCAP file** (`pcap`), **Sample log file** (`log`, a Sysmon JSON log), **Sample binary file** (`binary`, the payload from the sample story) and **Sample email file** (`email`). The sample is generated by the server (see `samples.py`), so this needs no internet access, and it is processed the same way as an upload. The sample is identical every time, so a second request returns `ready` for the existing analysis.
+
+**Request Body:**
+```json
+{"name": "email"}
+```
+
+**Response:** the same as `POST /api/upload` - e.g. `{"status": "processing", "md5": "<hash>", "phase": "email"}`, or `{"status": "ready", "md5": "<hash>"}` once it has been analyzed.
+
+**Errors:** `400` (`Unknown sample`) for any other name.
 
 ---
 
@@ -579,7 +711,7 @@ An optional `maxUploadSize` field (in bytes) raises the download size limit the 
 - URL safety validation blocks localhost, private IPs, link-local, and non-HTTP schemes
 - Hostname is resolved to verify the resolved IP is not private
 
-**Errors:** `400` for invalid URL or SSRF attempt. `413` if file exceeds upload size limit.
+**Errors:** `400` for invalid URL or SSRF attempt. `413` if file exceeds upload size limit. `507` if the server doesn't have the disk space.
 
 ---
 
@@ -605,7 +737,7 @@ or, if analysis (Suricata/YARA/Zircolite) failed:
 {"status": "error", "message": "<failure reason>"}
 ```
 
-The `phase` field reflects the current analysis stage (`network`, `logs`, `files`, or `importing` - the SQLite build that runs after the YARA scan, just before results are ready), or an empty string if no phase file exists yet. `meta` is present whenever `.meta` exists for the analysis and omitted otherwise (including on the `error` response). Same "no 404 for a well-formed-but-nonexistent MD5" caveat as `GET /api/status` applies here too.
+The `phase` field reflects the current analysis stage (`network`, `logs`, `email`, `files`, or `importing` - the SQLite build that runs after the YARA scan, just before results are ready), or an empty string if no phase file exists yet. `meta` is present whenever `.meta` exists for the analysis and omitted otherwise (including on the `error` response). Same "no 404 for a well-formed-but-nonexistent MD5" caveat as `GET /api/status` applies here too.
 
 **Ready detection:** the same check for every file type - `events.db` exists and no `.phase` file is still present (`events.db` is created the instant ingest starts, well before it finishes, so its existence alone isn't sufficient; `.phase` stays set for exactly that ingest window).
 
@@ -620,16 +752,26 @@ Re-runs the analysis pipeline for an existing MD5 directory. The original upload
 {"md5": "<hash>"}
 ```
 
-Only `md5` is read from the request body - the response's `phase` is determined automatically from what's actually in the analysis's directory (`network` if a PCAP is found, `logs` if a log file is found, otherwise `files`), not accepted as client input.
+Only `md5` is read from the request body - the response's `phase` is determined automatically from what's actually in the analysis's directory (`network` if a PCAP is found, `logs` for a log file, `email` for an email message, otherwise `files`), not accepted as client input.
 
 **Response:**
 ```json
 {"status": "processing", "md5": "<hash>", "phase": "network"}
 ```
 
-**Errors:** `400` for invalid MD5 or unsafe path. `404` if analysis not found. `409` if analysis is already in progress. `500` if Suricata fails to start (the failure reason from the analysis's `.error` file, e.g. Suricata missing or a permissions problem - distinguished from the `409` case by whether `.error` was written).
+**Errors:** `400` for invalid MD5 or unsafe path. `404` if the analysis doesn't exist or contains no analyzable file. `409` if analysis is already in progress. `500` if Suricata fails to start (the failure reason from the analysis's `.error` file, e.g. Suricata missing or a permissions problem - distinguished from the `409` case by whether `.error` was written).
 
 ---
+
+### `POST /api/shark-start`
+
+Runs tshark for a PCAP analysis on request, whatever its size - for a capture over the background packet limit, or to retry after an error. Returns the same response as `GET /api/shark-status`.
+
+**Request Body:** `{"md5": "<md5>"}` (`400` if invalid, `404` if the analysis doesn't exist)
+
+### `GET /api/shark-settings` / `POST /api/shark-settings`
+
+Whether tshark runs at all, for every analysis on the server - on by default. `GET` returns `{"enabled": true}`; `POST` with `{"enabled": false}` (or `true`) changes it and returns the new value (`400` unless `enabled` is a boolean). Turning it off stops new runs (one already running finishes); analyses keep the protocols already added. Kept in the data directory's `shark_settings.json`.
 
 ### `POST /api/delete-analysis`
 
@@ -645,7 +787,7 @@ Deletes a single historical analysis (removes the entire MD5 directory).
 {"success": true}
 ```
 
-**Errors:** `400` for invalid MD5 or unsafe path. `404` if analysis not found.
+**Errors:** `400` for invalid MD5 or unsafe path. `404` if analysis not found. `409` while the analysis is still being analyzed (a `.phase` file newer than the stale-lock threshold). `500` if the directory couldn't be removed.
 
 ---
 
@@ -665,7 +807,7 @@ The name is trimmed, has embedded newlines collapsed to spaces, and is capped at
 {"success": true, "name": "<new display name>"}
 ```
 
-**Errors:** `400` for invalid MD5, unsafe path, or an empty/whitespace-only name. `404` if analysis not found.
+**Errors:** `400` for invalid MD5, unsafe path, a `name` that isn't a string ("Invalid name"), or an empty/whitespace-only name. `404` if analysis not found.
 
 ---
 
@@ -783,7 +925,7 @@ non-empty array of integers (not booleans), capped at `MAX_QUERY_LIMIT`
 
 ### `POST /api/delete-all-analyses`
 
-Deletes all historical analyses (every MD5-shaped directory under the data root). Non-analysis directories and files are left untouched.
+Deletes all historical analyses (every MD5-shaped directory under the data root). Non-analysis directories and files are left untouched, and so is an analysis still being analyzed - counted in `skipped`, which is omitted when there are none.
 
 **Request Body:** `{}` - the content is ignored, but it must be sent as a JSON object with `Content-Type: application/json` (`415` otherwise), like every other JSON POST.
 
@@ -800,7 +942,7 @@ Deletes all historical analyses (every MD5-shaped directory under the data root)
 
 Sink for Content-Security-Policy violation reports - every response's CSP names it as its `report-uri`, so browsers POST here when they block something. Accepts any `Content-Type` (browsers send `application/csp-report`), reads at most 64 KB, and logs each distinct violation (by directive, blocked URI, source file and line) once to the server's console. The one violation the bundled CyberChef causes on every load - `frame-src`, from its loading animation - is expected and not logged.
 
-**Response:** always `204`, no body - even for a malformed report.
+**Response:** `204`, no body - even for a malformed report. An invalid or over-64 KB `Content-Length` gets `400`; a missing one reads as an empty report (`204`).
 
 ---
 
@@ -809,10 +951,10 @@ Sink for Content-Security-Policy violation reports - every response's CSP names 
 | Code | Meaning |
 |---|---|
 | `400` | Invalid input (bad IP, port, MD5, URL, path traversal), or an upload over the size limit |
-| `403` | Untrusted `Host` header, or a cross-site POST - see [Request Requirements](#request-requirements) |
+| `403` | Untrusted `Host` header, or a cross-site POST - see [Request Requirements](#request-requirements) - or saving custom rules on a server with `ALLOW_CUSTOM_RULES=false` |
 | `404` | Resource not found (no file, no analysis, no packets) |
 | `405` | `HEAD` request |
-| `409` | Conflict - analysis already in progress for this MD5 |
+| `409` | Conflict - analysis already in progress for this MD5, or a rule update already in progress |
 | `413` | Too large to return in full (a carved stream, stream payload or extracted file) or to download (`/api/load-url`) |
 | `415` | A JSON POST without `Content-Type: application/json` |
 | `500` | Internal server error (no stack traces or server paths leaked) |

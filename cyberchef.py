@@ -109,8 +109,9 @@ def is_expected_csp_violation(report):
     scheme. Anything else - including a frame-src report from SO-CRATES's
     own pages - is still unexpected and gets logged."""
     directive = report.get('effective-directive') or report.get('violated-directive') or ''
-    if directive.split(' ')[0] != 'frame-src':
+    if not isinstance(directive, str) or directive.split(' ')[0] != 'frame-src':
         return False
     if report.get('blocked-uri') not in ('', 'data'):
         return False
-    return urlparse(report.get('document-uri') or '').path.startswith('/cyberchef/')
+    document = report.get('document-uri')
+    return isinstance(document, str) and urlparse(document).path.startswith('/cyberchef/')

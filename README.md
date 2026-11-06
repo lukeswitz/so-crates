@@ -2,7 +2,9 @@
 
 Fork of [dougburks/so-crates](https://github.com/dougburks/so-crates) that runs natively on macOS and adds host-side telemetry collection.
 
-Upstream analyzes pcaps, logs, and binaries you supply. This branch adds two things upstream doesn't: capturing a pcap from the Mac it's running on, and collecting macOS Endpoint Security events for Sigma analysis. Nothing about the upstream Docker deployment changes — the mac-native paths are additive.
+SO-CRATES is a standalone web application for analyzing pcap files, log files, email messages, and binary files. It uses Suricata for network analysis, tshark for the protocols Suricata doesn't parse, YARA for binary scanning, and Sigma rules for logs. It also analyzes email headers, links, and attachments, and its single-page UI shows alerts, metadata, transcripts, and hexdumps.
+
+This branch adds two things upstream doesn't: capturing a pcap from the Mac it's running on, and collecting macOS Endpoint Security events for Sigma analysis. The upstream Docker deployment is unchanged because the macOS paths are additive.
 
 ## What this branch adds
 
@@ -11,11 +13,11 @@ Upstream analyzes pcaps, logs, and binaries you supply. This branch adds two thi
 Setup:
 
 ```bash
-sh scripts/setup-macos.sh          # brew + Zircolite venv
+sh scripts/setup-macos.sh          # brew tools, Zircolite, CyberChef, country data, Playbooks, AI summaries
 python3 socrates.py                # opens on http://127.0.0.1:8000/socrates.html
 ```
 
-**Live traffic capture.** A **Capture live traffic from this Mac** card on the welcome screen prompts for interface + duration (30 s / 1 m / 5 m presets, up to 1 hour), shows elapsed time, bytes and packet count while it runs, and hands the finished pcap to the normal Suricata pipeline. **Stop & Analyze Now** ends a capture early and keeps what it already recorded. The button only renders when packet capture is actually possible — Wireshark's ChmodBPF helper provides the permission; the server never invokes sudo and runs `tcpdump -p` (non-promiscuous).
+**Live traffic capture.** A **Capture live traffic from this Mac** card on the welcome screen prompts for interface + duration (30 s / 1 m / 5 m presets, up to 1 hour), shows elapsed time, bytes and packet count while it runs, and hands the finished pcap to the normal Suricata and tshark analysis. **Stop & Analyze Now** ends a capture early and keeps what it already recorded. The button only renders when packet capture is actually possible — Wireshark's ChmodBPF helper provides the permission; the server never invokes sudo and runs `tcpdump -p` (non-promiscuous).
 
 **macOS Endpoint Security telemetry.** `sudo sh scripts/mac-collect-logs.sh 60` collects process, file, mount, BTM, TCC, XProtect, gatekeeper, kext, SSH, screen-sharing, sudo, su, profile, and OD events for 60 seconds. Root prompt is interactive (one `sudo -v`, elevation applies only to `eslogger`); the mapper and output file stay unprivileged. The resulting `.ndjson` drops onto the welcome screen and gets recognized as macOS telemetry.
 

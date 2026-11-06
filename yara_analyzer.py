@@ -2,8 +2,9 @@
 """YARA scanning integration for SO-CRATES.
 
 YARA is optional. If installed, extracted files are scanned after Suricata
-finishes. Rules are baked into Docker images; non-Docker deployments download
-on first run if internet is available.
+finishes. Rules are baked into Docker images; a deployment without them gets
+them only from the Rules modal - nothing is downloaded unasked (see AGENTS.md's
+Detection Rule Freshness).
 """
 
 import config
@@ -19,7 +20,9 @@ import urllib.error
 import urllib.request
 import zipfile
 
+from db import create_file_analysis_db
 from file_analyzer import analyze_file
+from storage import add_analysis_warning
 from validators import is_host_reachable, is_file_stale, gunzip_atomically
 
 YARA_FORGE_URL = (
@@ -182,8 +185,12 @@ def _download_yara_forge_rules(dest_file):
                 os.unlink(tmp)
 
 
-def _run_yara_with_index(rules_file, list_path, filestore_dir=None, known_paths=None):
+def _run_yara_with_index(rules_file, list_path, filestore_dir=None, known_paths=None, failures=None):
     """Run YARA against a rules file and return parsed matches.
+
+    A scan that failed or timed out returns no matches, like a clean one -
+    so, given a failures list, why is appended to it, for the caller to
+    warn that file alerts may be missing.
 
     known_paths, if provided, is the exact list of file paths written to
     list_path (i.e. what --scan-list is scanning) - passed through to
@@ -213,9 +220,13 @@ def _run_yara_with_index(rules_file, list_path, filestore_dir=None, known_paths=
         )
     except subprocess.TimeoutExpired:
         print(f'YARA scan timed out for {os.path.basename(rules_file)}')
+        if failures is not None:
+            failures.append(f'it timed out after {config.YARA_SCAN_TIMEOUT}s')
         return []
     except OSError as e:
         print(f'YARA scan error for {os.path.basename(rules_file)}: {e}')
+        if failures is not None:
+            failures.append(f'it could not run ({e.strerror or e})')
         return []
 
     if result.returncode != 0:
@@ -223,6 +234,9 @@ def _run_yara_with_index(rules_file, list_path, filestore_dir=None, known_paths=
         # incompatible module, bad --scan-list entry) was indistinguishable
         # from a clean scan that simply found nothing.
         print(f'YARA scan error for {os.path.basename(rules_file)}: {result.stderr.strip()}')
+        if failures is not None:
+            lines = result.stderr.strip().splitlines()
+            failures.append(lines[-1][:200] if lines else f'exit code {result.returncode}')
         return []
 
     return _parse_yara_output(result.stdout, filestore_dir, known_paths=known_paths)
@@ -244,7 +258,7 @@ def _dedup_matches(matches, key_fn):
     return unique
 
 
-def run_yara_scan(filestore_dir, rules_file):
+def run_yara_scan(filestore_dir, rules_file, failures=None):
     """Run YARA on extracted files and return list of matches.
 
     Each match is a dict:
@@ -278,7 +292,7 @@ def run_yara_scan(filestore_dir, rules_file):
 
     try:
         return _dedup_matches(
-            _run_yara_with_index(rules_file, list_path, filestore_dir, known_paths=target_files),
+            _run_yara_with_index(rules_file, list_path, filestore_dir, known_paths=target_files, failures=failures),
             key_fn=lambda m: (m['rule_name'], m['sha256'])
         )
     finally:
@@ -444,8 +458,11 @@ def run_yara_pipeline(dir_path, data_dir=None):
         print('No extracted files to scan (filestore empty)')
         return False
 
-    matches = run_yara_scan(filestore_dir, rules_file)
+    failures = []
+    matches = run_yara_scan(filestore_dir, rules_file, failures)
     write_yara_matches_json(dir_path, matches)
+    for reason in failures:
+        add_analysis_warning(dir_path, f'The YARA scan of extracted files failed - File Alerts may be missing: {reason}')
 
     # Extract metadata for files with zero YARA matches
     matched_sha256s = {m.get('sha256', '') for m in matches}
@@ -475,7 +492,7 @@ def run_yara_pipeline(dir_path, data_dir=None):
     return True
 
 
-def scan_single_file(file_path, rules_file):
+def scan_single_file(file_path, rules_file, failures=None):
     """Run YARA on a single arbitrary file and return match results with hashes and metadata.
 
     Returns a tuple: (matches, sha256, md5, sha1, metadata)
@@ -516,7 +533,7 @@ def scan_single_file(file_path, rules_file):
             return (m['rule_name'], file_sha256)
 
         matches = _dedup_matches(
-            _run_yara_with_index(rules_file, list_path, known_paths=[file_path]),
+            _run_yara_with_index(rules_file, list_path, known_paths=[file_path], failures=failures),
             key_fn=dedup_and_fix
         )
         return matches, file_sha256, file_md5, file_sha1, metadata
@@ -525,3 +542,28 @@ def scan_single_file(file_path, rules_file):
             os.unlink(list_path)
         except OSError:
             pass
+
+
+def analyze_standalone_file(dir_path, file_path, data_dir):
+    """A standalone (non-PCAP, non-log, non-email) upload's analysis: YARA
+    scan it and write its events.db - the file's record and any matches. A
+    failed scan is a warning on the analysis, which still completes.
+
+    network_allowed=False: analysis must never silently reach out to
+    refresh rules on its own - that's an explicit, opt-in action (Rules
+    modal, or the checkForStaleRules() notification). Uses whatever's
+    already cached/baked-in, however old."""
+    rules_file = setup_yara_rules(data_dir, network_allowed=False)
+    db_file = os.path.join(dir_path, 'events.db')
+    if rules_file and check_yara_executable():
+        try:
+            failures = []
+            matches, sha256, md5, sha1, metadata = scan_single_file(file_path, rules_file, failures)
+            create_file_analysis_db(db_file, file_path, matches, md5, sha1, sha256, metadata=metadata)
+            for reason in failures:
+                add_analysis_warning(dir_path, f'The YARA scan failed - File Alerts may be missing: {reason}')
+        except Exception as e:
+            add_analysis_warning(dir_path, f'The YARA scan failed - File Alerts may be missing: {e}')
+            create_file_analysis_db(db_file, file_path, [], '', '', '')
+    else:
+        create_file_analysis_db(db_file, file_path, [], '', '', '')

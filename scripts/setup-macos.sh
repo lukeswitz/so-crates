@@ -89,6 +89,22 @@ else
     echo "==> CyberChef already present at $DATA_DIR/cyberchef — skipping"
 fi
 
+if [ ! -f "$DATA_DIR/geoip/country.bin.gz" ]; then
+    echo "==> Installing DB-IP country data into $DATA_DIR/geoip..."
+    sh "$(dirname "$0")/fetch-geoip.sh" "$DATA_DIR/geoip" \
+        || echo "    Warning: the Traffic Map and country: filter need this data. Re-run this script to retry."
+else
+    echo "==> Country data already present at $DATA_DIR/geoip — skipping"
+fi
+
+if [ ! -f "$DATA_DIR/playbooks/nids.json.gz" ] || [ ! -f "$DATA_DIR/ai-summaries/nids.json.gz" ]; then
+    echo "==> Building Security Onion Playbooks and AI summaries into $DATA_DIR..."
+    sh "$(dirname "$0")/fetch-so-resources.sh" "$DATA_DIR" \
+        || echo "    Warning: alert details need this data for Playbooks and AI summaries. Re-run this script to retry."
+else
+    echo "==> Playbooks and AI summaries already present in $DATA_DIR — skipping"
+fi
+
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 echo "==> Installing test dependencies into $REPO_DIR/.venv..."
 python3 -m venv "$REPO_DIR/.venv"

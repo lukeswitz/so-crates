@@ -13,7 +13,7 @@ CREATE TABLE events (
     dest_port INTEGER,
     protocol TEXT,
     app_proto TEXT,
-    json_data TEXT          -- Full original eve.json line
+    json_data TEXT          -- The full event as JSON: the original eve.json line (PCAP), or built by SO-CRATES (log, binary, email)
 );
 CREATE INDEX idx_event_type ON events(event_type);
 CREATE INDEX idx_timestamp ON events(timestamp);
@@ -28,7 +28,7 @@ CREATE INDEX idx_dest_port ON events(event_type, dest_port);
 CREATE INDEX idx_src_port ON events(event_type, src_port);
 
 -- Expression indexes for flow's JSON-extracted aggregation columns
--- (Pkts/Bytes/State/Alerted) - built dynamically from the same SQL
+-- (Pkts/Bytes/State/Alerted, and App Proto for tshark's flows) - built dynamically from the same SQL
 -- expression the query itself uses, so they can never drift out of sync
 -- (see db.py's _ensure_flow_json_indexes). CAST(...AS TEXT) is required
 -- for SQLite to treat the index as covering - a bare json_extract() has
@@ -39,6 +39,7 @@ CREATE INDEX idx_flow_bytes_toserver ON events(event_type, CAST(COALESCE(json_ex
 CREATE INDEX idx_flow_bytes_toclient ON events(event_type, CAST(COALESCE(json_extract(json_data, '$.flow.bytes_toclient'), 0) AS TEXT));
 CREATE INDEX idx_flow_state ON events(event_type, CAST(json_extract(json_data, '$.flow.state') AS TEXT));
 CREATE INDEX idx_flow_alerted ON events(event_type, CASE WHEN CAST(json_extract(json_data, '$.flow.alerted') AS TEXT) THEN 'Yes' ELSE 'No' END);
+CREATE INDEX idx_flow_app_proto ON events(event_type, json_extract(json_data, '$.app_proto'));
 
 -- FTS5 virtual table for full-text search (created when FTS5 is available)
 CREATE VIRTUAL TABLE events_fts USING fts5(
@@ -92,6 +93,12 @@ CREATE TABLE acknowledged_alerts (
     UNIQUE(source_table, row_id)
 );
 
+-- PCAP analyses only, written by tshark's merge (db.replace_tshark_events):
+-- one row saying which shark.db the rows from tshark came from (stamp), how
+-- many were added, and their event types as a JSON list (GET /api/stats's
+-- tshark_types). Replaced on every merge.
+CREATE TABLE tshark_merge (stamp TEXT, rows INTEGER, types TEXT);
+
 -- Performance pragmas
 PRAGMA journal_mode = WAL;      -- Better concurrency between readers and writers
 PRAGMA synchronous = NORMAL;    -- Faster writes with WAL crash safety
@@ -99,7 +106,9 @@ PRAGMA busy_timeout = 30000;    -- Retry for 30s when database is locked
 PRAGMA optimize;                -- Gather stats for query planner after bulk load
 ```
 
-The `json_data` column stores the complete original event, allowing the server to return full eve.json objects without re-parsing the source file. An optional `events_fts` virtual table enables fast full-text search over all event data. If FTS5 is unavailable, searches fall back to `json_data LIKE '%term%'`. `row_notes` backs the per-row notes feature (`POST /api/row-note`, see [API Reference](../api.md)) - separate from the whole-analysis `notes.txt` file, and lost on reanalyze along with the rest of `events.db`. `acknowledged_alerts` backs the Acknowledge Alerts feature (`POST /api/acknowledge-alert`/`POST /api/acknowledge-alerts-bulk`) - every `events`/`sigma_alerts` query excludes a row present here by default (`_build_where_conditions`/`_sigma_alert_where` in `db.py`), which is what makes acknowledging remove a row from view instead of just flagging it; the `acknowledged=only` query param flips that to include *only* acknowledged rows, for the Acknowledged Alerts tab's own fetches. Lost on reanalyze along with the rest of `events.db`, same as `row_notes`.
+A pcap's Suricata output is loaded into a new `events.db` in bulk (`db._BulkLoad`): the `events` indexes are dropped while the rows go in, in batches, then built once at the end - and the full-text index is rebuilt from the table in one pass (`INSERT INTO events_fts(events_fts) VALUES('rebuild')`) rather than kept up row by row. All of it is one transaction, so an import that fails leaves an empty table with its indexes. On the 4SICS capture's 1.2 million events this took the import from about 90 seconds to 69; the rows, indexes and search results are the same either way. A database that already has events gets them row by row, as before; tshark's merge (`replace_tshark_events`) adds its rows that way too.
+
+The `json_data` column stores the complete event - the original eve.json line for a pcap, or the event SO-CRATES built for a log, binary or email - so the server returns full event objects without re-parsing the source file. An optional `events_fts` virtual table enables fast full-text search over all event data. If FTS5 is unavailable, searches fall back to `json_data LIKE '%term%'`. `row_notes` backs the per-row notes feature (`POST /api/row-note`, see [API Reference](../api.md)) - separate from the whole-analysis `notes.txt` file, and lost on reanalyze along with the rest of `events.db`. `acknowledged_alerts` backs the Acknowledge Alerts feature (`POST /api/acknowledge-alert`/`POST /api/acknowledge-alerts-bulk`) - every `events`/`sigma_alerts` query excludes a row present here by default (`_build_where_conditions`/`_sigma_alert_where` in `db.py`), which is what makes acknowledging remove a row from view instead of just flagging it; the `acknowledged=only` query param flips that to include *only* acknowledged rows, for the Acknowledged Alerts tab's own fetches. Lost on reanalyze along with the rest of `events.db`, same as `row_notes`.
 
 New databases build the composite and expression indexes above at ingest. Pre-existing ones get them backfilled lazily (`CREATE INDEX IF NOT EXISTS`) the first time `get_sankey_data_sqlite`, `get_aggregation_data_sqlite` or `get_aggregation_totals_sqlite` runs against them, so upgrading never requires a migration step. Each backfill also re-runs `PRAGMA optimize` to keep the query planner's statistics current - without it, a planner working from stale/missing stats can pick an unhelpful index even for unrelated queries once several indexes share `event_type` as a leading column.
 
@@ -107,7 +116,7 @@ New databases build the composite and expression indexes above at ingest. Pre-ex
 
 `get_sankey_data_sqlite` and `get_aggregation_data_sqlite` (`db.py`) run their independent `GROUP BY` queries concurrently via `ThreadPoolExecutor` - one SQLite connection per worker (connections aren't thread-safe to share), safe under WAL mode's multiple-simultaneous-readers guarantee.
 
-Unfiltered (no search query) results from both functions are cached in-memory in `analysis_cache.py` (`SANKEY_CACHE`, keyed by `(md5, event_type)`; `AGGREGATION_CACHE`, keyed by `(md5, event_type, column, page, page_size)`; plus `AGGREGATION_TOTALS_CACHE` for the per-column distinct-value counts - all guarded by a lock), since the underlying data never changes once an analysis finishes ingesting. All three caches are evicted per-analysis (`evict_analysis_cache`) on `/api/delete-analysis`/`/api/reanalyze` and cleared entirely on `/api/delete-all-analyses`. Search-filtered requests are never cached.
+Unfiltered (no search query) results from both functions are cached in-memory in `analysis_cache.py` (`SANKEY_CACHE`, keyed by `(md5, event_type)`; `AGGREGATION_CACHE`, keyed by `(md5, event_type, column, page, page_size)`; plus `AGGREGATION_TOTALS_CACHE` for the per-column distinct-value counts, and `TRAFFIC_MAP_CACHE`, keyed by `(md5,)`, for the unfiltered Traffic Map data - all guarded by a lock), since the underlying data changes only at a few known points after an analysis finishes ingesting. All four caches are evicted per-analysis (`evict_analysis_cache`) on `/api/delete-analysis`/`/api/reanalyze`, on acknowledging or un-acknowledging rows (`/api/acknowledge-alert`, `/api/acknowledge-alerts-bulk`), and after tshark's merge adds its rows (`shark_analyzer.merge`) - and cleared entirely on `/api/delete-all-analyses`. Search-filtered requests are never cached.
 
 ### Known Limitations / Future Work
 

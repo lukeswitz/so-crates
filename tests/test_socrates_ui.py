@@ -54,6 +54,22 @@ with open(CSS_PATH, 'r') as f:
     CSS_CONTENT = f.read()
 
 
+
+# Clicks a modal's backdrop, then (reopened) its content, through the real
+# delegated click handling - the modal's data-action="backdrop" and the
+# close action named in its data-arg (STATIC_ACTIONS 'backdrop').
+BACKDROP_CLICK_JS = """
+    function backdropResults(id) {
+        var modal = document.getElementById(id);
+        modal.classList.add('active');
+        modal.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        var closedOnBackdrop = !modal.classList.contains('active');
+        modal.classList.add('active');
+        modal.querySelector('.modal-content').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        return { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: modal.classList.contains('active') };
+    }
+"""
+
 class TestHTMLStructure(unittest.TestCase):
     def test_file_size(self):
         """Verify JS file is complete (not truncated)"""
@@ -324,7 +340,7 @@ class TestHTMLStructure(unittest.TestCase):
         self.assertIn('viewport', HTML_CONTENT)
 
     def test_has_title(self):
-        self.assertIn('SO-CRATES - Welcome', HTML_CONTENT)
+        self.assertIn('<title>SO-CRATES</title>', HTML_CONTENT)
 
     def test_has_container(self):
         self.assertIn('class="container"', HTML_CONTENT)
@@ -387,14 +403,15 @@ class TestHTMLStructure(unittest.TestCase):
 
 class TestCSSLayout(unittest.TestCase):
     def test_stats_grid_columns(self):
-        match = re.search(r'grid-template-columns:\s*repeat\(([^)]+)\)', CSS_CONTENT)
-        self.assertIsNotNone(match, "stats-grid should have grid-template-columns")
-        if match:
-            columns = match.group(1)
-            self.assertIn('auto-fit', columns,
-                          'stats-grid must use auto-fit for responsive wrapping')
-            self.assertIn('minmax', columns,
-                          'stats-grid must use minmax for responsive column sizing')
+        """Every card one width, wrapping to fit - in a section's panel
+        too - so no card reads larger than another"""
+        grid = re.search(r'\.stats-grid \{[^}]*grid-template-columns:\s*repeat\(([^)]+)\)', CSS_CONTENT)
+        panel = re.search(r'\.stats-group-cards \{[^}]*grid-template-columns:\s*repeat\(([^)]+)\)', CSS_CONTENT)
+        self.assertIsNotNone(grid, "stats-grid should have grid-template-columns")
+        self.assertIsNotNone(panel, "a section panel's cards should have grid-template-columns")
+        self.assertRegex(grid.group(1), r'^auto-fill, \d+px$', 'stats-grid must wrap fixed-width cards')
+        self.assertEqual(panel.group(1), grid.group(1), "a panel's cards must be the same width as the grid's")
+        self.assertRegex(CSS_CONTENT, r'\.stat-number \{ font-size: [\d.]+rem;', 'one number size on every card')
 
     def test_stats_grid_gap(self):
         self.assertIn('gap:', CSS_CONTENT)
@@ -432,7 +449,7 @@ class TestCSSLayout(unittest.TestCase):
 
     def test_table_cells_wrap_not_truncate(self):
         """Table cells (including ALERT) must wrap text, not truncate with ellipsis."""
-        td_match = re.search(r'td \{([^}]+)\}', CSS_CONTENT)
+        td_match = re.search(r'(?m)^\s*td \{([^}]+)\}', CSS_CONTENT)   # the global rule, not a table's own
         self.assertIsNotNone(td_match, 'Global td style must exist')
         td_style = td_match.group(1)
         self.assertNotIn('white-space: nowrap', td_style,
@@ -579,11 +596,17 @@ class TestJavaScriptFunctions(unittest.TestCase):
             r'<span class="theme-switch">\s*<input type="checkbox" id="helpShowAgain"[^>]*>\s*<span class="theme-switch-slider"></span>\s*</span>',
             'helpShowAgain must be wrapped in the .theme-switch slider component')
 
-    def test_has_handleHelpBackdropClick(self):
-        self.assertIn('function handleHelpBackdropClick', JS_CONTENT)
-
     def test_has_welcomeHelpContent(self):
         self.assertIn('function getWelcomeHelpContent', JS_CONTENT)
+
+    def test_welcome_file_types_engine_column_fits_email_parser_yara(self):
+        """REGRESSION: at 18%, the Engine column wrapped "Email parser + YARA"
+        onto two lines in the Welcome window's fixed 808px table, making the
+        Email row twice as tall. File Extensions (whose longest value, the
+        log extensions, fits in 34%) gives the Engine column 6%."""
+        widths = dict((name, int(w)) for w, name in re.findall(
+            r'width: (\d+)%;">(File Type|File Extensions|Engine|Ruleset)</th>', JS_CONTENT))
+        self.assertEqual(widths, {'File Type': 18, 'File Extensions': 34, 'Engine': 24, 'Ruleset': 24})
 
     def test_has_showAnalysisUI(self):
         self.assertIn('function showAnalysisUI', JS_CONTENT)
@@ -673,13 +696,13 @@ class TestCardOrder(unittest.TestCase):
     def test_sortEventTypes_full_priority_order(self):
         """Network Alerts, File Alerts, Decoder Alerts, Anomalies (in that
         order) take priority over every other pcap-mode tab, which then
-        falls back to alphabetical - e.g. dns/flow/http here, regardless of
-        input order."""
+        falls back to alphabetical - e.g. dns/http here, regardless of
+        input order - with Flows after them, leading the connections."""
         from tests.jsdom_helper import js_expression
         result = js_expression(
             "sortEventTypes(['http', 'anomaly', 'flow', 'protocol_decode', 'dns', 'filealerts', 'alert'])"
         )
-        self.assertEqual(result, ['alert', 'filealerts', 'protocol_decode', 'anomaly', 'dns', 'flow', 'http'])
+        self.assertEqual(result, ['alert', 'filealerts', 'protocol_decode', 'anomaly', 'dns', 'http', 'flow'])
 
     def test_refresh_current_view_calls_both_section_and_aggregation(self):
         """Verify refreshCurrentView builds both section and aggregation when filtering"""
@@ -735,9 +758,9 @@ class TestJavaScriptDataStructures(unittest.TestCase):
             self.assertIn(f"'{etype}'", JS_CONTENT)
 
     def test_has_global_state(self):
-        self.assertIn('let allEvents', JS_CONTENT)
+        self.assertIn('var allEvents', JS_CONTENT)
         self.assertIn('let tabDataCache', JS_CONTENT)
-        self.assertIn('let eventTypes', JS_CONTENT)
+        self.assertIn('var eventTypes', JS_CONTENT)
         self.assertIn('var currentMd5', JS_CONTENT)
 
 
@@ -749,7 +772,7 @@ class TestJavaScriptLogic(unittest.TestCase):
         self.assertIn('&quot;', JS_CONTENT)
 
     def test_error_message_escapes_event_type_label(self):
-        self.assertIn("escapeHtml(typeLabels[eventType] || eventType.toUpperCase())", JS_CONTENT,
+        self.assertIn("escapeHtml(eventTypeLabel(eventType))", JS_CONTENT,
                       'Tab error message must escape the event type label before innerHTML')
 
     def test_sort_table_toggles_direction(self):
@@ -764,7 +787,7 @@ class TestJavaScriptLogic(unittest.TestCase):
     def test_format_event_handles_all_types(self):
         event_types = ['alert', 'dns', 'http', 'tls', 'flow', 'ftp', 'anomaly', 'fileinfo', 'stats']
         # formatEvent now uses EVENT_RENDERERS to dispatch to type-specific renderers
-        self.assertIn('const renderer = EVENT_RENDERERS[e.event_type]', JS_CONTENT,
+        self.assertIn("const renderer = EVENT_RENDERERS[isConnectionType(e.event_type) ? 'flow' : e.event_type]", JS_CONTENT,
                       'formatEvent must use EVENT_RENDERERS for type dispatch')
         for etype in event_types:
             # Keys may be quoted or unquoted in JS object literal
@@ -929,24 +952,17 @@ class TestUXFeatures(unittest.TestCase):
         self.assertNotIn('stopPropagation', modal_section,
                          'Help modal content must not need a stopPropagation shim - the backdrop action only closes when the click target is the backdrop itself')
 
-    def test_help_modal_backdrop_handler_closes_modal(self):
-        """handleHelpBackdropClick must close the modal only when the backdrop is clicked."""
-        func_match = re.search(r'function handleHelpBackdropClick\([^)]*\)\s*\{', JS_CONTENT)
-        self.assertIsNotNone(func_match, 'handleHelpBackdropClick function must exist')
-        start = func_match.end()
-        brace_count = 1
-        pos = start
-        while pos < len(JS_CONTENT) and brace_count > 0:
-            if JS_CONTENT[pos] == '{':
-                brace_count += 1
-            elif JS_CONTENT[pos] == '}':
-                brace_count -= 1
-            pos += 1
-        func_body = JS_CONTENT[start:pos]
-        self.assertIn("event.target === document.getElementById('helpModal')", func_body,
-                      'Backdrop handler must only close when the helpModal wrapper is clicked')
-        self.assertIn('closeHelpModal()', func_body,
-                      'Backdrop handler must call closeHelpModal()')
+    def test_help_modal_backdrop_click_closes_modal(self):
+        """A click on the Help modal's backdrop closes it - through the
+        delegated 'backdrop' action (data-action="backdrop" on the modal,
+        its close action in data-arg) - and a click inside its content
+        doesn't."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(BACKDROP_CLICK_JS + '''
+            window.__jsdom_result = backdropResults('helpModal');
+        ''')
+        self.assertEqual(result, {'closedOnBackdrop': True, 'stayedOpenOnContent': True})
+
 
     def test_header_has_no_separators(self):
         """Header items must not have any separators (pipes or borders) for clean responsive wrapping."""
@@ -1348,6 +1364,8 @@ class TestUXFeatures(unittest.TestCase):
         func = JS_CONTENT.split('async function loadAnalysis')[1].split('async function')[0]
         self.assertIn('dnsHeuristicsCountStale = true;', func,
                       'loadAnalysis must re-arm the DNS Heuristics count refresh')
+        self.assertIn('findingsCountStale = true;', func,
+                      'loadAnalysis must re-arm the Findings count refresh')
         self.assertIn('acknowledgedAlertsCountStale = true;', func,
                       'loadAnalysis must re-arm the Acknowledged Alerts count refresh')
 
@@ -1368,8 +1386,12 @@ class TestSecurityInUI(unittest.TestCase):
         self.assertIn('escapeHtml(', JS_CONTENT)
 
     def test_no_hardcoded_credentials(self):
-        content = JS_CONTENT.lower().replace('disclaimer', '').replace('password-protected', '').replace('password protected', '').replace('common passwords', '')
-        self.assertNotIn('password', content)
+        """No credential written into the page: a password (or secret,
+        token, API key) given a literal value. The word itself is fine -
+        Telnet records have a Password column, read from the capture."""
+        literal = re.compile(r'''(password|passwd|secret|api_?key|token)['"]?\s*[:=]\s*['"][^'"]+['"]''', re.I)
+        self.assertEqual(literal.findall(JS_CONTENT), [])
+        self.assertEqual(literal.findall(HTML_CONTENT), [])
 
     def test_uses_https_for_external_resources(self):
         self.assertIn('https://', HTML_CONTENT)
@@ -1647,8 +1669,8 @@ class TestThemeAndMenu(unittest.TestCase):
             var link = document.querySelector('.socrates-toast a');
             window.__jsdom_result = { text: toast ? toast.textContent : null, linkText: link ? link.textContent : null };
         ''')
-        self.assertEqual(result['text'], '2 additional files found in the ZIP are also being analyzedView Recent Analyses')
-        self.assertEqual(result['linkText'], 'View Recent Analyses')
+        self.assertEqual(result['text'], '2 additional files found in the ZIP are also being analyzedView Previous Analyses')
+        self.assertEqual(result['linkText'], 'View Previous Analyses')
 
     def test_notifyIfAdditionalAnalyses_singular_wording(self):
         from tests.jsdom_helper import js_statements
@@ -2839,8 +2861,6 @@ class TestThemeAndMenu(unittest.TestCase):
                       'showThemesModal function must exist')
         self.assertIn('function closeThemesModal(', JS_CONTENT,
                       'closeThemesModal function must exist')
-        self.assertIn('function handleModalBackdropClick(', JS_CONTENT,
-                      'handleModalBackdropClick function must exist')
 
     def test_css_theme_variables_exist(self):
         self.assertIn('--bg-primary:', CSS_CONTENT,
@@ -3386,7 +3406,7 @@ class TestThemeAndMenu(unittest.TestCase):
     def test_record_demo_prewarm_reads_the_real_default_sample_url(self):
         """record_demo.py's _prewarm_sample_analysis (see AGENTS.md's
         Release Checklist) must pre-warm the exact same sample the
-        recorded 'Sample pcap file' click actually requests - a hardcoded
+        recorded Load from URL ('Go') click actually requests - a hardcoded
         second copy of DEFAULT_SAMPLE_URL in record_demo.py would silently
         drift out of sync with the real one if it ever changed, quietly
         pre-warming the wrong sample (or erroring) while the recorded
@@ -3515,31 +3535,26 @@ class TestThemeAndMenu(unittest.TestCase):
                       'optional --interactive-highlight override for themes (like C64) where '
                       '--accent alone is not visually distinct from --border-color')
 
-    def test_sample_cards_hint_their_source_domain_on_hover(self):
-        """Each sample card fetches from a real third-party domain the
-        moment it's clicked, with no visible indication of that beforehand
-        - a title tooltip surfaces it on hover without changing the card's
-        appearance. Derived from the same URL constant the click uses
-        (_sampleCardTitle()), not a second hardcoded copy of the domain
-        that could drift from it."""
+    def test_sample_cards_say_they_are_built_in(self):
+        """Every sample card loads a sample built into SO-CRATES
+        (samples.py, POST /api/load-sample) - nothing is downloaded, and the
+        hover text says so."""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             localStorage.setItem('socrates_hideHelp', 'true');
             await new Promise(r => setTimeout(r, 50));
             var cards = document.querySelectorAll('.sample-card');
             window.__jsdom_result = Array.from(cards).map(function(c) {
-                return { label: c.querySelector('.sample-label').textContent, title: c.title };
+                return { label: c.querySelector('.sample-label').textContent, title: c.title,
+                         action: c.dataset.action, sample: c.dataset.sample };
             });
         ''')
-        titles = {r['label']: r['title'] for r in result}
-        self.assertEqual(titles.get('Sample PCAP file'), 'Downloads from www.malware-traffic-analysis.net')
-        self.assertEqual(titles.get('Sample log file'), 'Downloads from github.com')
-        self.assertEqual(titles.get('Sample binary file'), 'Downloads from secure.eicar.org')
-
-    def test_sampleCardTitle_handles_invalid_url(self):
-        from tests.jsdom_helper import js_expression
-        result = js_expression("_sampleCardTitle('not a url')")
-        self.assertEqual(result, '')
+        self.assertEqual([(r['label'], r['sample']) for r in result],
+                         [('Sample PCAP file', 'pcap'), ('Sample log file', 'log'),
+                          ('Sample binary file', 'binary'), ('Sample email file', 'email')])
+        for r in result:
+            self.assertEqual(r['action'], 'load-builtin-sample')
+            self.assertEqual(r['title'], 'Built into SO-CRATES - works without internet access')
 
     def test_interactive_highlight_consumers_match_documented_list(self):
         """AGENTS.md's --interactive-highlight bullet enumerates the exact
@@ -3583,6 +3598,8 @@ class TestThemeAndMenu(unittest.TestCase):
             '.detail-value-pivot.keyboard-selected',
             '.autocomplete-item.keyboard-selected',
             '.agg-page-btn.keyboard-selected',
+            '.tm-top button.on',
+            '.tm-play:focus-visible',
         )
         fallback = 'var(--interactive-highlight, var(--accent))'
         for selector in documented_consumers:
@@ -4166,11 +4183,11 @@ class TestThemeAndMenu(unittest.TestCase):
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             var calls = [];
-            window.loadSampleUrl = function(url) { calls.push(url); };
+            window.loadBuiltInSample = function(name) { calls.push(name); };
             document.getElementById('inputBoxes').innerHTML = `
-                <div class="sample-card" data-action="load-sample-url" data-url="pcap-url"><span>Sample pcap file</span></div>
-                <div class="sample-card" data-action="load-sample-url" data-url="log-url"><span>Sample log file</span></div>
-                <div class="sample-card" data-action="load-sample-url" data-url="binary-url"><span>Sample binary file</span></div>
+                <div class="sample-card" data-action="load-builtin-sample" data-sample="pcap"><span>Sample pcap file</span></div>
+                <div class="sample-card" data-action="load-builtin-sample" data-sample="log"><span>Sample log file</span></div>
+                <div class="sample-card" data-action="load-builtin-sample" data-sample="binary"><span>Sample binary file</span></div>
             `;
             document.getElementById('inputBoxes').style.display = 'block';
             var cards = document.querySelectorAll('.sample-card');
@@ -4184,7 +4201,7 @@ class TestThemeAndMenu(unittest.TestCase):
         ''')
         self.assertEqual(result['selectedAfterFirst'], [True, False, False],
                          'first ArrowRight must select (not activate) the first sample card')
-        self.assertEqual(result['calls'], ['pcap-url'], 'Enter must activate the keyboard-selected sample card')
+        self.assertEqual(result['calls'], ['pcap'], 'Enter must activate the keyboard-selected sample card')
 
     def test_arrow_key_navigation_theme_tiles(self):
         """When the Themes modal is open, all four arrow keys must move a
@@ -4246,9 +4263,9 @@ class TestThemeAndMenu(unittest.TestCase):
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             var sampleCalls = [];
-            window.loadSampleUrl = function(url) { sampleCalls.push(url); };
+            window.loadBuiltInSample = function(name) { sampleCalls.push(name); };
             document.getElementById('inputBoxes').innerHTML = `
-                <div class="sample-card" data-action="load-sample-url" data-url="pcap-url"><span>Sample pcap file</span></div>
+                <div class="sample-card" data-action="load-builtin-sample" data-sample="pcap"><span>Sample pcap file</span></div>
             `;
             document.getElementById('inputBoxes').style.display = 'block';
             document.getElementById('themesModalBody').innerHTML = `
@@ -4455,7 +4472,7 @@ class TestThemeAndMenu(unittest.TestCase):
         activateKeyboardSelection() must not click that stale, invisible sample
         card when the user later presses Enter on a data-table row - it must
         activate the row instead. (Previously this re-triggered the sample's
-        loadSampleUrl() and looked like the app was re-analyzing the file.)"""
+        sample load and looked like the app was re-analyzing the file.)"""
         from tests.jsdom_helper import js_statements
         result = js_statements('''
             document.getElementById('inputBoxes').innerHTML = '<div class="sample-card">Sample binary file</div>';
@@ -4622,6 +4639,11 @@ class TestThemeAndMenu(unittest.TestCase):
                       "'sankey' must call toggleDiagram(), same as clicking the Sankey Diagram section's own toggle bar")
         self.assertIn('analysisOnly: true', sankey_entry,
                       "'sankey' must stay analysis-only - there's no Sankey Diagram section on the welcome screen")
+
+        traffic_map_entry = entry_for('traffic map')
+        self.assertIn('toggleTrafficMap()', traffic_map_entry,
+                      "'traffic map' must call toggleTrafficMap(), same as clicking the Traffic Map section's own toggle bar")
+        self.assertIn('analysisOnly: true', traffic_map_entry)
 
         aggregation_entry = entry_for('aggregation')
         self.assertIn('toggleAggregations()', aggregation_entry,
@@ -6069,9 +6091,35 @@ class TestFiltering(unittest.TestCase):
     def test_about_modal_has_made_with_heart_line(self):
         about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
         self.assertIn('Made with', about_block)
-        self.assertIn('by defenders for defenders', about_block)
+        self.assertIn('by defenders, for defenders', about_block)
         self.assertIn('<svg', about_block.split('Made with')[1].split('by defenders')[0],
                       'the heart must be an inline SVG icon (matching the app\'s icon style), not an emoji')
+        self.assertIn('white-space: nowrap', about_block.split('Made with')[0].rsplit('<div', 1)[-1])
+
+    def test_about_modal_share_links(self):
+        """The share request sits right under the "Made with" line, and
+        each network is a plain link that opens a new tab - no share
+        widgets or third-party scripts, so nothing loads until a click."""
+        about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
+        share = about_block.split('id="aboutShare"')[1].split('</div>')[0]
+        self.assertIn('If you like SO-CRATES, please share it on', share)
+        links = re.findall(r'<a href="([^"]+)"([^>]*)>([^<]+)</a>', share)
+        self.assertEqual([label for _, _, label in links], ['X', 'LinkedIn', 'Bluesky'])
+        for href, attrs, label in links:
+            self.assertIn('so-crates.org', href.replace('%2F', '/').replace('%3A', ':'), label)
+            self.assertIn('target="_blank"', attrs, label)
+            self.assertIn('rel="noopener noreferrer"', attrs, label)
+        self.assertTrue(links[0][0].startswith('https://x.com/intent/post?'))
+        # On X a share credits the developer and mentions the sponsor
+        self.assertIn('&amp;via=dougburks', links[0][0])
+        self.assertIn('%40SecurityOnion', links[0][0])
+        # Bluesky has no via - both are mentioned in the text
+        self.assertIn('%40securityonion.bsky.social', links[2][0])
+        self.assertIn('via%20%40dougburks.bsky.social', links[2][0])
+        self.assertTrue(links[1][0].startswith('https://www.linkedin.com/sharing/share-offsite/?'))
+        self.assertTrue(links[2][0].startswith('https://bsky.app/intent/compose?'))
+        self.assertLess(about_block.index('by defenders, for defenders'), about_block.index('id="aboutShare"'))
+        self.assertLess(about_block.index('id="aboutShare"'), about_block.index('href="https://so-crates.org"'))
 
     def test_about_modal_has_sponsor_line(self):
         about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
@@ -6087,10 +6135,12 @@ class TestFiltering(unittest.TestCase):
         """REGRESSION: these were originally two separate lines; measured
         against the modal's actual width there was enough room to combine
         them into one, hyphen-separated line - must not regress back to
-        two separate <div> blocks."""
+        two separate <div> blocks. (5.1.0 tried the sponsor on a line of
+        its own, under the share request and then under the links, and
+        kept it here.)"""
         about_block = HTML_CONTENT.split('id="aboutModal"')[1].split('id="themesModal"')[0]
         made_with_block = about_block.split('Made with')[1].split('</div>')[0]
-        self.assertIn('by defenders for defenders - Sponsored by', made_with_block)
+        self.assertIn('by defenders, for defenders - Sponsored by', made_with_block)
         self.assertIn('href="https://securityonion.com"', made_with_block)
         self.assertIn('white-space: nowrap', about_block.split('Made with')[0].rsplit('<div', 1)[-1])
 
@@ -6152,23 +6202,12 @@ class TestFiltering(unittest.TestCase):
         self.assertTrue(result['openBefore'])
         self.assertFalse(result['openAfter'], 'Escape must close the About modal')
 
-    def test_handleModalBackdropClick_closes_only_on_backdrop_for_about(self):
+    def test_backdrop_click_closes_only_on_backdrop_for_about(self):
         from tests.jsdom_helper import js_statements
-        result = js_statements('''
-            var modal = document.getElementById('aboutModal');
-            modal.classList.add('active');
-            handleModalBackdropClick({ target: modal, currentTarget: modal }, closeAboutModal);
-            var closedOnBackdrop = !modal.classList.contains('active');
-
-            modal.classList.add('active');
-            var inner = document.querySelector('#aboutModal .modal-content');
-            handleModalBackdropClick({ target: inner, currentTarget: modal }, closeAboutModal);
-            var stayedOpenOnContent = modal.classList.contains('active');
-
-            window.__jsdom_result = { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: stayedOpenOnContent };
+        result = js_statements(BACKDROP_CLICK_JS + '''
+            window.__jsdom_result = backdropResults('aboutModal');
         ''')
-        self.assertTrue(result['closedOnBackdrop'])
-        self.assertTrue(result['stayedOpenOnContent'])
+        self.assertEqual(result, {'closedOnBackdrop': True, 'stayedOpenOnContent': True})
 
     def test_footer_center_teaser_skeleton_empty_in_html(self):
         """#footerCenterTeaser is empty in the static HTML - its content
@@ -6292,23 +6331,12 @@ class TestFiltering(unittest.TestCase):
         self.assertTrue(result['openBefore'])
         self.assertFalse(result['openAfter'], 'Escape must close the Security Onion modal')
 
-    def test_handleModalBackdropClick_closes_only_on_backdrop_for_security_onion(self):
+    def test_backdrop_click_closes_only_on_backdrop_for_security_onion(self):
         from tests.jsdom_helper import js_statements
-        result = js_statements('''
-            var modal = document.getElementById('securityOnionModal');
-            modal.classList.add('active');
-            handleModalBackdropClick({ target: modal, currentTarget: modal }, closeSecurityOnionModal);
-            var closedOnBackdrop = !modal.classList.contains('active');
-
-            modal.classList.add('active');
-            var inner = document.querySelector('#securityOnionModal .modal-content');
-            handleModalBackdropClick({ target: inner, currentTarget: modal }, closeSecurityOnionModal);
-            var stayedOpenOnContent = modal.classList.contains('active');
-
-            window.__jsdom_result = { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: stayedOpenOnContent };
+        result = js_statements(BACKDROP_CLICK_JS + '''
+            window.__jsdom_result = backdropResults('securityOnionModal');
         ''')
-        self.assertTrue(result['closedOnBackdrop'])
-        self.assertTrue(result['stayedOpenOnContent'])
+        self.assertEqual(result, {'closedOnBackdrop': True, 'stayedOpenOnContent': True})
 
     def test_has_analysis_header(self):
         self.assertIn('id="mainHeader"', HTML_CONTENT)
@@ -6801,7 +6829,7 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
         every remaining card is guaranteed clickable once zero-count ones
         are filtered out first."""
         func = JS_CONTENT.split('function buildStats(')[1].split('function buildSections(')[0]
-        self.assertIn('stats.filter(s => s.count > 0).map(s => {', func,
+        self.assertIn('const visibleStats = stats.filter(s => s.count > 0);', func,
                       'buildStats must filter out zero-count cards before rendering')
         self.assertNotIn('stat-disabled', func,
                          'the old disabled-card styling is dead now that zero-count cards are dropped, not disabled')
@@ -6819,7 +6847,7 @@ class TestAdvancedModeFilterBar(unittest.TestCase):
         func = JS_CONTENT.split('function buildStats(')[1].split('function buildSections(')[0]
         self.assertIn('aria-label="${countDisplay}">0<', func,
                       'stat-number must start at 0 with the real value in aria-label')
-        self.assertIn('stats.filter(s => s.count > 0).forEach((s, i) => animateStatNumber(numberEls[i], s.count));', func,
+        self.assertIn('visibleStats.forEach((s, i) => animateStatNumber(numberEls[i], s.count));', func,
                       'buildStats must animate each rendered stat-number up to its real count')
 
     def test_animateStatNumber_counts_up_to_target(self):
@@ -9007,6 +9035,133 @@ class TestAggregationPivotMenu(unittest.TestCase):
         self.assertFalse(result['menuOpen'], 'clicking the (empty) bucket must not open a pivot menu')
 
 
+class TestRightClickPivotMenu(unittest.TestCase):
+    """A right-click opens the pivot menu wherever a left-click does - a
+    table row's value, a detail-panel value, an aggregation row - and
+    holds back the browser's own menu only then. Anywhere else, on a
+    link, with text selected or with Shift held, the browser's menu
+    shows, and a right-click never expands or collapses a row."""
+
+    SETUP = TestPivotMenu._row_html(None) + '''
+        function rightClick(el, opts) {
+            opts = opts || {};
+            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 }));
+            var ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2,
+                                                     shiftKey: !!opts.shift, clientX: 5, clientY: 5 });
+            el.dispatchEvent(ev);
+            var out = { menuOpen: !!document.querySelector('.pivot-menu'),
+                        browserMenuHeld: ev.defaultPrevented,
+                        rowExpanded: tr.classList.contains('expanded-row') };
+            var label = document.querySelector('.pivot-menu-label');
+            out.label = label ? label.textContent : null;
+            closePivotMenu();
+            return out;
+        }
+    '''
+
+    def test_row_value_opens_menu_instead_of_browser_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.SETUP + '''
+            window.__jsdom_result = rightClick(tr.children[2]); // Source IP
+        ''')
+        self.assertTrue(result['menuOpen'])
+        self.assertTrue(result['browserMenuHeld'])
+        self.assertIn('1.1.1.1', result['label'])
+        self.assertFalse(result['rowExpanded'])
+
+    def test_cell_without_a_value_leaves_row_and_browser_menu_alone(self):
+        """The Time column has no pivot value: a left-click there expands
+        the row, a right-click must not."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.SETUP + '''
+            window.__jsdom_result = rightClick(tr.querySelector('td.timestamp') || tr.children[0]);
+        ''')
+        self.assertFalse(result['menuOpen'])
+        self.assertFalse(result['browserMenuHeld'])
+        self.assertFalse(result['rowExpanded'], 'a right-click must never expand a row')
+
+    def test_shift_and_selection_keep_the_browser_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.SETUP + '''
+            var cell = tr.children[2];
+            var shifted = rightClick(cell, { shift: true });
+            var r = document.createRange();
+            r.selectNodeContents(cell);
+            getSelection().removeAllRanges(); getSelection().addRange(r);
+            var selected = rightClick(cell);
+            getSelection().removeAllRanges();
+            var plain = rightClick(cell);
+            window.__jsdom_result = { shifted: shifted, selected: selected, plain: plain };
+        ''')
+        for case in ('shifted', 'selected'):
+            self.assertFalse(result[case]['menuOpen'], case)
+            self.assertFalse(result[case]['browserMenuHeld'], case)
+        self.assertTrue(result['plain']['menuOpen'], 'a selection only counts for the right-click it was there for')
+
+    def test_link_in_a_row_keeps_the_browser_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.SETUP + '''
+            tr.children[2].innerHTML = '<a href="https://attack.mitre.org/techniques/T1059/" data-action="stop-propagation">T1059</a>';
+            window.__jsdom_result = rightClick(tr.children[2].querySelector('a'));
+        ''')
+        self.assertFalse(result['menuOpen'])
+        self.assertFalse(result['browserMenuHeld'])
+
+    def test_right_click_elsewhere_closes_an_open_menu(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.SETUP + '''
+            tr.children[2].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            var before = !!document.querySelector('.pivot-menu');
+            document.body.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }));
+            window.__jsdom_result = { before: before, after: !!document.querySelector('.pivot-menu') };
+        ''')
+        self.assertTrue(result['before'])
+        self.assertFalse(result['after'])
+
+    def test_detail_value_and_aggregation_row(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.SETUP + '''
+            var t2 = document.createElement('table');
+            t2.innerHTML = '<tbody><tr data-event-type="http"><td></td></tr>'
+                + '<tr class="detail-row visible"><td>' + htmlRowText('URL', '/api/v2/telemetry') + '</td></tr></tbody>';
+            document.body.appendChild(t2);
+            var detail = rightClick(t2.querySelector('.detail-value-pivot'));
+            var div = document.createElement('div');
+            div.innerHTML = _renderAggTablesHtml({ Protocol: { TCP: 5 } }, ['Protocol'], 'section-dns');
+            document.body.appendChild(div);
+            var agg = rightClick(div.querySelector('.agg-row'));
+            window.__jsdom_result = { detail: detail, agg: agg };
+        ''')
+        self.assertTrue(result['detail']['browserMenuHeld'])
+        self.assertEqual(result['detail']['label'], 'URL: /api/v2/telemetry')
+        self.assertTrue(result['agg']['browserMenuHeld'])
+        self.assertIn('TCP', result['agg']['label'])
+
+    def test_macos_word_selection_doesnt_shrink_a_detail_value_menu(self):
+        """macOS selects the word under the pointer between mousedown and
+        contextmenu: the menu is still for the whole value, with
+        Include/Exclude/Only, not '(selection)' for that one word."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.SETUP + '''
+            var t2 = document.createElement('table');
+            t2.innerHTML = '<tbody><tr data-event-type="http"><td></td></tr>'
+                + '<tr class="detail-row visible"><td>' + htmlRowText('URL', '/api/v2/telemetry') + '</td></tr></tbody>';
+            document.body.appendChild(t2);
+            var el = t2.querySelector('.detail-value-pivot');
+            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 }));
+            var text = el.firstChild.nodeType === 3 ? el.firstChild : el.querySelector('*').firstChild;
+            var r = document.createRange();
+            r.setStart(text, 1); r.setEnd(text, 4);  // 'api', as macOS would
+            getSelection().removeAllRanges(); getSelection().addRange(r);
+            el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: 5, clientY: 5 }));
+            var label = document.querySelector('.pivot-menu-label');
+            window.__jsdom_result = { label: label ? label.textContent : null,
+                                      include: !!document.querySelector('[data-pivot-action="include"]') };
+        ''')
+        self.assertEqual(result['label'], 'URL: /api/v2/telemetry')
+        self.assertTrue(result['include'])
+
+
 class TestAggregationPagination(unittest.TestCase):
     """Aggregation Tables' Prev/Next pagination (AGG_PAGE_SIZE, fixed at
     CONFIG.AGGREGATION_TOP_N) - matches Security Onion's own aggregation-
@@ -10564,7 +10719,7 @@ class TestRenameAnalysis(unittest.TestCase):
         """REGRESSION: after renaming an analysis, reopening it from the
         Previous Analyses list (loadAnalysis()) reverted the header back to
         the original filename. /api/load-analysis's file_name already comes
-        from _resolve_display_name() (name.txt first - the renamed value),
+        from storage.resolve_display_name() (name.txt first - the renamed value),
         but loadAnalysis() then unconditionally overwrote currentFileName
         with analysisStatus.meta.extracted (the ORIGINAL upload-time
         filename, never touched by a rename) whenever that field was
@@ -10726,7 +10881,7 @@ class TestAnalysisNotes(unittest.TestCase):
         result = js_statements(self._setup_js(initial_notes='original notes') + '''
             showNotesModal();
             var notesModal = document.getElementById('notesModal');
-            handleModalBackdropClick({ target: notesModal, currentTarget: notesModal }, closeNotesModal);
+            notesModal.dispatchEvent(new MouseEvent('click', { bubbles: true }));
             window.__jsdom_result = {
                 modalOpen: document.getElementById('notesModal').classList.contains('active')
             };
@@ -12045,6 +12200,348 @@ class TestDnsHeuristicsScoring(unittest.TestCase):
         self.assertEqual(result['items'][0]['domain'], 'high-score.example')
 
 
+class TestFindingsTab(unittest.TestCase):
+    """The Findings tab: a view of other types' records from
+    /api/findings, wired in like DNS Heuristics - a card of its own, a
+    section, and loadTabData's own branch."""
+
+    FINDINGS = {
+        'rules': [
+            {'id': 'ipmi_cipher_zero', 'title': 'IPMI accepts cipher zero', 'severity': 'high',
+             'event_type': 'ipmi', 'why': 'logs anyone in (CVE-2013-4782).', 'count': 1, 'groups': 1},
+            {'id': 'bacnet_write', 'title': 'BACnet property or file written', 'severity': 'low',
+             'event_type': 'bacnet', 'why': 'Routine in building automation.', 'count': 2400, 'groups': 501},
+        ],
+        'findings': [
+            {'rule': 'ipmi_cipher_zero', 'severity': 'high', 'title': 'IPMI accepts cipher zero',
+             'detail': 'privilege administrator',
+             'event': {'id': 6, 'event_type': 'ipmi', 'timestamp': '2026-01-01T00:00:05.000000+0000',
+                       'src_ip': '10.1.0.38', 'src_port': 50101, 'dest_ip': '10.1.0.59', 'dest_port': 623,
+                       'proto': 'UDP', 'source': 'tshark',
+                       'ipmi': {'weaknesses': ['cipher zero accepted'], 'result': 'answered'}}},
+            {'rule': 'bacnet_write', 'severity': 'low', 'title': 'BACnet property or file written',
+             'detail': 'writeProperty analog-value,0 present-value - ok',
+             'event': {'id': 9, 'event_type': 'bacnet', 'timestamp': '2026-01-01T00:00:01.000000+0000',
+                       'src_ip': 'fe80::1', 'src_port': 47808, 'dest_ip': '10.0.0.9', 'dest_port': 47808,
+                       'proto': 'UDP', 'source': 'tshark',
+                       'bacnet': {'service': 'writeProperty', 'object': 'analog-value,0', 'result': 'ok'}}},
+        ],
+    }
+
+    def _mock_fetch_js(self, data):
+        return '''
+            window.__findingsUrls = [];
+            window.fetch = function(url) {
+                var u = String(url);
+                if (u.indexOf('/api/findings') >= 0) {
+                    window.__findingsUrls.push(u);
+                    return Promise.resolve({ ok: true, json: function() { return Promise.resolve(''' + json.dumps(data) + '''); } });
+                }
+                return Promise.resolve({ ok: true, json: function() { return Promise.resolve([]); } });
+            };
+        '''
+
+    def test_loadTabData_findings_renders_rows_and_rules(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(function(r) { setTimeout(r, 100); });
+            document.getElementById('inputBoxes').style.display = 'none';
+            currentMd5 = 'abc123';
+            safeStorageRemove(localStorage, 'socrates_findingsInfoCollapsed');
+            ''' + self._mock_fetch_js(self.FINDINGS) + '''
+            buildSections();
+            await loadTabData('findings');
+            var sectionEl = document.getElementById('section-findings');
+            var rows = Array.from(sectionEl.querySelectorAll('tbody tr[data-id]'));
+            window.__jsdom_result = {
+                html: sectionEl.innerHTML,
+                text: sectionEl.textContent,
+                rows: rows.map(function(r) { return [r.dataset.id, r.dataset.eventType, r.cells[0].textContent, r.cells[4].textContent]; }),
+                detailRows: sectionEl.querySelectorAll('tr.detail-row').length,
+                urls: window.__findingsUrls,
+            };
+        ''')
+        self.assertEqual(result['rows'], [['6', 'ipmi', 'high', '10.1.0.38:50101'],
+                                          ['9', 'bacnet', 'low', '[fe80::1]:47808']])
+        self.assertEqual(result['detailRows'], 2, "each row expands to its record's details")
+        self.assertIn('About Findings', result['text'])
+        self.assertIn('CVE-2013-4782', result['text'], "the card says what each rule that matched looks for")
+        self.assertIn('the first 500 rows shown', result['text'])
+        self.assertIn('2,400 records in 501 rows', result['text'])
+        self.assertIn('IPMI accepts cipher zero (IPMI, 1 record)', result['text'])
+        self.assertIn('privilege administrator', result['text'])
+        self.assertNotIn('counts=1', result['urls'][0])
+
+    GROUP = {'rule': 'tls_self_signed', 'severity': 'low', 'title': 'TLS self-signed certificate',
+             'detail': 'CN=lab.example (for lab.example)', 'count': 3, 'sources': 2,
+             'first': '2026-01-01T00:00:01.000000+0000', 'last': '2026-01-01T00:00:09.000000+0000',
+             'event': {'id': 4, 'event_type': 'tls', 'timestamp': '2026-01-01T00:00:01.000000+0000',
+                       'src_ip': '10.0.0.5', 'src_port': 40001, 'dest_ip': '10.0.0.9', 'dest_port': 443, 'proto': 'TCP',
+                       'tls': {'subject': 'CN=lab.example', 'issuerdn': 'CN=lab.example'}}}
+
+    def test_a_row_of_several_records_lists_them_when_opened(self):
+        """A grouped row: its hosts counted, its records numbered - and,
+        expanded, its own records fetched by rule, detail and server, each
+        expanding to its details."""
+        from tests.jsdom_helper import js_statements
+        member = lambda i, port: {'rule': 'tls_self_signed', 'severity': 'low', 'title': 'TLS self-signed certificate',
+                                  'detail': self.GROUP['detail'], 'count': 1, 'sources': 1,
+                                  'event': dict(self.GROUP['event'], id=i, src_port=port)}
+        members = {'rules': [{'id': 'tls_self_signed', 'count': 3}], 'findings': [member(4, 40001), member(5, 40002), member(6, 40003)]}
+        result = js_statements('''
+            await new Promise(function(r) { setTimeout(r, 100); });
+            document.getElementById('inputBoxes').style.display = 'none';
+            currentMd5 = 'abc123';
+            ''' + self._mock_fetch_js(members) + '''
+            buildSections();
+            document.querySelectorAll('.section').forEach(function(s) { s.classList.add('section-hidden'); });
+            document.getElementById('section-findings').classList.remove('section-hidden');
+            buildFindingsSectionContent('section-findings', [''' + json.dumps(self.GROUP) + ''']);
+            var section = document.getElementById('section-findings');
+            var row = section.querySelector('.section-content tbody > tr[data-id]');
+            var cells = Array.from(row.cells).map(function(c) { return c.textContent; });
+            var before = window.__findingsUrls.length;
+            toggleDetailRow(row);
+            await new Promise(function(r) { setTimeout(r, 50); });
+            var memberRows = Array.from(section.querySelectorAll('.finding-members-table tbody tr[data-id]'));
+            toggleDetailRow(memberRows[1]);
+            var opened = memberRows[1].nextElementSibling;
+            toggleDetailRow(row); toggleDetailRow(row);
+            await new Promise(function(r) { setTimeout(r, 50); });
+            window.__jsdom_result = {
+                cells: cells, before: before, urls: window.__findingsUrls,
+                summary: section.querySelector('.finding-members-summary').textContent,
+                members: memberRows.map(function(r) { return r.cells[1].textContent; }),
+                openedVisible: opened.classList.contains('visible'),
+                openedText: opened.textContent,
+            };
+        ''')
+        self.assertEqual(result['cells'][4:8], ['2 hosts', '10.0.0.9:443', '3', '2026-01-01T00:00:01'])
+        self.assertEqual(result['before'], 0, 'nothing fetched until the row is opened')
+        self.assertEqual(len(result['urls']), 1, 'once - reopening the row reuses the list')
+        url = result['urls'][0]
+        for part in ('rule=tls_self_signed', 'detail=CN%3Dlab.example%20(for%20lab.example)', 'dest_ip=10.0.0.9',
+                     'dest_port=443'):
+            self.assertIn(part, url)
+        self.assertEqual(result['summary'], '3 records, from 2 source hosts, 2026-01-01T00:00:01 to 2026-01-01T00:00:09')
+        self.assertEqual(result['members'], ['10.0.0.5:40001', '10.0.0.5:40002', '10.0.0.5:40003'])
+        self.assertTrue(result['openedVisible'])
+        self.assertIn('CN=lab.example', result['openedText'])
+
+    def test_a_filter_refresh_on_findings_keeps_the_findings_view(self):
+        """REGRESSION: removing a filter chip while on Findings ran the
+        generic events builder for type 'findings' - an empty events table
+        in its place."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(function(r) { setTimeout(r, 100); });
+            document.getElementById('inputBoxes').style.display = 'none';
+            currentMd5 = 'abc123';
+            ''' + self._mock_fetch_js(self.FINDINGS) + '''
+            buildSections();
+            await loadTabData('findings');
+            await refreshCurrentView('section-findings', 'findings');
+            var sectionEl = document.getElementById('section-findings');
+            window.__jsdom_result = {
+                rows: sectionEl.querySelectorAll('tbody tr[data-id]').length,
+                about: sectionEl.textContent.indexOf('About Findings') >= 0,
+            };
+        ''')
+        self.assertEqual(result, {'rows': 2, 'about': True})
+
+    def test_a_pivot_from_a_findings_record_opens_its_own_tab_filtered(self):
+        """Findings shows other types' records: Include on one's Source IP
+        filters that record's own type - so its tab opens, filtered,
+        instead of the filter landing on a tab out of sight."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(function(r) { setTimeout(r, 100); });
+            document.getElementById('inputBoxes').style.display = 'none';
+            currentMd5 = 'abc123';
+            ''' + self._mock_fetch_js(self.FINDINGS) + '''
+            eventTypes = ['ipmi', 'bacnet'];
+            buildSections();
+            await loadTabData('findings');
+            document.querySelectorAll('.section').forEach(function(s) { s.classList.add('section-hidden'); });
+            document.getElementById('section-findings').classList.remove('section-hidden');
+            await includeFilterValue('section-ipmi', 'Source IP', '10.1.0.38');
+            await new Promise(function(r) { setTimeout(r, 50); });
+            window.__jsdom_result = {
+                ipmiShown: !document.getElementById('section-ipmi').classList.contains('section-hidden'),
+                findingsShown: !document.getElementById('section-findings').classList.contains('section-hidden'),
+                filters: Object.keys(currentFilters),
+            };
+        ''')
+        self.assertEqual(result, {'ipmiShown': True, 'findingsShown': False, 'filters': ['Source IP']})
+
+    def test_findings_empty_state(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(function(r) { setTimeout(r, 100); });
+            document.getElementById('inputBoxes').style.display = 'none';
+            currentMd5 = 'abc123';
+            ''' + self._mock_fetch_js({'rules': [], 'findings': []}) + '''
+            buildSections();
+            await loadTabData('findings');
+            window.__jsdom_result = { text: document.getElementById('section-findings').textContent };
+        ''')
+        self.assertIn('No findings', result['text'])
+
+    def test_severity_sorts_by_rank(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var items = [{severity: 'low'}, {severity: 'high'}, {severity: 'medium'}].map(function(f) { f.event = {}; return f; });
+            var sorted = sortItemsByColumn(items, ['Severity'], extractFindingValue, 0, true);
+            window.__jsdom_result = sorted.map(function(f) { return f.severity; });
+        ''')
+        self.assertEqual(result, ['high', 'medium', 'low'])
+
+    def test_findings_card_counts_and_sits_before_all_events(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(function(r) { setTimeout(r, 100); });
+            currentMd5 = 'abc123';
+            ''' + self._mock_fetch_js(self.FINDINGS) + '''
+            eventTypes = ['ipmi', 'bacnet'];
+            eventStats = {ipmi: 1, bacnet: 3};
+            findingsCountStale = true;
+            buildStats();
+            await new Promise(function(r) { setTimeout(r, 50); });
+            var labels = Array.from(document.querySelectorAll('#statsGrid .stat-card')).map(function(c) {
+                return [c.querySelector('.stat-label').textContent, c.querySelector('.stat-number').getAttribute('aria-label')];
+            });
+            window.__jsdom_result = { labels: labels, urls: window.__findingsUrls };
+        ''')
+        labels = [label for label, _ in result['labels']]
+        self.assertEqual(labels.index('Findings') + 1, labels.index('All Events'))
+        self.assertIn(['Findings', '502'], result['labels'], 'rows, not records')
+        self.assertIn('counts=1', result['urls'][0], 'the card needs only the counts')
+
+    def test_findings_rows_are_keyboard_navigable(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            buildSections();
+            document.querySelectorAll('.section').forEach(function(s) { s.classList.add('section-hidden'); });
+            document.getElementById('section-findings').classList.remove('section-hidden');
+            findingsRules = [];
+            buildFindingsSectionContent('section-findings', ''' + json.dumps(self.FINDINGS['findings']) + ''');
+            var ids = [];
+            for (var i = 0; i < 6 && ids.length < 2; i++) {
+                navigateVertical(1);
+                var sel = document.querySelector('.keyboard-selected');
+                if (sel && sel.tagName === 'TR') ids.push(sel.dataset.id);
+            }
+            window.__jsdom_result = ids;
+        ''')
+        self.assertEqual(result, ['6', '9'])
+
+
+class TestReviewRegressions(unittest.TestCase):
+    """Bugs the 5.0.0 source review found in the page's own logic."""
+
+    def test_html_row_text_shows_a_zero(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var text = function(v) { var d = document.createElement('div'); d.innerHTML = htmlRowText('Write Data', v); return d.textContent; };
+            window.__jsdom_result = [text(0), text('0'), text(''), text(null), text(undefined), text(false), text(7)];
+        ''')
+        self.assertEqual(result, ['Write Data0', 'Write Data0', 'Write Data', 'Write Data', 'Write Data', 'Write Data',
+                                  'Write Data7'])
+
+    def test_a_planted_custom_lookup_url_is_never_used(self):
+        """Custom lookup sites are re-checked when read: localStorage is
+        shared with the same origin's CyberChef, so a javascript: entry
+        could be there without ever passing the save-time check."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            safeStorageSet(localStorage, 'socrates_customLookupSites', JSON.stringify([
+                {label: 'Good', urlTemplate: 'https://lookup.example/?q={value}'},
+                {label: 'Planted', urlTemplate: 'javascript:alert(1)//{value}'}]));
+            window.__jsdom_result = getCustomLookupSites().map(function(s) { return s.label; });
+        ''')
+        self.assertEqual(result, ['Good'])
+
+    def test_analysis_warnings_show_above_the_results_escaped(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var el = document.getElementById('analysisWarnings');
+            showAnalysisWarnings(['The YARA scan failed - File Alerts may be missing: <b>x</b>']);
+            var shown = {hidden: el.hidden, text: el.textContent, bold: !!el.querySelector('b')};
+            showAnalysisWarnings(undefined);
+            window.__jsdom_result = {shown: shown, clearedHidden: el.hidden, clearedText: el.textContent};
+        ''')
+        self.assertEqual(result, {'shown': {'hidden': False, 'bold': False,
+                                            'text': 'The YARA scan failed - File Alerts may be missing: <b>x</b>'},
+                                  'clearedHidden': True, 'clearedText': ''})
+
+    def test_a_failed_post_says_so_instead_of_carrying_on(self):
+        """An acknowledge or rule update the server refused showed nothing
+        - the row just stayed put. Now a toast says why, and the caller
+        stops."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.fetch = function() {
+                return Promise.resolve({ ok: false, status: 409,
+                    json: function() { return Promise.resolve({ error: 'An update is already running' }); } });
+            };
+            var ok = await postJsonOrToast('/api/update-rules', {ruleset: 'all'}, 'Starting the rules update');
+            var toast = document.querySelector('.socrates-toast');
+            window.fetch = function() { return Promise.reject(new TypeError('Failed to fetch')); };
+            var offline = await postJsonOrToast('/api/acknowledge-alert', {}, 'Acknowledging the alert');
+            var toasts = Array.from(document.querySelectorAll('.socrates-toast')).map(function(t) { return t.textContent; });
+            window.__jsdom_result = {ok: ok, offline: offline, first: toast ? toast.textContent : null, all: toasts};
+        ''')
+        self.assertFalse(result['ok'])
+        self.assertFalse(result['offline'])
+        self.assertIn('Starting the rules update failed: An update is already running', result['first'])
+        self.assertTrue(any("Acknowledging the alert failed: SO-CRATES couldn't be reached" in t for t in result['all']))
+
+    def test_findings_that_fail_to_load_say_so_and_arent_cached_as_none(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(function(r) { setTimeout(r, 100); });
+            document.getElementById('inputBoxes').style.display = 'none';
+            currentMd5 = 'abc123';
+            window.fetch = function(url) {
+                if (String(url).indexOf('/api/findings') >= 0) return Promise.reject(new TypeError('Failed to fetch'));
+                return Promise.resolve({ ok: true, json: function() { return Promise.resolve([]); } });
+            };
+            buildSections();
+            await loadTabData('findings');
+            var failed = document.getElementById('section-findings').textContent;
+            window.fetch = function(url) {
+                return Promise.resolve({ ok: true, json: function() { return Promise.resolve(
+                    String(url).indexOf('/api/findings') >= 0
+                        ? {rules: [{id: 'x', title: 'T', severity: 'low', event_type: 'tls', why: 'w', count: 1, groups: 1}],
+                           findings: [{rule: 'x', severity: 'low', title: 'T', detail: 'd', count: 1,
+                                       event: {id: 3, event_type: 'tls', timestamp: '2026-01-01T00:00:00'}}]}
+                        : []); } });
+            };
+            await loadTabData('findings');
+            window.__jsdom_result = {
+                failed: failed,
+                retried: document.querySelectorAll('#section-findings tbody tr[data-id]').length,
+            };
+        ''')
+        self.assertIn("Couldn't load the findings - open the tab again to retry", result['failed'])
+        self.assertEqual(result['retried'], 1, 'opening the tab again fetched them - nothing was cached')
+
+    def test_escape_on_the_welcome_screen_keeps_dont_show_help_again(self):
+        """REGRESSION: closeAllModals closed Help unconditionally - which
+        saves the welcome screen's 'show again' checkbox, back at its
+        checked default when Help wasn't shown, so an Escape there undid
+        'don't show this again'."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            safeStorageSet(localStorage, 'socrates_hideHelp', 'true');
+            document.getElementById('helpModal').classList.remove('active');
+            document.getElementById('helpShowAgain').checked = true;
+            closeAllModals();
+            window.__jsdom_result = safeStorageGet(localStorage, 'socrates_hideHelp');
+        ''')
+        self.assertEqual(result, 'true')
+
+
 class TestDnsHeuristicsTab(unittest.TestCase):
     """The DNS Heuristics tab's wiring into the sidebar/section system -
     buildStats' synthetic card, buildSections' placeholder, and
@@ -12145,7 +12642,8 @@ class TestDnsHeuristicsTab(unittest.TestCase):
         never .keyboard-selected, so the ring stayed stuck on whichever
         card had it (Network Alerts in the report) even after switching
         to a different tab. Now that Left/Right also only previews, the
-        ring must move to exactly the new card (HTTP) - not stay behind
+        ring must move to exactly the new card (Acknowledged Alerts, the
+        next lead) - not stay behind
         on Network Alerts, and not duplicate onto both."""
         from tests.jsdom_helper import js_statements
         events = [{'event_type': 'alert', 'timestamp': '2026-01-01T00:00:00', 'src_ip': '10.0.0.5',
@@ -12197,7 +12695,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
             };
         ''')
         self.assertEqual(result['landedLabel'], 'Network Alerts')
-        self.assertEqual(result['ringedCards'], ['HTTP'], 'the ring must move to exactly the newly-previewed card, not stay on Network Alerts or duplicate')
+        self.assertEqual(result['ringedCards'], ['Acknowledged Alerts'], 'the ring must move to exactly the newly-previewed card, not stay on Network Alerts or duplicate')
         self.assertEqual(result['activeLabel'], 'Network Alerts', 'Right must only preview - the active tab must not change until Enter')
 
     # jsdom has no real CSS Grid layout engine, so getComputedStyle(...)
@@ -12216,10 +12714,14 @@ class TestDnsHeuristicsTab(unittest.TestCase):
             window.fetch = function(url) {
                 var u = String(url);
                 if (u.indexOf('/api/stats') >= 0) {
-                    return Promise.resolve({ ok: true, json: function() { return Promise.resolve({ counts: { alert: 1, dns: 1, flow: 1, ftp: 1, http: 1, tls: 1 } }); } });
+                    return Promise.resolve({ ok: true, json: function() { return Promise.resolve({ counts: { alert: 1, dns: 1, flow: 1, ftp: 1, http: 1, smb: 1, ssh: 1, tls: 1 } }); } });
                 }
                 if (u.indexOf('/api/events') >= 0 && u.indexOf('type=''' + active_event_type + '''') >= 0) {
                     return Promise.resolve({ ok: true, json: function() { return Promise.resolve(''' + json.dumps(events_for_type) + '''); } });
+                }
+                // nothing acknowledged: Network Alerts is the only lead
+                if (u.indexOf('/api/count') >= 0 && u.indexOf('acknowledged=only') >= 0) {
+                    return Promise.resolve({ ok: true, json: function() { return Promise.resolve({ count: 0 }); } });
                 }
                 if (u.indexOf('/api/count') >= 0) {
                     return Promise.resolve({ ok: true, json: function() { return Promise.resolve({ count: 1 }); } });
@@ -12245,14 +12747,13 @@ class TestDnsHeuristicsTab(unittest.TestCase):
         multi-row stat-card grid, Down while sitting on a card must only
         move the keyboard-selection ring (mirroring navigateThemeTiles'
         own preview-then-Enter-to-commit idiom); the active tab must not
-        change until Enter. Cards in DOM order here: alert(0,active),
-        dns(1), flow(2), ftp(3) | http(4), tls(5), All Events(6),
-        Acknowledged Alerts(7) - a 4-column, 2-row grid.
+        change until Enter. Cards here, in a 4-column grid, each section
+        starting a row of its own: Network Alerts (active), All Events |
+        DNS Queries, FTP, HTTP, SMB | SSH, TLS | Flows.
         activeColumnStatCards() (see getVerticalNavItems) puts the active
         tab's own card (column 0, row 1) first in the unified nav list, so
         the first Down merely rings that same already-active card; a
-        second Down is what steps to column 0 of row 2 (index 0+4=4,
-        'http')."""
+        second Down is what steps to column 0 of the records (DNS Queries)."""
         from tests.jsdom_helper import js_statements
         events = [{'event_type': 'alert', 'timestamp': '2026-01-01T00:00:00', 'src_ip': '10.0.0.5',
                    'src_port': 1, 'dest_ip': '10.0.0.6', 'dest_port': 2, 'proto': 'TCP',
@@ -12260,7 +12761,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
         result = js_statements(self._bootstrap_multi_row_stat_grid_js('alert', events) + '''
             var activeBefore = document.querySelector('.stat-card.tab-active').querySelector('.stat-label').textContent;
             navigateVertical(1); // rings the active card itself (row 1)
-            var handled = navigateVertical(1); // rings row 2
+            var handled = navigateVertical(1); // rings the next card down the column
             window.__jsdom_result = {
                 handled: handled,
                 activeAfter: document.querySelector('.stat-card.tab-active').querySelector('.stat-label').textContent,
@@ -12271,7 +12772,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
         self.assertTrue(result['handled'])
         self.assertEqual(result['activeBefore'], 'Network Alerts')
         self.assertEqual(result['activeAfter'], 'Network Alerts', 'the active tab must not change from a mere preview')
-        self.assertEqual(result['ringedLabel'], 'HTTP', 'the keyboard-selection ring must move to row 2')
+        self.assertEqual(result['ringedLabel'], 'DNS Queries', 'the keyboard-selection ring must move down the column')
 
     def test_enter_commits_a_previewed_stat_card_row(self):
         from tests.jsdom_helper import js_statements
@@ -12280,7 +12781,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
                    'alert': {'signature': 'Test', 'category': 'x', 'severity': 1, 'signature_id': 1}}]
         result = js_statements(self._bootstrap_multi_row_stat_grid_js('alert', events) + '''
             navigateVertical(1); // rings the active card itself (row 1)
-            navigateVertical(1); // preview HTTP (row 2)
+            navigateVertical(1); // preview DNS Queries (down the column)
             var committed = activateKeyboardSelection(); // Enter
             await new Promise(function(r) { setTimeout(r, 30); });
             window.__jsdom_result = {
@@ -12289,7 +12790,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
             };
         ''')
         self.assertTrue(result['committed'])
-        self.assertEqual(result['activeAfterEnter'], 'HTTP')
+        self.assertEqual(result['activeAfterEnter'], 'DNS Queries')
 
     def test_left_right_previews_without_switching_tabs(self):
         """REGRESSION GUARD: navigateStatTabs (Left/Right) used to
@@ -12314,7 +12815,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
         self.assertTrue(result['handled'])
         self.assertEqual(result['activeBefore'], 'Network Alerts')
         self.assertEqual(result['activeAfter'], 'Network Alerts', 'the active tab must not change from a mere Right preview')
-        self.assertEqual(result['ringedLabel'], 'DNS Queries', 'the ring must move to the next card in DOM order')
+        self.assertEqual(result['ringedLabel'], 'All Events', 'the ring must move to the next card in DOM order')
 
     def test_enter_commits_a_left_right_previewed_card(self):
         from tests.jsdom_helper import js_statements
@@ -12322,7 +12823,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
                    'src_port': 1, 'dest_ip': '10.0.0.6', 'dest_port': 2, 'proto': 'TCP',
                    'alert': {'signature': 'Test', 'category': 'x', 'severity': 1, 'signature_id': 1}}]
         result = js_statements(self._bootstrap_multi_row_stat_grid_js('alert', events) + '''
-            navigateStatTabs(1); // preview DNS Queries
+            navigateStatTabs(1); // preview All Events
             var committed = activateKeyboardSelection(); // Enter
             await new Promise(function(r) { setTimeout(r, 30); });
             window.__jsdom_result = {
@@ -12331,12 +12832,13 @@ class TestDnsHeuristicsTab(unittest.TestCase):
             };
         ''')
         self.assertTrue(result['committed'])
-        self.assertEqual(result['activeAfterEnter'], 'DNS Queries')
+        self.assertEqual(result['activeAfterEnter'], 'All Events')
 
     def test_falling_through_to_data_table_clears_a_previewed_stat_card_ring(self):
-        """REGRESSION GUARD: after previewing row 2 (without committing),
-        a third Down exhausts the grid column and moves on to the data
-        table - clearing the still-ringed row-2 preview card, since
+        """REGRESSION GUARD: after previewing the column's last card
+        (Flows - without committing), the next Down exhausts the grid
+        column and moves on to the data table - clearing the still-ringed
+        preview card, since
         navigateVertical() clears every candidate in its own flat list
         (which includes the whole grid column, not just the active card)
         before selecting the next one."""
@@ -12346,7 +12848,9 @@ class TestDnsHeuristicsTab(unittest.TestCase):
                    'alert': {'signature': 'Test', 'category': 'x', 'severity': 1, 'signature_id': 1}}]
         result = js_statements(self._bootstrap_multi_row_stat_grid_js('alert', events) + '''
             navigateVertical(1); // rings the active card itself (row 1)
-            navigateVertical(1); // preview HTTP (row 2)
+            navigateVertical(1); // preview DNS Queries
+            navigateVertical(1); // preview SSH
+            navigateVertical(1); // preview Flows
             var handled = navigateVertical(1); // grid column exhausted -> moves into the data table
             window.__jsdom_result = {
                 handled: handled,
@@ -12375,7 +12879,9 @@ class TestDnsHeuristicsTab(unittest.TestCase):
                    'alert': {'signature': 'Test', 'category': 'x', 'severity': 1, 'signature_id': 1}}]
         result = js_statements(self._bootstrap_multi_row_stat_grid_js('alert', events) + '''
             navigateVertical(1); // rings the active card itself (row 1)
-            navigateVertical(1); // preview HTTP (row 2)
+            navigateVertical(1); // preview DNS Queries
+            navigateVertical(1); // preview SSH
+            navigateVertical(1); // preview Flows
             navigateVertical(1); // exhausted -> falls into the data table
 
             var up1Handled = navigateVertical(-1);
@@ -12393,17 +12899,17 @@ class TestDnsHeuristicsTab(unittest.TestCase):
             };
         ''')
         self.assertTrue(result['up1Handled'])
-        self.assertEqual(result['ring1Label'], 'HTTP', 'the first Up must retrace back to row 2, not skip it')
+        self.assertEqual(result['ring1Label'], 'Flows', "the first Up must retrace back to the column's last card, not skip it")
         self.assertEqual(result['activeAfterUp1'], 'Network Alerts', 'Up must only preview - the active tab must not change')
         self.assertTrue(result['up2Handled'])
-        self.assertEqual(result['ring2Label'], 'Network Alerts', 'a second Up from row 2 must continue on to the active row')
+        self.assertEqual(result['ring2Label'], 'SSH', 'a second Up must continue on up the column')
 
     def test_down_after_right_preview_continues_down_the_previewed_column(self):
         """REGRESSION GUARD (real bug report): with a multi-row stat-card
         grid, Right previews a card in a DIFFERENT column than the active
-        tab's own (e.g. DNS Queries, column 1, still row 1), and Down
-        must then continue straight down THAT column (to TLS, column 1
-        row 2) - not jump back to the still-active tab's own column
+        tab's own (e.g. All Events, column 1), and Down must then
+        continue straight down THAT column (to FTP, column 1 of the
+        records) - not jump back to the still-active tab's own column
         (Network Alerts, column 0), which read as Down having gone
         backwards/left instead of down. activeColumnStatCards() now uses
         whichever stat card is currently ringed (verticalNavSelection) as
@@ -12414,17 +12920,17 @@ class TestDnsHeuristicsTab(unittest.TestCase):
                    'src_port': 1, 'dest_ip': '10.0.0.6', 'dest_port': 2, 'proto': 'TCP',
                    'alert': {'signature': 'Test', 'category': 'x', 'severity': 1, 'signature_id': 1}}]
         result = js_statements(self._bootstrap_multi_row_stat_grid_js('alert', events) + '''
-            navigateStatTabs(1); // Right -> DNS Queries (column 1, row 1)
+            navigateStatTabs(1); // Right -> All Events (column 1)
             var afterRight = document.querySelector('.keyboard-selected').querySelector('.stat-label').textContent;
 
-            navigateVertical(1); // Down -> should continue down column 1, to TLS (row 2)
+            navigateVertical(1); // Down -> should continue down column 1, to FTP
             var afterDown = document.querySelector('.keyboard-selected').querySelector('.stat-label').textContent;
             var activeAfterDown = document.querySelector('.stat-card.tab-active').querySelector('.stat-label').textContent;
 
             window.__jsdom_result = { afterRight: afterRight, afterDown: afterDown, activeAfterDown: activeAfterDown };
         ''')
-        self.assertEqual(result['afterRight'], 'DNS Queries')
-        self.assertEqual(result['afterDown'], 'TLS', 'Down must continue down the previewed column, not jump back to the active column')
+        self.assertEqual(result['afterRight'], 'All Events')
+        self.assertEqual(result['afterDown'], 'FTP', 'Down must continue down the previewed column, not jump back to the active column')
         self.assertEqual(result['activeAfterDown'], 'Network Alerts', 'Down must only preview - the active tab must not change')
 
     def test_clicking_a_different_card_clears_a_stray_keyboard_ring(self):
@@ -12523,14 +13029,14 @@ class TestDnsHeuristicsTab(unittest.TestCase):
             }
 
             var seq = [];
-            for (var i = 0; i < 4; i++) {
+            for (var i = 0; i < 5; i++) {
                 navigateVertical(1);
                 seq.push(desc(document.querySelector('.keyboard-selected')));
             }
             window.__jsdom_result = { seq: seq };
         ''')
-        self.assertEqual(result['seq'], ['CARD:Network Alerts', 'TR', 'CHIP', 'CARD:Network Alerts'],
-                          'Down must move past the already-focused chip straight to the stat card and table row, wrapping back to the chip - never stepping onto Clear All')
+        self.assertEqual(result['seq'], ['CARD:Network Alerts', 'CARD:HTTP', 'TR', 'CHIP', 'CARD:Network Alerts'],
+                          'Down must move past the already-focused chip straight down the stat cards (HTTP beneath, in the next section) and to the table row, wrapping back to the chip - never stepping onto Clear All')
 
     def test_left_right_cycles_filter_chips_and_clear_all(self):
         """REGRESSION GUARD (real bug report): "moving between an active
@@ -12731,12 +13237,13 @@ class TestDnsHeuristicsTab(unittest.TestCase):
             window.__jsdom_result = {
                 activeBeforeLabel: activeBefore ? activeBefore.querySelector('.stat-label').textContent : null,
                 ringedBefore: !!ringedBefore,
-                afterDownIsRow: afterDown ? afterDown.tagName === 'TR' : false,
+                afterDownLabel: afterDown && afterDown.classList.contains('stat-card') ? afterDown.querySelector('.stat-label').textContent : null,
             };
         ''')
         self.assertEqual(result['activeBeforeLabel'], 'Network Alerts', 'setup check: the default tab must actually be active before any key press')
         self.assertFalse(result['ringedBefore'], 'no visible ring should appear before the user has pressed any arrow key')
-        self.assertTrue(result['afterDownIsRow'], 'the first Down must move past the default tab card to the row beneath it, not land on the card itself')
+        self.assertEqual(result['afterDownLabel'], 'HTTP',
+                         'the first Down must move past the default tab card to the card beneath it (in the next section), not land on the card itself')
 
     def test_first_down_after_applying_a_filter_moves_past_the_new_chip(self):
         """REGRESSION GUARD (real user report, two rounds): applying a
@@ -13287,7 +13794,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
         there - and because that landing is on a stat card,
         navigateVertical() hands control back to Left/Right immediately
         (not require a second Up/Down first). Right itself only previews
-        - Enter is what actually switches to DNS Queries."""
+        - Enter is what actually switches to All Events, the next card."""
         from tests.jsdom_helper import js_statements
         events = [{'event_type': 'dns', 'timestamp': '2026-01-01T00:00:00', 'src_ip': '10.0.0.5',
                    'dns': {'rrname': '08kcbghk807qtl9.top', 'rrtype': 'A'}}]
@@ -13303,6 +13810,10 @@ class TestDnsHeuristicsTab(unittest.TestCase):
                 }
                 if (u.indexOf('/api/events') >= 0 && u.indexOf('type=dns') >= 0) {
                     return Promise.resolve({ ok: true, json: function() { return Promise.resolve(''' + json.dumps(events) + '''); } });
+                }
+                // nothing acknowledged: DNS Heuristics is the only lead
+                if (u.indexOf('/api/count') >= 0 && u.indexOf('acknowledged=only') >= 0) {
+                    return Promise.resolve({ ok: true, json: function() { return Promise.resolve({ count: 0 }); } });
                 }
                 if (u.indexOf('/api/count') >= 0) {
                     return Promise.resolve({ ok: true, json: function() { return Promise.resolve({ count: 1 }); } });
@@ -13331,6 +13842,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
             });
 
             navigateVertical(1); // rings the DNS Heuristics card itself
+            navigateVertical(1); // All Events, beneath it in the Protocol records section
             navigateVertical(1); // the one flagged row
             navigateVertical(1); // wraps -> DNS Heuristics stat card
             var wrapped = document.querySelector('.keyboard-selected');
@@ -13355,9 +13867,9 @@ class TestDnsHeuristicsTab(unittest.TestCase):
         ''')
         self.assertTrue(result['wrappedIsStatCard'], 'Down from the last item must wrap back onto a stat card')
         self.assertEqual(result['wrappedLabel'], 'DNS Heuristics')
-        self.assertEqual(result['ringedAfterRightLabel'], 'DNS Queries', 'ArrowRight must move the ring to the next card, with no second Up/Down press needed first')
+        self.assertEqual(result['ringedAfterRightLabel'], 'All Events', 'ArrowRight must move the ring to the next card, with no second Up/Down press needed first')
         self.assertEqual(result['activeAfterRightLabel'], 'DNS Heuristics', 'ArrowRight alone must only preview, not switch tabs')
-        self.assertEqual(result['activeAfterEnterLabel'], 'DNS Queries', 'Enter must commit the previewed tab')
+        self.assertEqual(result['activeAfterEnterLabel'], 'All Events', 'Enter must commit the previewed tab')
 
     def test_loadTabData_dns_heuristics_empty_state(self):
         from tests.jsdom_helper import js_statements
@@ -13515,6 +14027,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
                    'dns': {'rrname': '08kcbghk807qtl9.top', 'rrtype': 'A'}}]
         result = js_statements(self._dns_heuristics_bootstrap_js(events) + '''
             navigateVertical(1); // rings the DNS Heuristics stat card itself first
+            navigateVertical(1); // then All Events, beneath it in the Protocol records section
             navigateVertical(1); // the toggle bar renders before the table
             var sel = document.querySelector('.keyboard-selected');
             var selIsToggle = sel === infoToggle;
@@ -13539,6 +14052,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
                    'dns': {'rrname': '08kcbghk807qtl9.top', 'rrtype': 'A'}}]
         result = js_statements(self._dns_heuristics_bootstrap_js(events) + '''
             navigateVertical(1); // rings the DNS Heuristics stat card itself first
+            navigateVertical(1); // then All Events, beneath it in the Protocol records section
             navigateVertical(1); // toggle bar
             navigateVertical(1); // first row
             var sel = document.querySelector('.keyboard-selected');
@@ -13559,6 +14073,7 @@ class TestDnsHeuristicsTab(unittest.TestCase):
                    'dns': {'rrname': '08kcbghk807qtl9.top', 'rrtype': 'A'}}]
         result = js_statements(self._dns_heuristics_bootstrap_js(events) + '''
             navigateVertical(1); // rings the DNS Heuristics stat card itself first
+            navigateVertical(1); // then All Events, beneath it in the Protocol records section
             navigateVertical(1);
             var originalBar = document.querySelector('.keyboard-selected') === infoToggle;
 
@@ -13959,13 +14474,9 @@ class TestDnsHeuristicsTab(unittest.TestCase):
         self.assertTrue(result['cardFound'], 'DNS Heuristics card must still show after clicking a flagged row and clearing the filter')
         self.assertEqual(result['ariaLabel'], '1')
 
-    def test_dns_heuristics_card_sits_immediately_before_dns_queries_card(self):
-        """DNS Heuristics is inserted into the eventTypes loop right when
-        'dns' is reached, not appended after every other card with
-        'all'/'acknowledged' - it must render directly before DNS Queries
-        regardless of which other event types (and how many) are also
-        present, since eventTypes' own order is otherwise alphabetical
-        (see sortEventTypes) and DNS could land anywhere in it."""
+    def test_dns_heuristics_card_is_a_lead(self):
+        """DNS Heuristics is one of the leads - after the alerts and
+        Findings, ahead of every record type, DNS Queries among them."""
         from tests.jsdom_helper import js_statements
         events = [{'event_type': 'dns', 'timestamp': '2026-01-01T00:00:00', 'src_ip': '10.0.0.5',
                    'dns': {'rrname': '08kcbghk807qtl9.top', 'rrtype': 'A'}}]
@@ -13978,10 +14489,8 @@ class TestDnsHeuristicsTab(unittest.TestCase):
         labels = result['labels']
         self.assertIn('DNS Heuristics', labels)
         self.assertIn('DNS Queries', labels)
-        heuristics_idx = labels.index('DNS Heuristics')
-        dns_idx = labels.index('DNS Queries')
-        self.assertEqual(dns_idx, heuristics_idx + 1,
-                          'DNS Heuristics must render immediately before DNS Queries, not at the end with All Events/Acknowledged Alerts')
+        self.assertLess(labels.index('DNS Heuristics'), labels.index('All Events'))
+        self.assertEqual(labels[labels.index('All Events'):], ['All Events', 'DHCP', 'DNS Queries', 'FTP', 'HTTP'])
 
     def test_getVisibleEventType_maps_dns_heuristics_to_dns_for_truncation(self):
         """REGRESSION GUARD: DNS Heuristics is a derived view over the same
@@ -14968,7 +15477,7 @@ class TestSearchUI(unittest.TestCase):
                       'refreshAnalysisData must query visible section before rebuild')
         self.assertIn("const activeType = visibleSection ? visibleSection.id.replace('section-', '') : ''", func,
                       'refreshAnalysisData must extract active type from visible section')
-        self.assertIn("if (activeType && activeType !== eventTypes[0])", func,
+        self.assertIn("const sectionEl = activeType && activeType !== eventTypes[0]", func,
                       'refreshAnalysisData must conditionally restore non-default active type')
         self.assertIn("sectionEl.classList.remove('section-hidden')", func,
                       'refreshAnalysisData must unhide the restored section')
@@ -15676,6 +16185,15 @@ class TestMaybeLinkifyValueSecurity(unittest.TestCase):
 
 
 class TestLogAnalysisUI(unittest.TestCase):
+    def test_log_table_cells_wrap_long_unbroken_values(self):
+        """REGRESSION: a long CommandLine (a base64 PowerShell stager) has no
+        spaces, so with only overflow-wrap: break-word it set the column's
+        min-content width and pushed the log table to ~3,700px - the expanded
+        detail panel ran off-screen. Log and Sigma cells must wrap anywhere."""
+        m = re.search(r'#section-log td,\s*#section-sigmaalert td\s*\{([^}]*)\}', CSS_CONTENT)
+        self.assertIsNotNone(m, 'log/Sigma table cells need their own wrapping rule')
+        self.assertIn('overflow-wrap: anywhere', m.group(1))
+
     def test_discoverLogColumns_prioritizes_known_fields(self):
         """discoverLogColumns must return base fields first, then dynamic fields, max 8 total."""
         from tests.jsdom_helper import js_statements
@@ -16671,7 +17189,7 @@ class TestErrorHandlingUI(unittest.TestCase):
 
     def test_loadAnalysis_catch_calls_hideLoading_and_showError(self):
         """loadAnalysis catch block must call hideLoading and showError."""
-        func_body = JS_CONTENT.split('function loadAnalysis(md5)')[1].split('function loadSampleUrl(')[0]
+        func_body = JS_CONTENT.split('function loadAnalysis(md5)')[1].split('async function loadBuiltInSample(')[0]
         self.assertIn('} catch(err) {', func_body, 'loadAnalysis must have catch block')
         self.assertIn('hideLoading();', func_body, 'catch must call hideLoading')
         self.assertIn('showError(', func_body, 'catch must call showError')
@@ -17848,7 +18366,7 @@ class TestTruncationIndicator(unittest.TestCase):
                       'refreshAnalysisData must clear truncatedTypes alongside the allEvents/tabDataCache reset it does on search change')
 
     def test_loadAnalysis_clears_truncatedTypes(self):
-        func = JS_CONTENT.split('async function loadAnalysis(')[1].split('function loadSampleUrl(')[0]
+        func = JS_CONTENT.split('async function loadAnalysis(')[1].split('async function loadBuiltInSample(')[0]
         self.assertIn('truncatedTypes.clear()', func,
                       'loadAnalysis must clear truncatedTypes alongside the allEvents/tabDataCache reset it does on a fresh file load')
 
@@ -17860,7 +18378,7 @@ class TestTruncationIndicator(unittest.TestCase):
         newer, correct call already finished. loadAnalysis must bump the
         fetchGeneration counter (the same mechanism updateSankeyDiagram already
         uses) and bail before assigning eventStats if superseded."""
-        func = JS_CONTENT.split('async function loadAnalysis(')[1].split('function loadSampleUrl(')[0]
+        func = JS_CONTENT.split('async function loadAnalysis(')[1].split('async function loadBuiltInSample(')[0]
         self.assertIn('const gen = bumpFetchGeneration();', func,
                       'loadAnalysis must capture a fetch generation at the top')
         gen_pos = func.find('const gen = bumpFetchGeneration();')
@@ -18051,23 +18569,12 @@ class TestUserConfigurableQueryLimit(unittest.TestCase):
         ''')
         self.assertFalse(result['isActive'])
 
-    def test_handleModalBackdropClick_closes_only_on_backdrop_for_settings(self):
+    def test_backdrop_click_closes_only_on_backdrop_for_settings(self):
         from tests.jsdom_helper import js_statements
-        result = js_statements('''
-            var modal = document.getElementById('settingsModal');
-            modal.classList.add('active');
-            handleModalBackdropClick({ target: modal, currentTarget: modal }, closeSettingsModal);
-            var closedOnBackdrop = !modal.classList.contains('active');
-
-            modal.classList.add('active');
-            var inner = document.querySelector('#settingsModal .modal-content');
-            handleModalBackdropClick({ target: inner, currentTarget: modal }, closeSettingsModal);
-            var stayedOpenOnContent = modal.classList.contains('active');
-
-            window.__jsdom_result = { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: stayedOpenOnContent };
+        result = js_statements(BACKDROP_CLICK_JS + '''
+            window.__jsdom_result = backdropResults('settingsModal');
         ''')
-        self.assertTrue(result['closedOnBackdrop'])
-        self.assertTrue(result['stayedOpenOnContent'])
+        self.assertEqual(result, {'closedOnBackdrop': True, 'stayedOpenOnContent': True})
 
     def test_saveSettings_rejects_value_below_floor(self):
         from tests.jsdom_helper import js_statements
@@ -18144,8 +18651,11 @@ class TestUserConfigurableQueryLimit(unittest.TestCase):
         eval calls in the JSDOM test harness (unlike the var-scoped globals),
         so this is verified via source inspection rather than execution."""
         func = JS_CONTENT.split('async function saveSettings()')[1].split('function showAnalysisUI')[0]
-        self.assertIn('if (currentMd5)', func,
-                      'saveSettings must only refresh the loaded analysis when one is actually loaded')
+        self.assertIn('if (currentMd5 && !isWelcomeScreen())', func,
+                      'saveSettings must only refresh an analysis that is loaded and on screen - from the welcome '
+                      "screen, currentMd5 is still set and the refresh drew the last analysis's cards over it")
+        self.assertIn("getUserQueryLimit() !== previousQueryLimit", func,
+                      'and only when the query limit actually changed')
         self.assertIn('await refreshAnalysisData()', func)
 
     def test_saveSettings_disables_save_button_around_refresh(self):
@@ -19256,7 +19766,7 @@ RULES_INFO_RESPONSE = {
         'availableSources': {
             'et/open': {'label': 'Emerging Threats Open', 'url': 'https://rules.emergingthreats.net/', 'bakedIn': True},
             'oisf/trafficid': {'label': 'Suricata Traffic ID', 'url': 'https://openinfosecfoundation.org/rules/trafficid/trafficid.rules', 'bakedIn': True},
-            'abuse.ch/urlhaus': {'label': 'Abuse.ch URLhaus', 'url': 'https://urlhaus.abuse.ch/', 'bakedIn': True},
+            'abuse.ch/feodotracker': {'label': 'Abuse.ch Feodo Tracker', 'url': 'https://feodotracker.abuse.ch/', 'bakedIn': True},
             'ipfire/dbl': {'label': 'IPFire DBL', 'url': 'https://www.ipfire.org/dbl/', 'bakedIn': False,
                            'note': 'Large ruleset (~51 MiB) - first fetch can take a while'},
         },
@@ -19703,7 +20213,7 @@ class TestRulesModal(unittest.TestCase):
         self.assertEqual(result['checkboxes'], {
             'et/open': True,
             'oisf/trafficid': False,
-            'abuse.ch/urlhaus': False,
+            'abuse.ch/feodotracker': False,
             'ipfire/dbl': False,
         })
 
@@ -19896,10 +20406,10 @@ class TestRulesModal(unittest.TestCase):
             window.__jsdom_result = { afterEnableAll: afterEnableAll, afterReset: afterReset };
         ''')
         self.assertEqual(result['afterEnableAll'], {
-            'et/open': True, 'oisf/trafficid': True, 'abuse.ch/urlhaus': True, 'ipfire/dbl': False,
+            'et/open': True, 'oisf/trafficid': True, 'abuse.ch/feodotracker': True, 'ipfire/dbl': False,
         })
         self.assertEqual(result['afterReset'], {
-            'et/open': True, 'oisf/trafficid': False, 'abuse.ch/urlhaus': False, 'ipfire/dbl': False,
+            'et/open': True, 'oisf/trafficid': False, 'abuse.ch/feodotracker': False, 'ipfire/dbl': False,
         })
 
     def test_revert_to_default_reads_server_provided_default_not_hardcoded(self):
@@ -19933,7 +20443,7 @@ class TestRulesModal(unittest.TestCase):
             window.__jsdom_result = states;
         ''')
         self.assertEqual(result, {
-            'et/open': False, 'oisf/trafficid': True, 'abuse.ch/urlhaus': False, 'ipfire/dbl': False,
+            'et/open': False, 'oisf/trafficid': True, 'abuse.ch/feodotracker': False, 'ipfire/dbl': False,
         })
 
     def test_suricata_source_toggle_survives_poll_tick(self):
@@ -19953,11 +20463,11 @@ class TestRulesModal(unittest.TestCase):
             };
             await showRulesModal();
             toggleSuricataSources();
-            handleSuricataSourceToggle('abuse.ch/urlhaus', true);
+            handleSuricataSourceToggle('abuse.ch/feodotracker', true);
             await refreshRulesModal();
             var body = document.getElementById('rulesModalBody');
             var cb = Array.from(body.querySelectorAll('input[type=checkbox]')).find(function(el) {
-                return el.dataset.name === 'abuse.ch/urlhaus';
+                return el.dataset.name === 'abuse.ch/feodotracker';
             });
             window.__jsdom_result = { stillChecked: cb ? cb.checked : null };
         ''')
@@ -20284,14 +20794,14 @@ class TestRulesModal(unittest.TestCase):
                 return Promise.resolve({ json: () => Promise.resolve(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''') });
             };
             await showRulesModal();
-            handleSuricataSourceToggle('abuse.ch/urlhaus', true);
+            handleSuricataSourceToggle('abuse.ch/feodotracker', true);
             await triggerRulesetUpdate('suricata');
             var call = fetchCalls.find(c => c.url === '/api/update-rules');
             window.__jsdom_result = { body: call ? JSON.parse(call.body) : null };
         ''')
         self.assertIsNotNone(result['body'])
         self.assertEqual(result['body']['ruleset'], 'suricata')
-        self.assertEqual(sorted(result['body']['sources']), ['abuse.ch/urlhaus', 'et/open'])
+        self.assertEqual(sorted(result['body']['sources']), ['abuse.ch/feodotracker', 'et/open'])
 
     def test_show_protocol_decode_alerts_checkbox_reflects_server_state(self):
         """The 'Show protocol-anomaly noise alerts' checkbox in the
@@ -20619,23 +21129,389 @@ class TestRulesModal(unittest.TestCase):
         self.assertTrue(result['openBefore'], 'rules modal must actually be open before pressing Escape')
         self.assertFalse(result['openAfter'], 'Escape must close the rules modal')
 
-    def test_handleModalBackdropClick_closes_only_on_backdrop_for_rules(self):
+    def test_backdrop_click_closes_only_on_backdrop_for_rules(self):
         from tests.jsdom_helper import js_statements
-        result = js_statements('''
-            var modal = document.getElementById('rulesModal');
-            modal.classList.add('active');
-            handleModalBackdropClick({ target: modal, currentTarget: modal }, closeRulesModal);
-            var closedOnBackdrop = !modal.classList.contains('active');
-
-            modal.classList.add('active');
-            var inner = document.querySelector('#rulesModal .modal-content');
-            handleModalBackdropClick({ target: inner, currentTarget: modal }, closeRulesModal);
-            var stayedOpenOnContent = modal.classList.contains('active');
-
-            window.__jsdom_result = { closedOnBackdrop: closedOnBackdrop, stayedOpenOnContent: stayedOpenOnContent };
+        result = js_statements(BACKDROP_CLICK_JS + '''
+            window.__jsdom_result = backdropResults('rulesModal');
         ''')
-        self.assertTrue(result['closedOnBackdrop'])
-        self.assertTrue(result['stayedOpenOnContent'])
+        self.assertEqual(result, {'closedOnBackdrop': True, 'stayedOpenOnContent': True})
+
+
+CUSTOM_RULES_SAVED = {'count': 2, 'updated': 5000.0, 'enabled': True, 'allowed': True}
+
+
+class TestCustomRulesEditor(unittest.TestCase):
+    """The Rules modal's Custom rules row and its editor (the
+    customRulesModal): states, the problem list, and the switch riding
+    the same Update as the curated sources."""
+
+    PRELUDE = '''
+        localStorage.setItem('socrates_hideHelp', 'true');
+        await new Promise(r => setTimeout(r, 50));
+        var posts = [];
+        var toasts = [];
+        window.showToast = function(message, opts) { toasts.push({ message: message, action: opts && opts.actionLabel }); };
+        function respond(body, status) {
+            return Promise.resolve({ ok: !status || status < 400, status: status || 200, json: () => Promise.resolve(body) });
+        }
+    '''
+
+    def _fetch(self, custom, post_response='{saved: true, count: 2}', post_status=200):
+        info = json.loads(json.dumps(RULES_INFO_RESPONSE))
+        info['suricata']['custom'] = custom
+        return '''
+            window.fetch = function(url, opts) {
+                if (opts && opts.method === 'POST') {
+                    posts.push({ url: url, body: JSON.parse(opts.body) });
+                    return respond(''' + post_response + ''', ''' + str(post_status) + ''');
+                }
+                if (url === '/api/rules-info') return respond(''' + json.dumps(info) + ''');
+                if (url === '/api/custom-rules') return respond({ rules: '# saved\\nalert tcp any any -> any any (msg:"a"; sid:1000001;)', count: 1, sidRange: { min: 1000000, max: 1999999 } });
+                return respond(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''');
+            };
+        '''
+
+    def test_row_states(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.PRELUDE + '''
+            handleSuricataSourceToggle('custom', false);
+            var none = renderCustomRulesRow({ count: null, updated: null, enabled: false, allowed: true });
+            handleSuricataSourceToggle('custom', true);
+            var saved = renderCustomRulesRow({ count: 2, updated: 5000, enabled: true, allowed: true });
+            var off = renderCustomRulesRow({ count: 2, updated: 5000, enabled: true, allowed: false });
+            window.__jsdom_result = { none: none, saved: saved, off: off, missing: renderCustomRulesRow(undefined) };
+        ''')
+        self.assertIn('none yet', result['none'])
+        self.assertIn('Add Rules', result['none'])
+        self.assertIn('disabled', result['none'], "the switch can't turn on rules that don't exist")
+        self.assertIn('2 rules', result['saved'])
+        self.assertIn('Edit Rules', result['saved'])
+        self.assertIn('checked', result['saved'])
+        self.assertNotIn('disabled', result['saved'])
+        self.assertIn('turned off on this server', result['off'])
+        self.assertNotIn('open-custom-rules', result['off'])
+        self.assertEqual(result['missing'], '')
+
+    def test_switch_rides_the_suricata_update(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.PRELUDE + self._fetch(CUSTOM_RULES_SAVED) + '''
+            await showRulesModal(true);
+            var rowText = document.querySelector('.custom-rules-row').textContent;
+            await triggerRulesetUpdate('suricata');
+            var on = posts[0].body.sources;
+            handleSuricataSourceToggle('custom', false);
+            await triggerRulesetUpdate('suricata');
+            window.__jsdom_result = { rowText: rowText, on: on, off: posts[1].body.sources };
+        ''')
+        self.assertIn('Custom rules', result['rowText'])
+        self.assertIn('custom', result['on'])
+        self.assertIn('et/open', result['on'])
+        self.assertNotIn('custom', result['off'])
+
+    def test_problems_are_listed_by_line_and_nothing_closes(self):
+        from tests.jsdom_helper import js_statements
+        problems = json.dumps({'error': 'The rules were not saved', 'problems': [
+            {'line': 2, 'message': 'sid 2014726 is outside 1000000-1999999, the range custom rules use'},
+            {'line': None, 'message': '<b>whole text</b>'}]})
+        result = js_statements(self.PRELUDE + self._fetch(CUSTOM_RULES_SAVED, problems, 400) + '''
+            await showRulesModal(true);
+            await showCustomRulesModal();
+            var loaded = document.getElementById('customRulesInput').value;
+            document.getElementById('customRulesInput').value = 'line one\\nline two here\\nline three';
+            await saveCustomRules();
+            var list = document.getElementById('customRulesProblems');
+            list.querySelector('[data-action="goto-custom-rule-line"]').click();
+            var t = document.getElementById('customRulesInput');
+            window.__jsdom_result = {
+                loaded: loaded,
+                sent: posts[0].body.rules,
+                open: document.getElementById('customRulesModal').classList.contains('active'),
+                listShown: list.style.display !== 'none',
+                listHtml: list.innerHTML,
+                selected: t.value.slice(t.selectionStart, t.selectionEnd),
+                toasts: toasts.length,
+            };
+        ''')
+        self.assertIn('sid:1000001', result['loaded'])
+        self.assertEqual(result['sent'], 'line one\nline two here\nline three')
+        self.assertTrue(result['open'], 'a refused save leaves the editor open with the text in it')
+        self.assertTrue(result['listShown'])
+        self.assertIn('Line 2</a>: sid 2014726 is outside', result['listHtml'])
+        self.assertIn('&lt;b&gt;whole text&lt;/b&gt;', result['listHtml'])
+        self.assertEqual(result['selected'], 'line two here')
+        self.assertEqual(result['toasts'], 0)
+
+    def test_save_closes_turns_on_and_offers_reanalyze_for_an_open_capture(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.PRELUDE + self._fetch({'count': None, 'updated': None, 'enabled': False, 'allowed': True}) + '''
+            await showRulesModal(true);
+            await triggerRulesetUpdate('suricata');
+            await showCustomRulesModal();
+            await saveCustomRules();
+            await triggerRulesetUpdate('suricata');
+            var updates = posts.filter(p => p.url === '/api/update-rules').map(p => p.body.sources.includes('custom'));
+            var welcomeToast = toasts[0];
+            currentMd5 = 'a'.repeat(32);
+            currentFileName = 'lab7.pcap';
+            window.isWelcomeScreen = function() { return false; };
+            await showCustomRulesModal();
+            await saveCustomRules();
+            window.__jsdom_result = {
+                before: updates[0], after: updates[1],
+                open: document.getElementById('customRulesModal').classList.contains('active'),
+                rulesOpen: document.getElementById('rulesModal').classList.contains('active'),
+                welcomeToast: welcomeToast, pcapToast: toasts[1],
+            };
+        ''')
+        self.assertFalse(result['before'])
+        self.assertTrue(result['after'], 'the server turned them on, so the switch must too')
+        self.assertFalse(result['open'])
+        self.assertTrue(result['rulesOpen'])
+        self.assertIn('Saved 2 custom rules', result['welcomeToast']['message'])
+        self.assertIsNone(result['welcomeToast'].get('action'))
+        self.assertEqual(result['pcapToast']['action'], 'Reanalyze this one')
+
+    def test_escape_backs_out_of_the_editor_only(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.PRELUDE + self._fetch(CUSTOM_RULES_SAVED) + '''
+            await showRulesModal(true);
+            await showCustomRulesModal();
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            var afterOne = [document.getElementById('customRulesModal').classList.contains('active'),
+                            document.getElementById('rulesModal').classList.contains('active')];
+            await showCustomRulesModal();
+            closeRulesModal();
+            window.__jsdom_result = { afterOne: afterOne,
+                                      editorAfterRulesClosed: document.getElementById('customRulesModal').classList.contains('active') };
+        ''')
+        self.assertEqual(result['afterOne'], [False, True])
+        self.assertFalse(result['editorAfterRulesClosed'])
+
+    def test_load_a_file_fills_the_editor_without_sending(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.PRELUDE + self._fetch(CUSTOM_RULES_SAVED) + '''
+            var input = { value: 'lab.rules', files: [{ name: 'lab.rules', text: () => Promise.resolve('alert tcp any any -> any any (sid:1000005;)') }] };
+            await loadCustomRulesFile(input);
+            window.__jsdom_result = { text: document.getElementById('customRulesInput').value, cleared: input.value, posts: posts.length };
+        ''')
+        self.assertEqual(result['text'], 'alert tcp any any -> any any (sid:1000005;)')
+        self.assertEqual(result['cleared'], '', 'cleared, so loading the same file again fires change')
+        self.assertEqual(result['posts'], 0)
+
+    def _tokens(self, rule):
+        from tests.jsdom_helper import js_statements
+        return js_statements(self.PRELUDE + 'window.__jsdom_result = tokenizeSuricataRule(' + json.dumps(rule) + ');')
+
+    def _classes(self, tokens):
+        found = {}
+        for cls, text in tokens:
+            found.setdefault(cls, []).append(text)
+        return found
+
+    def test_tokenizer_colors_header_and_options(self):
+        rule = ('alert http [$HOME_NET, 10.0.0.1] any -> any 80 (msg:"Beacon; to |2F|gate"; '
+                'content:"|2F 67|ate"; pcre:"/a|b/"; sid:1000001; rev:1;)')
+        tokens = self._tokens(rule)
+        self.assertEqual(''.join(t for _c, t in tokens), rule, 'nothing lost or added')
+        found = self._classes(tokens)
+        self.assertEqual(found['cr-action'], ['alert'])
+        self.assertEqual(found['cr-proto'], ['http'])
+        self.assertIn('[$HOME_NET, 10.0.0.1]', found['cr-addr'], 'a list is one part, spaces and all')
+        self.assertEqual(found['cr-dir'], ['->'])
+        self.assertEqual(found['cr-keyword'], ['msg', 'to |2F|gate"', 'content', 'pcre', 'sid', 'rev'],
+                         "a ';' inside quotes still ends the option, as Suricata reads it")
+        self.assertIn('|2F 67|', found['cr-hex'])
+        self.assertNotIn('|b/', ''.join(found['cr-hex']), "pcre's alternation isn't hex")
+        self.assertEqual(found['cr-number'], ['1000001', '1'])
+
+    def test_tokenizer_escapes_comments_forbidden_and_unclosed(self):
+        escaped = self._classes(self._tokens('alert tcp any any -> any any (msg:"a\\;b"; sid:1000002;)'))
+        self.assertEqual(escaped['cr-keyword'], ['msg', 'sid'], "an escaped ';' doesn't end the option")
+        comment = self._tokens('# alert tcp any any -> any any (sid:1;)')
+        self.assertEqual([c for c, _t in comment], ['cr-comment'])
+        forbidden = self._classes(self._tokens('alert dns any any -> any any (dns.query; Dataset:isset,x; sid:1000003;)'))
+        self.assertEqual(forbidden['cr-forbidden'], ['Dataset'])
+        unclosed = 'alert tcp any any -> any any (msg:"x"; sid:1000004'
+        self.assertEqual(''.join(t for _c, t in self._tokens(unclosed)), unclosed)
+
+    def test_forbidden_keywords_match_the_servers(self):
+        import validators
+        match = re.search(r"const CUSTOM_RULE_FORBIDDEN_KEYWORDS = \[([^\]]*)\]", JS_CONTENT)
+        self.assertEqual(set(re.findall(r"'([a-z0-9]+)'", match.group(1))), set(validators.CUSTOM_RULE_FORBIDDEN_KEYWORDS))
+
+    def test_highlight_layer_matches_the_text_and_marks_problems(self):
+        from tests.jsdom_helper import js_statements
+        problems = json.dumps({'error': 'The rules were not saved', 'problems': [{'line': 3, 'message': 'no sid'}]})
+        lines = ['# lab rules',
+                 'alert tcp any any -> any any (msg:"a"; \\',
+                 '  sid:1000001;)',
+                 'alert tcp any any -> any any (msg:"b";)',
+                 '',
+                 '<b>']
+        result = js_statements(self.PRELUDE + self._fetch(CUSTOM_RULES_SAVED, problems, 400) + '''
+            await showCustomRulesModal();
+            var t = document.getElementById('customRulesInput');
+            t.value = ''' + json.dumps('\n'.join(lines)) + ''';
+            await saveCustomRules();
+            var layer = document.querySelector('#customRulesHighlight .custom-rules-highlight-lines');
+            var drawn = Array.from(layer.querySelectorAll('.cr-line'));
+            var before = { text: drawn.map(l => l.textContent), problem: drawn.map(l => l.classList.contains('cr-problem')),
+                           continued: drawn[2].innerHTML };
+            t.value = t.value.replace('"b"', '"bb"');
+            t.setSelectionRange(t.value.indexOf('"bb"'), t.value.indexOf('"bb"'));
+            t.dispatchEvent(new Event('input'));
+            var afterOther = Array.from(layer.querySelectorAll('.cr-problem')).length;
+            t.value = t.value.replace('sid:1000001', 'sid:1000002');
+            t.setSelectionRange(t.value.indexOf('sid:'), t.value.indexOf('sid:'));
+            t.dispatchEvent(new Event('input'));
+            await new Promise(r => setTimeout(r, 50));
+            window.__jsdom_result = { before: before, afterOther: afterOther,
+                                      afterEdit: layer.querySelectorAll('.cr-problem').length, html: layer.innerHTML,
+                                      hidden: document.getElementById('customRulesHighlight').getAttribute('aria-hidden') };
+        ''')
+        self.assertEqual(result['before']['text'], lines[:4] + [' ', '<b>'])
+        self.assertEqual(result['before']['problem'], [False, False, True, False, False, False],
+                         'line 3 of the text is the third line drawn')
+        self.assertIn('cr-keyword', result['before']['continued'], 'a continued line is read as part of its rule')
+        self.assertEqual(result['afterOther'], 1, 'editing another line leaves the mark')
+        self.assertEqual(result['afterEdit'], 0, 'editing the marked line clears it')
+        self.assertIn('&lt;b&gt;', result['html'])
+        self.assertEqual(result['hidden'], 'true')
+
+    def test_editor_markup(self):
+        self.assertIn('id="customRulesModal"', HTML_CONTENT)
+        self.assertIn('data-change-action="custom-rules-file"', HTML_CONTENT)
+        self.assertIn('accept=".rules,.txt,text/plain"', HTML_CONTENT)
+
+
+class TestEtproCode(unittest.TestCase):
+    """ET Pro in the Rules modal: its switch waits for an access code, ET
+    Open shows as included while it's on, and the code dialog saves (then
+    starts the update) or removes the code."""
+
+    PRELUDE = TestCustomRulesEditor.PRELUDE
+
+    def _fetch(self, etpro, enabled=('et/open',), post_status=200, post_response='{codeSet: true, codeHint: "6789", warnings: []}'):
+        info = json.loads(json.dumps(RULES_INFO_RESPONSE))
+        info['suricata']['availableSources']['et/pro'] = {
+            'label': 'Emerging Threats Pro', 'url': 'https://www.proofpoint.com/', 'bakedIn': False,
+            'note': 'Commercial - needs an ET Pro access code'}
+        info['suricata']['enabledSources'] = list(enabled)
+        info['suricata']['etpro'] = etpro
+        return '''
+            window.fetch = function(url, opts) {
+                if (opts && opts.method === 'POST') {
+                    posts.push({ url: url, body: JSON.parse(opts.body) });
+                    if (url === '/api/etpro-code') return respond(''' + post_response + ''', ''' + str(post_status) + ''');
+                    return respond({ status: 'started' });
+                }
+                if (url === '/api/rules-info') return respond(''' + json.dumps(info) + ''');
+                return respond(''' + json.dumps(RULE_UPDATE_STATUS_IDLE) + ''');
+            };
+        '''
+
+    def _switch(self, name):
+        return f'document.querySelector(\'input[data-name="{name}"]\')'
+
+    def test_switch_waits_for_a_code_and_et_open_shows_as_included(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.PRELUDE + self._fetch({'codeSet': False, 'codeHint': None}) + '''
+            await showRulesModal(true);
+            var noCode = { pro: ''' + self._switch('et/pro') + '''.disabled,
+                           row: Array.from(document.querySelectorAll('.custom-rules-row')).map(r => r.textContent).join(' ') };
+            closeRulesModal();
+        ''' + self._fetch({'codeSet': True, 'codeHint': '6789'}, enabled=('et/open', 'et/pro')) + '''
+            await showRulesModal(true);
+            var open = ''' + self._switch('et/open') + ''';
+            var withCode = { pro: ''' + self._switch('et/pro') + '''.disabled, openChecked: open.checked, openDisabled: open.disabled,
+                             openLabel: open.closest('label').textContent,
+                             row: Array.from(document.querySelectorAll('.custom-rules-row')).map(r => r.textContent).join(' ') };
+            handleSuricataSourceToggle('et/pro', false);
+            open = ''' + self._switch('et/open') + ''';
+            window.__jsdom_result = { noCode: noCode, withCode: withCode,
+                                      afterOff: { checked: open.checked, disabled: open.disabled } };
+        ''')
+        self.assertTrue(result['noCode']['pro'], "ET Pro can't be switched on without a code")
+        self.assertIn('no access code', result['noCode']['row'])
+        self.assertIn('Add Access Code', result['noCode']['row'])
+        self.assertFalse(result['withCode']['pro'])
+        self.assertTrue(result['withCode']['openChecked'])
+        self.assertTrue(result['withCode']['openDisabled'])
+        self.assertIn('(in ET Pro)', result['withCode']['openLabel'])
+        self.assertIn('code ending 6789', result['withCode']['row'])
+        self.assertIn('Change Code', result['withCode']['row'])
+        self.assertEqual(result['afterOff'], {'checked': True, 'disabled': False}, 'ET Open is back once ET Pro is off')
+
+    def test_save_sends_the_code_then_starts_the_update(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.PRELUDE + self._fetch({'codeSet': False, 'codeHint': None}) + '''
+            await showRulesModal(true);
+            showEtproCodeModal();
+            var input = document.getElementById('etproCodeInput');
+            var type = input.type;
+            var removeShown = document.getElementById('etproCodeRemoveBtn').style.display !== 'none';
+            input.value = ' abcdef0123456789 ';
+            await saveEtproCode();
+            window.__jsdom_result = { type: type, removeShown: removeShown, posts: posts,
+                                      open: document.getElementById('etproCodeModal').classList.contains('active'),
+                                      cleared: input.value };
+        ''')
+        self.assertEqual(result['type'], 'password')
+        self.assertFalse(result['removeShown'], 'nothing to remove yet')
+        self.assertEqual(result['posts'][0], {'url': '/api/etpro-code', 'body': {'code': 'abcdef0123456789'}})
+        self.assertEqual(result['posts'][1]['url'], '/api/update-rules')
+        self.assertIn('et/pro', result['posts'][1]['body']['sources'])
+        self.assertIn('et/open', result['posts'][1]['body']['sources'])
+        self.assertFalse(result['open'])
+        self.assertEqual(result['cleared'], '', "the code doesn't linger in the page")
+
+    def test_a_refused_code_keeps_the_dialog_open(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.PRELUDE + self._fetch(
+                {'codeSet': False, 'codeHint': None}, post_status=400,
+                post_response='{error: "An ET Pro access code is 8-64 letters and digits"}') + '''
+            await showRulesModal(true);
+            showEtproCodeModal();
+            document.getElementById('etproCodeInput').value = 'bad code';
+            await saveEtproCode();
+            var error = document.getElementById('etproCodeError');
+            window.__jsdom_result = { posts: posts.map(p => p.url), error: error.textContent, shown: error.style.display !== 'none',
+                                      open: document.getElementById('etproCodeModal').classList.contains('active') };
+        ''')
+        self.assertEqual(result['posts'], ['/api/etpro-code'])
+        self.assertIn('8-64 letters and digits', result['error'])
+        self.assertTrue(result['shown'])
+        self.assertTrue(result['open'])
+
+    def test_remove_turns_et_pro_off(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.PRELUDE + self._fetch(
+                {'codeSet': True, 'codeHint': '6789'}, enabled=('et/open', 'et/pro'),
+                post_response='{codeSet: false, codeHint: null, warnings: []}') + '''
+            await showRulesModal(true);
+            showEtproCodeModal();
+            var removeShown = document.getElementById('etproCodeRemoveBtn').style.display !== 'none';
+            var placeholder = document.getElementById('etproCodeInput').placeholder;
+            await removeEtproCode();
+            await triggerRulesetUpdate('suricata');
+            window.__jsdom_result = { removeShown: removeShown, placeholder: placeholder, posts: posts, toasts: toasts };
+        ''')
+        self.assertTrue(result['removeShown'])
+        self.assertIn('6789', result['placeholder'])
+        self.assertEqual(result['posts'][0]['body'], {'code': ''})
+        self.assertIn('ET Pro is off', result['toasts'][0]['message'])
+        self.assertNotIn('et/pro', result['posts'][1]['body']['sources'])
+
+    def test_escape_backs_out_of_the_dialog_only(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.PRELUDE + self._fetch({'codeSet': False, 'codeHint': None}) + '''
+            await showRulesModal(true);
+            showEtproCodeModal();
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            window.__jsdom_result = [document.getElementById('etproCodeModal').classList.contains('active'),
+                                     document.getElementById('rulesModal').classList.contains('active')];
+        ''')
+        self.assertEqual(result, [False, True])
 
 
 class TestAlertRulesetClassification(unittest.TestCase):
@@ -21155,6 +22031,8 @@ class TestAcknowledgeAlerts(unittest.TestCase):
 
             eventTypes = ['dns'];
             buildSections();
+            // Opened the way a click on its card opens it.
+            showTab('section-acknowledged');
             await loadTabData('acknowledged');
             var row = document.getElementById('section-acknowledged').querySelector('tr[data-id="1"]');
             var pairs = JSON.parse(decodeURIComponent(row.dataset.pivot));
@@ -21211,6 +22089,1383 @@ class TestAcknowledgeAlerts(unittest.TestCase):
         self.assertTrue(result['hasCard'])
         self.assertIn('Acknowledged Alerts', result['label'])
         self.assertIn('3', result['label'])
+
+    def test_a_log_analysis_shows_the_acknowledged_alerts_card_for_its_sigma_alerts(self):
+        """REGRESSION: a log analysis offered Acknowledge on a Sigma alert
+        but had no Acknowledged Alerts card, so the alert was gone with no
+        way to see it again or undo it."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            await new Promise(function(r) { setTimeout(r, 100); });
+            document.getElementById('inputBoxes').style.display = 'none';
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            advancedMode = true;
+            isLogAnalysisMode = true;
+            var asked = [];
+            window.fetch = function(url) {
+                var u = String(url);
+                asked.push(u);
+                if (u.indexOf('/api/sigma-count') >= 0 && u.indexOf('acknowledged=only') >= 0) {
+                    return Promise.resolve({ ok: true, json: function() { return Promise.resolve({ count: 2 }); } });
+                }
+                return Promise.resolve({ ok: true, json: function() { return Promise.resolve({ count: 0 }); } });
+            };
+            buildStats({});
+            await new Promise(function(r) { setTimeout(r, 100); });
+            var card = document.querySelector('.stat-card[data-section="section-acknowledged"]');
+            window.__jsdom_result = {
+                label: card ? card.textContent : null,
+                askedForSuricataAlerts: asked.some(function(u) { return u.indexOf('/api/count') >= 0 && u.indexOf('type=alert') >= 0; }),
+            };
+        ''')
+        self.assertIsNotNone(result['label'], 'the card shows once a Sigma alert is acknowledged')
+        self.assertIn('Acknowledged Alerts', result['label'])
+        self.assertIn('2', result['label'])
+        self.assertFalse(result['askedForSuricataAlerts'], 'a log analysis has no Suricata alerts to count')
+
+    def _log_view_after_acknowledging_js(self, still_acknowledged):
+        """A log analysis re-rendered (as refreshAnalysisData does after
+        an acknowledge or un-acknowledge) while the Acknowledged Alerts tab
+        was open - with still_acknowledged Sigma alerts left in it."""
+        return '''
+            await new Promise(function(r) { setTimeout(r, 100); });
+            document.getElementById('inputBoxes').style.display = 'none';
+            ['section-log', 'section-sigmaalert'].forEach(function(id) {
+                var s = document.createElement('div');
+                s.id = id;
+                s.className = 'section';
+                document.body.appendChild(s);
+            });
+            var left = ''' + json.dumps(still_acknowledged) + ''';
+            var sigmaRow = { id: 5, rule_title: 'R1', rule_id: 'rid5', severity: 'high', timestamp: 't',
+                             mitre_techniques: '[]', logsource: 'windows', original_log: '{}' };
+            var asked = [];
+            window.fetch = function(url) {
+                var u = String(url);
+                asked.push(u);
+                if (u.indexOf('/api/sigma-alerts') >= 0 && u.indexOf('acknowledged=only') >= 0) {
+                    return Promise.resolve({ ok: true, json: function() { return Promise.resolve(left ? [sigmaRow] : []); } });
+                }
+                if (u.indexOf('/api/sigma-alerts') >= 0) {
+                    return Promise.resolve({ ok: true, json: function() { return Promise.resolve([sigmaRow]); } });
+                }
+                if (u.indexOf('count') >= 0) {
+                    return Promise.resolve({ ok: true, json: function() { return Promise.resolve({ count: left ? 1 : 0 }); } });
+                }
+                return Promise.resolve({ ok: true, json: function() { return Promise.resolve([]); } });
+            };
+            currentMd5 = 'abc123';
+            currentFilters = {};
+            currentSearch = [];
+            advancedMode = false;
+            isLogAnalysisMode = true;
+            await _renderLogAnalysisView({ log: 3, sigmaalert: 1 }, 'acknowledged');
+            var visible = document.querySelector('.section:not(.section-hidden):not(.agg-section)');
+            window.__jsdom_result = {
+                visible: visible ? visible.id : null,
+                askedForSuricataAlerts: asked.some(function(u) { return u.indexOf('/api/events') >= 0 && u.indexOf('type=alert') >= 0; }),
+            };
+        '''
+
+    def test_a_log_analysis_stays_on_acknowledged_alerts_while_it_has_any(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._log_view_after_acknowledging_js(True))
+        self.assertEqual(result['visible'], 'section-acknowledged')
+        self.assertFalse(result['askedForSuricataAlerts'])
+
+    def test_a_log_analysis_goes_back_to_sigma_alerts_once_none_are_acknowledged(self):
+        """Where the un-acknowledged alert reappears - as a PCAP analysis
+        goes back to Network Alerts."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._log_view_after_acknowledging_js(False))
+        self.assertEqual(result['visible'], 'section-sigmaalert')
+
+
+
+class TestEmailAnalysisUI(unittest.TestCase):
+    """Email (.eml) analysis mode: networkless per-type tabs for email,
+    link, fileinfo and filealerts events (see isEmailAnalysisMode)."""
+
+    EVENTS = """
+        var emailEv = { id: 1, event_type: 'email', timestamp: '2026-02-03T10:00:00+00:00',
+            src_ip: '', src_port: 0, dest_ip: '', dest_port: 0, proto: '',
+            email: { from: 'Bank <security@bank.example>', to: ['a@example.com', 'b@example.com'], cc: [],
+                     reply_to: ['x@collector.example'], return_path: '', subject: '<script>alert(1)</script>',
+                     date: 'Tue, 03 Feb 2026 10:00:00 +0000', message_id: '', mailer: '',
+                     spf: 'fail', dkim: '', dmarc: 'pass', originating_ip: '1.2.3.4',
+                     received: [{ from: 'sender.example', ip: '1.2.3.4', by: 'mx.example', date: 'Tue' }],
+                     attachments: ['invoice.com'], link_count: 1,
+                     warnings: ['SPF fail', 'Attachment with an executable extension: invoice.com'],
+                     body: 'line one\\nline two', body_truncated: false, depth: 0 } };
+        var linkEv = { id: 2, event_type: 'link', timestamp: '2026-02-03T10:00:00+00:00',
+            link: { url: 'https://evil.example/x', domain: 'evil.example', text: 'https://bank.example',
+                    text_domain: 'bank.example', mismatch: true, source: 'html' } };
+        var fileEv = { id: 3, event_type: 'fileinfo', timestamp: '2026-02-03T10:00:00+00:00',
+            fileinfo: { filename: 'invoice.com', size: 68, sha256: 'a'.repeat(64), magic: 'EICAR virus test files',
+                        stored: true, source: 'attachment', yara: [{ rule_name: 'EICAR_Test', tags: ['test'] }] } };
+    """
+
+    def test_sample_email_card_loads_builtin_sample(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var calls = [];
+            window.fetch = function(url, opts) {
+                calls.push({ url: String(url), method: opts && opts.method, body: opts && opts.body });
+                return Promise.resolve({ ok: true, status: 200, json: function() { return Promise.resolve({ status: 'ready', md5: 'abc' }); } });
+            };
+            var opened = null;
+            loadAnalysis = function(md5) { opened = md5; return Promise.resolve(); };
+            await loadBuiltInSample('email');
+            var post = calls.filter(function(c) { return c.url === '/api/load-sample'; })[0];
+            window.__jsdom_result = { post: post, opened: opened };
+        ''')
+        self.assertEqual(result['post']['method'], 'POST')
+        self.assertEqual(json.loads(result['post']['body']), {'name': 'email'})
+        self.assertEqual(result['opened'], 'abc')
+
+    def test_sample_email_card_markup(self):
+        self.assertIn('data-action="load-builtin-sample" data-sample="email"', JS_CONTENT)
+        self.assertIn('data-action="load-builtin-sample" data-sample="binary"', JS_CONTENT)
+        self.assertIn('data-action="load-builtin-sample" data-sample="log"', JS_CONTENT)
+        self.assertIn('data-action="load-builtin-sample" data-sample="pcap"', JS_CONTENT)
+        self.assertIn("'load-builtin-sample': (el) => loadBuiltInSample(el.dataset.sample)", JS_CONTENT)
+
+    def test_tab_choice_follows_results(self):
+        """REGRESSION (4.4.0 review): a search that matched only links
+        reopened the empty Emails tab instead of Links."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var types = ['email', 'link', 'filealerts', 'fileinfo'];
+            window.__jsdom_result = {
+                stays: pickEmailTab(types, { email: 1, link: 2 }, 'link'),
+                movesOn: pickEmailTab(types, { link: 2 }, 'email'),
+                firstWithResults: pickEmailTab(types, { fileinfo: 1 }, null),
+                nothing: pickEmailTab(types, {}, 'link'),
+            };
+        ''')
+        self.assertEqual(result, {'stays': 'link', 'movesOn': 'link', 'firstWithResults': 'fileinfo', 'nothing': 'email'})
+
+    def test_time_column_sorts(self):
+        """REGRESSION (4.4.0 review): email tabs sort in the browser, and
+        extractValue had no Time case, so sorting by Time did nothing."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var a = { event_type: 'link', timestamp: '2026-02-03T10:00:00', link: {} };
+            var b = { event_type: 'link', timestamp: '2026-01-01T10:00:00', link: {} };
+            var cols = ['Time', 'URL'];
+            window.__jsdom_result = sortItemsByColumn([a, b], cols, extractValue, 0, true).map(function(e) { return e.timestamp; });
+        ''')
+        self.assertEqual(result, ['2026-01-01T10:00:00', '2026-02-03T10:00:00'])
+
+    def test_size_detail_pivots_on_the_column_value(self):
+        """REGRESSION (4.4.0 review): the detail panel's "12,345 bytes"
+        was the pivot value, so Include on it never matched the Size
+        column's "12345"."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.EVENTS + '''
+            fileEv.fileinfo.size = 12345;
+            var div = document.createElement('div');
+            div.innerHTML = renderFileInfoDetails(fileEv);
+            var span = Array.from(div.querySelectorAll('[data-detail-pivot]')).find(function(s) {
+                return JSON.parse(decodeURIComponent(s.dataset.detailPivot))[0] === 'Size';
+            });
+            isEmailAnalysisMode = true;
+            window.__jsdom_result = { shown: span.textContent, pivot: JSON.parse(decodeURIComponent(span.dataset.detailPivot)),
+                                      column: extractValue(fileEv, 'Size', -1) };
+        ''')
+        self.assertEqual(result['shown'], '12,345 bytes')
+        self.assertEqual(result['pivot'], ['Size', '12345'])
+        self.assertEqual(result['column'], '12345')
+
+    def test_filealert_without_filename_has_no_blank_row(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var div = document.createElement('div');
+            div.innerHTML = renderFileAlertDetails({ event_type: 'filealerts', filealerts: { rule_name: 'R', sha256: 'x' } });
+            window.__jsdom_result = Array.from(div.querySelectorAll('.detail-label')).map(function(l) { return l.textContent; });
+        ''')
+        self.assertNotIn('Filename', result)
+
+    def test_log_stat_counts_use_the_log_tables_own_filter(self):
+        """REGRESSION (4.4.0 review): log-mode stat counts filtered through
+        extractValue, whose named cases (Domain, From, URL, ...) mean
+        something else for a log field of the same name - so a filter on
+        such a field emptied the count while the table still showed rows."""
+        body = JS_CONTENT.split('async function computeFilteredStats()')[1].split('\n        }\n')[0]
+        log_branch = body.split('if (isLogAnalysisMode) {')[1].split('return stats;')[0]
+        self.assertIn('getFilteredLogEvents(logEvents)', log_branch)
+        self.assertNotIn('eventMatchesFilters(e)', log_branch)
+
+    def test_detect_file_type_and_tab_order(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            window.__jsdom_result = {
+                eml: detectFileType('Phish.EML'),
+                order: sortEventTypes(['fileinfo', 'filealerts', 'link', 'email']),
+            };
+        ''')
+        self.assertEqual(result['eml'], 'email')
+        self.assertEqual(result['order'], ['email', 'link', 'filealerts', 'fileinfo'])
+
+    def test_columns_are_networkless_only_in_email_mode(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements('''
+            var pcapFileinfo = getColumnsForType('fileinfo');
+            isEmailAnalysisMode = true;
+            window.__jsdom_result = {
+                pcapFileinfo: pcapFileinfo,
+                email: getColumnsForType('email'),
+                link: getColumnsForType('link'),
+                fileinfo: getColumnsForType('fileinfo'),
+                filealerts: getColumnsForType('filealerts'),
+                serverAgg: canUseServerAggregation('email'),
+                serverSort: canServerSortEventType('link'),
+            };
+        ''')
+        self.assertIn('Source IP', result['pcapFileinfo'])
+        for key in ('email', 'link', 'fileinfo', 'filealerts'):
+            self.assertEqual(result[key][0], 'Time')
+            self.assertNotIn('Source IP', result[key])
+        self.assertIn('Mismatch', result['link'])
+        self.assertFalse(result['serverAgg'])
+        self.assertFalse(result['serverSort'])
+
+    def test_extract_values(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.EVENTS + '''
+            window.__jsdom_result = {
+                to: extractValue(emailEv, 'To', -1),
+                subject: extractValue(emailEv, 'Subject', -1),
+                warnings: extractValue(emailEv, 'Warnings', -1),
+                url: extractValue(linkEv, 'URL', -1),
+                mismatch: extractValue(linkEv, 'Mismatch', -1),
+                source: extractValue(fileEv, 'Source', -1),
+                // Other types' same-named columns are unchanged.
+                tlsSubject: extractValue({ event_type: 'tls', tls: { subject: 'CN=x' } }, 'Subject', -1),
+                httpUrl: extractValue({ event_type: 'http', http: { url: '/a' } }, 'URL', -1),
+            };
+        ''')
+        self.assertEqual(result['to'], 'a@example.com, b@example.com')
+        self.assertEqual(result['subject'], '<script>alert(1)</script>')
+        self.assertEqual(result['warnings'], '2')
+        self.assertEqual(result['url'], 'https://evil.example/x')
+        self.assertEqual(result['mismatch'], 'Yes')
+        self.assertEqual(result['source'], 'Attachment')
+        self.assertEqual(result['tlsSubject'], 'CN=x')
+        self.assertEqual(result['httpUrl'], '/a')
+
+    def test_email_row_has_no_network_cells_and_escapes(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.EVENTS + '''
+            isEmailAnalysisMode = true;
+            var table = document.createElement('table');
+            table.innerHTML = '<tbody>' + buildRowForEvent(emailEv) + '</tbody>';
+            var row = table.querySelector('tr[data-id]');
+            var cells = Array.from(row.children).map(function(td) { return td.textContent; });
+            var detail = table.querySelector('tr.detail-row td');
+            window.__jsdom_result = {
+                cells: cells, colspan: detail.getAttribute('colspan'),
+                scriptTags: table.querySelectorAll('script').length,
+            };
+        ''')
+        # Time + 8 email columns + the note-icon cell.
+        self.assertEqual(len(result['cells']), 10)
+        self.assertEqual(result['cells'][1], 'Bank <security@bank.example>')
+        self.assertEqual(result['cells'][3], '<script>alert(1)</script>')
+        self.assertEqual(result['colspan'], '10')
+        self.assertEqual(result['scriptTags'], 0)
+
+    def test_email_detail_panel(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.EVENTS + '''
+            var div = document.createElement('div');
+            div.innerHTML = renderEmailDetails(emailEv);
+            var labels = Array.from(div.querySelectorAll('.detail-label')).map(function(l) { return l.textContent; });
+            window.__jsdom_result = { text: div.textContent, labels: labels, scripts: div.querySelectorAll('script').length };
+        ''')
+        self.assertIn('SPF fail', result['text'])
+        self.assertIn('Attachment with an executable extension: invoice.com', result['text'])
+        self.assertIn('Originating IP', result['labels'])
+        self.assertIn('Hop 1', result['labels'])
+        self.assertNotIn('Message-ID', result['labels'], 'missing headers are left out')
+        self.assertNotIn('Cc', result['labels'])
+        self.assertIn('not reported', result['text'], 'DKIM had no result')
+        self.assertEqual(result['scripts'], 0)
+
+    def test_link_and_fileinfo_details(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.EVENTS + '''
+            currentMd5 = 'abc';
+            var link = document.createElement('div');
+            link.innerHTML = renderLinkDetails(linkEv);
+            var file = document.createElement('div');
+            file.innerHTML = renderFileInfoDetails(fileEv);
+            var pcapFile = document.createElement('div');
+            pcapFile.innerHTML = renderFileInfoDetails({ event_type: 'fileinfo', fileinfo: { filename: 'x.bin', sha256: '' } });
+            window.__jsdom_result = {
+                link: link.textContent, file: file.textContent,
+                cyberchef: file.querySelectorAll('[data-action="send-file-to-cyberchef"]').length,
+                pcapLabels: Array.from(pcapFile.querySelectorAll('.detail-label')).map(function(l) { return l.textContent; }),
+            };
+        ''')
+        self.assertIn('The link text names bank.example, but the link goes to evil.example', result['link'])
+        self.assertIn('EICAR_Test', result['file'], "an email's files carry their own YARA results")
+        self.assertIn('Attachment', result['file'])
+        self.assertEqual(result['cyberchef'], 1)
+        self.assertNotIn('Source', result['pcapLabels'], 'no blank Source row for a pcap file')
+
+class TestTsharkUI(unittest.TestCase):
+    """What tshark adds to a PCAP analysis: the tshark line and its states,
+    the cards it adds (and their dot and order), and its rows."""
+
+    def test_no_data_request_names_a_view(self):
+        """REGRESSION GUARD: there's one view - every request reads the
+        analysis's events.db, tshark's rows included."""
+        self.assertNotIn('viewParam', JS_CONTENT)
+        self.assertNotIn('view=shark', JS_CONTENT)
+        self.assertNotIn('currentView', JS_CONTENT)
+
+    def test_status_text_spells_out_each_state_with_a_link_when_it_needs_a_click(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            document.getElementById('tsharkLineContainer').innerHTML = tsharkLineHtml();
+            function shown(status, types) {
+                tsharkTypes = new Set(types || []);
+                sharkStatus = status;
+                updateTsharkLine();
+                var el = document.getElementById('tsharkLineStatus');
+                var link = el.querySelector('a');
+                return {text: el.textContent, link: link ? link.dataset.action : null,
+                        barHidden: el.closest('.tshark-line').hidden, dot: !!el.querySelector('.stat-badge-dot')};
+            }
+            window.__jsdom_result = {
+                added: shown({status: 'ready', merged: true, seconds: 24}, ['s7comm', 'conn_rsh']),
+                one: shown({status: 'ready', merged: true}, ['nbns']),
+                damaged: shown({status: 'ready', merged: true, seconds: 9, damaged: true}, ['nbns']),
+                none: shown({status: 'ready', merged: true, seconds: 3}),
+                quick: shown({status: 'ready', merged: true, seconds: 0}),
+                merging: shown({status: 'ready', merged: false}),
+                running: shown({status: 'running', elapsed: 5}),
+                queued: shown({status: 'queued', position: 1}),
+                tooLarge: shown({status: 'too_large'}),
+                error: shown({status: 'error', message: '<b>boom</b>'}),
+                disabled: shown({status: 'disabled'}),
+            };
+        """)
+        self.assertEqual(result['added']['text'], 'tshark parsed 2 additional protocols in 24s')
+        self.assertEqual(result['added']['dot'], True, "it starts with the dot that marks tshark's cards - the key to them")
+        self.assertEqual(result['one']['text'], 'tshark parsed 1 additional protocol')
+        self.assertEqual(result['damaged']['text'],
+                         'tshark parsed 1 additional protocol in 9s \u00b7 the capture is cut off, so its last packet wasn\u2019t read')
+        self.assertEqual((result['none']['text'], result['none']['dot']), ('tshark found no additional protocols in 3s', False))
+        self.assertEqual(result['quick']['text'], 'tshark found no additional protocols in under a second',
+                         "the server rounds to whole seconds - a quick run isn't 'in 0s'")
+        self.assertEqual(result['merging']['text'], 'tshark is parsing additional protocols\u2026')
+        self.assertEqual((result['running']['text'], result['running']['dot']), ('tshark is parsing additional protocols\u2026 5s', False))
+        self.assertIn('waiting for another capture', result['queued']['text'])
+        self.assertIn('more packets than tshark analyzes automatically', result['tooLarge']['text'])
+        self.assertEqual(result['tooLarge']['link'], 'start-shark', 'Add tshark protocols starts it')
+        self.assertEqual(result['error']['text'], "Couldn't add tshark protocols: <b>boom</b> \u2013 Try again", 'escaped')
+        self.assertEqual(result['error']['link'], 'start-shark')
+        self.assertEqual((result['disabled']['text'], result['disabled']['barHidden']), ('', True), 'off: nothing to say')
+
+    def test_rows_that_arrive_while_the_analyst_is_on_the_cards_wait_with_a_link(self):
+        """The cards reload once when tshark's rows join - but not under
+        the analyst's pointer or keyboard focus, where they'd shift; the
+        line offers to show them meanwhile."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            document.getElementById('tsharkLineContainer').innerHTML = tsharkLineHtml();
+            var refreshed = 0;
+            refreshAnalysisData = async function() { refreshed++; tsharkTypes = new Set(['s7comm']); };
+            currentMd5 = 'a'.repeat(32);
+            var grid = document.querySelector('.stats-grid');
+            var card = document.createElement('button'); grid.appendChild(card);
+            card.focus();
+            sharkStatus = {status: 'ready', merged: true, types: ['s7comm']};
+            refreshForTsharkRows(currentMd5);
+            var held = {refreshed: refreshed, text: document.getElementById('tsharkLineStatus').textContent,
+                        link: document.querySelector('#tsharkLineStatus a').dataset.action};
+            refreshForTsharkRows(currentMd5, true);
+            await new Promise(r => setTimeout(r, 0));
+            // (read through sharkStatusHtml: the test page's own start-up
+            // clears the bar once timers run)
+            var d = document.createElement('div'); d.innerHTML = sharkStatusHtml(sharkStatus);
+            window.__jsdom_result = {held: held, refreshed: refreshed, pending: tsharkRowsPending, text: d.textContent};
+        """)
+        self.assertEqual(result['held'], {'refreshed': 0, 'text': 'tshark parsed 1 additional protocol \u2013 Show them',
+                                          'link': 'show-tshark-rows'})
+        self.assertEqual((result['refreshed'], result['pending']), (1, False))
+        self.assertEqual(result['text'], 'tshark parsed 1 additional protocol')
+
+    def test_a_run_that_adds_nothing_reloads_nothing(self):
+        """REGRESSION: a run that found nothing to add, finishing while the
+        analyst was on the cards, said 'tshark parsed additional protocols -
+        Show them' - the page reloaded to find out - and then 'tshark found
+        no additional protocols'. The status says which types it added."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            document.getElementById('tsharkLineContainer').innerHTML = tsharkLineHtml();
+            var refreshed = 0;
+            refreshAnalysisData = async function() { refreshed++; };
+            currentMd5 = 'a'.repeat(32);
+            var grid = document.querySelector('.stats-grid');
+            var card = document.createElement('button'); grid.appendChild(card);
+            card.focus();
+            tsharkTypes = new Set();
+            sharkStatus = {status: 'running', elapsed: 1};
+            window.fetch = () => Promise.resolve({json: () => Promise.resolve({status: 'ready', merged: true, seconds: 1, types: []})});
+            await refreshSharkStatus(currentMd5);
+            var d = document.createElement('div'); d.innerHTML = sharkStatusHtml(sharkStatus);
+            window.__jsdom_result = {refreshed: refreshed, pending: tsharkRowsPending, text: d.textContent};
+        """)
+        self.assertEqual(result, {'refreshed': 0, 'pending': False, 'text': 'tshark found no additional protocols in 1s'})
+
+    def test_tshark_line_sits_between_the_header_and_search_and_is_cleared_with_the_page(self):
+        html = HTML_CONTENT
+        self.assertLess(html.index('id="mainHeader"'), html.index('id="tsharkLineContainer"'))
+        self.assertLess(html.index('id="tsharkLineContainer"'), html.index('id="searchBarContainer"'))
+        clear = JS_CONTENT[JS_CONTENT.index('function clearAnalysisContainers()'):]
+        self.assertIn("document.getElementById('tsharkLineContainer').innerHTML = '';", clear[:clear.index('\n        }\n')])
+
+    def test_a_status_reply_for_an_analysis_the_user_left_is_dropped(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            window.fetch = function() { currentMd5 = 'b'.repeat(32); return Promise.resolve({json: () => Promise.resolve({status: 'ready', flows: 1, app_protos: {}})}); };
+            currentMd5 = 'a'.repeat(32);
+            sharkStatus = null;
+            await refreshSharkStatus('a'.repeat(32));
+            window.__jsdom_result = sharkStatus;
+        """)
+        self.assertIsNone(result)
+
+    def test_row_notes_work_on_tshark_rows(self):
+        """tshark's rows live in events.db with Suricata's, so a note on one
+        is kept against that row like any other."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            var opened = false;
+            showNotesModal = function() { opened = true; };
+            openRowNoteEditor('events', '5', '');
+            window.__jsdom_result = {detail: rowNoteDetailHtml('events', 5, ''), opened: opened};
+        """)
+        self.assertIn('Add Note', result['detail'])
+        self.assertTrue(result['opened'])
+
+    def test_tshark_line_only_on_pcap_analyses(self):
+        load = JS_CONTENT[JS_CONTENT.index('async function loadAnalysis(md5)'):]
+        load = load[:load.index('\n        }\n')]
+        self.assertIn("document.getElementById('tsharkLineContainer').innerHTML = isPcap ? tsharkLineHtml() : '';", load)
+
+    def test_the_pivot_menu_has_no_other_view(self):
+        """REGRESSION GUARD: there is one view now - no "View in tshark"."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            document.getElementById('tsharkLineContainer').innerHTML = tsharkLineHtml();
+            sharkStatus = {status: 'ready', merged: true, flows: 1, app_protos: {}};
+            showPivotMenu({clientX: 1, clientY: 1}, null, 'Dest IP', '10.0.0.2', false, null, '1:abc=');
+            window.__jsdom_result = [...document.querySelectorAll('.pivot-menu .pivot-menu-item')].map(b => b.textContent.trim());
+        """)
+        self.assertIn('Correlate', result)
+        self.assertFalse([i for i in result if i.startswith('View in')])
+
+    def test_connection_tabs_label_sort_and_use_tsharks_flow_columns(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            window.__jsdom_result = {
+                labels: [eventTypeLabel('conn_ftp-data'), eventTypeLabel('conn_openvpn'), eventTypeLabel('dns')],
+                order: sortEventTypes(['conn_s7comm', 'tls', 'conn_ftp', 'alert', 'dns']),
+                columns: getColumnsForType('conn_s7comm'),
+                flowColumns: getColumnsForType('flow'),
+            };
+        """)
+        self.assertEqual(result['labels'], ['FTP Data', 'OPENVPN', 'DNS Queries'], "a known type's label, else its name in capitals")
+        self.assertEqual(result['order'], ['alert', 'dns', 'tls', 'conn_ftp', 'conn_s7comm'], 'after every record type')
+        self.assertIn('App Proto', result['columns'])
+        self.assertNotIn('State', result['columns'])
+        self.assertIn('State', result['flowColumns'], "Suricata's own flows keep theirs")
+
+    def test_the_dot_marks_the_types_tshark_added(self):
+        """The server says which types tshark added (stats' tshark_types);
+        nothing else - Suricata's own fileinfo or anomaly - gets a dot."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            eventTypes = ['flow', 's7comm', 'nbns', 'dns', 'fileinfo', 'anomaly', 'conn_rsh'];
+            eventStats = Object.fromEntries(eventTypes.map(t => [t, 1]));
+            tsharkTypes = new Set(['s7comm', 'nbns', 'conn_rsh']);
+            buildStats(null);
+            window.__jsdom_result = Object.fromEntries([...document.querySelectorAll('.stat-card')].map(c =>
+                [c.dataset.section.replace('section-', ''), !!c.querySelector('.stat-badge')]));
+        """)
+        self.assertEqual({t for t, badge in result.items() if badge}, {'s7comm', 'nbns', 'conn_rsh'})
+
+    def test_the_status_counts_seconds_while_tshark_runs_and_gives_the_total_once_ready(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            document.getElementById('tsharkLineContainer').innerHTML = tsharkLineHtml();
+            var realNow = Date.now(), now = realNow;
+            Date.now = function() { return now; };
+            sharkStatus = {status: 'running', elapsed: 12};
+            updateTsharkLine();
+            var timer = document.getElementById('tsharkLineTimer');
+            var first = document.getElementById('tsharkLineStatus').textContent;
+            now += 3400; tickSharkClock();
+            var later = timer.textContent;
+            var ticking = sharkClockTimer !== null;
+            tsharkTypes = new Set(['s7comm', 'nbns']);
+            sharkStatus = {status: 'ready', merged: true, seconds: 48};
+            updateTsharkLine();
+            window.__jsdom_result = {first: first, later: later, ticking: ticking, hidden: timer.getAttribute('aria-hidden'),
+                stoppedAfter: sharkClockTimer === null, ready: document.getElementById('tsharkLineStatus').textContent};
+        """)
+        self.assertEqual(result['first'], 'tshark is parsing additional protocols\u2026 12s')
+        self.assertEqual(result['later'], '15s')
+        self.assertTrue(result['ticking'])
+        self.assertEqual(result['hidden'], 'true', 'not read out every second from the live region')
+        self.assertTrue(result['stoppedAfter'])
+        self.assertEqual(result['ready'], 'tshark parsed 2 additional protocols in 48s')
+
+    def test_the_badge_is_a_corner_dot_with_a_key_and_hidden_text(self):
+        """The badge keeps the card at two lines: a dot - the tshark line
+        starts with the same one - with a tooltip, and readable text only for
+        screen readers. There's no separate key."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            document.getElementById('tsharkLineContainer').innerHTML = tsharkLineHtml();
+            eventTypes = ['flow', 's7comm'];
+            eventStats = {flow: 1, s7comm: 1};
+            tsharkTypes = new Set(['s7comm']);
+            buildStats(null);
+            var badge = document.querySelector('.stat-badge');
+            window.__jsdom_result = {text: badge.textContent, visibleText: [...badge.childNodes].filter(n => n.nodeType === 3).length,
+                srOnly: !!badge.querySelector('.sr-only'), title: badge.title, key: !!document.getElementById('tsharkLineKey')};
+        """)
+        self.assertEqual(result['text'], 'from tshark')
+        self.assertTrue(result['srOnly'])
+        self.assertEqual(result['visibleText'], 0)
+        self.assertFalse(result['key'])
+        self.assertEqual(result['title'], "From tshark: Suricata doesn't parse this protocol")
+        self.assertIn('.stat-badge { position: absolute;', CSS_CONTENT)
+
+    def test_cards_come_in_sections_under_headings_of_their_own(self):
+        """A PCAP analysis's cards come in three sections - triage, the
+        protocol records, the connections (Flows, then tshark's connection
+        cards) - each a panel with its heading on top, sized by its cards.
+        (REGRESSION: the connection cards' alphabetical run (BFD...) after
+        the record types' (...TLS) read as the cards sorted wrong.)"""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            await new Promise(function(r) { setTimeout(r, 100); });
+            currentMd5 = 'abc123';
+            isLogAnalysisMode = false; isEmailAnalysisMode = false;
+            var reply = function(v) { return Promise.resolve({ ok: true, json: function() { return Promise.resolve(v); } }); };
+            window.fetch = function(url) {
+                var u = String(url);
+                if (u.indexOf('/api/findings') >= 0) return reply({rules: [{id: 'x', count: 4}], findings: []});
+                if (u.indexOf('/api/events') >= 0 && u.indexOf('type=dns') >= 0) {
+                    return reply([{event_type: 'dns', timestamp: '2026-01-01T00:00:00', dns: {rrname: '08kcbghk807qtl9.top', rrtype: 'A'}}]);
+                }
+                if (u.indexOf('/api/count') >= 0 && u.indexOf('acknowledged=only') >= 0) return reply({count: 1});
+                if (u.indexOf('/api/sigma-count') >= 0) return reply({count: 0});
+                return reply({counts: eventStats});
+            };
+            eventTypes = sortEventTypes(['tls', 'conn__probed', 'conn_xdmcp', 'flow', 'alert', 'conn_bfd', 'http', 'dns', 'anomaly']);
+            eventStats = {tls: 2, conn__probed: 1640, conn_xdmcp: 73, flow: 40, alert: 1, conn_bfd: 10, http: 5, dns: 3, anomaly: 2};
+            buildStats();
+            await new Promise(function(r) { setTimeout(r, 200); });
+            buildStats();
+            var grid = document.getElementById('statsGrid');
+            var order = [...grid.querySelectorAll('.stats-grid-heading, .stat-card')].map(el => el.classList.contains('stats-grid-heading') ? 'HEADING ' + el.querySelector('.stats-grid-heading-label').textContent
+                : el.querySelector('.stat-label').textContent);
+            var panels = [...grid.children].map(p => [p.className, p.style.getPropertyValue('--cards'),
+                p.firstElementChild.classList.contains('stats-grid-heading'), p.querySelectorAll('.stats-group-cards > .stat-card').length]);
+            var groupedClass = grid.classList.contains('stats-grid-grouped');
+            // 3-column panels: each counts its columns from its first card
+            window.statsGridColumnCount = function() { return 3; };
+            // (the active card - a test can't set verticalNavSelection)
+            var column = function(label) {
+                grid.querySelectorAll('.stat-card').forEach(c => c.classList.toggle('tab-active', c.querySelector('.stat-label').textContent === label));
+                return activeColumnStatCards().map(c => c.querySelector('.stat-label').textContent);
+            };
+            var columns = {bfd: column('BFD'), flows: column('Flows'), dns: column('DNS Queries')};
+            var all = grid.querySelector('[data-section="section-all"]');
+            var notes = [...grid.querySelectorAll('.stats-grid-heading')].map(h => h.title);
+            var probedTitle = grid.querySelector('[data-section="section-conn__probed"]').title;
+            buildStats({tls: 2, alert: 1, http: 5, flow: 40});      // a filter that leaves no connection rows
+            window.__jsdom_result = {order: order, panels: panels, groupedClass: groupedClass, columns: columns, notes: notes, probedTitle: probedTitle,
+                                     allTitle: all.title, allTitleWithoutConnections: grid.querySelector('[data-section="section-all"]').title};
+        """)
+        self.assertEqual(result['order'], [
+            'HEADING Triage', 'Network Alerts', 'Anomalies', 'Findings', 'DNS Heuristics', 'Acknowledged Alerts', 'All Events',
+            'HEADING Protocol records', 'DNS Queries', 'HTTP', 'TLS',
+            'HEADING Connections', 'Flows', 'BFD', 'XDMCP', 'Probed Only'])
+        self.assertTrue(result['groupedClass'])
+        self.assertEqual(result['panels'], [['stats-group', '6', True, 6], ['stats-group', '3', True, 3], ['stats-group', '4', True, 4]],
+                         'a panel per section, its heading first, sized by its cards')
+        self.assertEqual(result['columns']['flows'], ['Network Alerts', 'DNS Heuristics', 'DNS Queries', 'Flows', 'Probed Only'],
+                         "each panel's columns count from its own first card, and Down/Up walks the column through every section")
+        self.assertEqual(result['columns']['bfd'], ['Anomalies', 'Acknowledged Alerts', 'HTTP', 'BFD'])
+        self.assertIn('worth a look', result['notes'][0])
+        self.assertIn("Suricata's flows", result['notes'][2])
+        self.assertEqual(result['allTitle'], "Every record except tshark's connection rows, which list connections by protocol the way Flows does")
+        self.assertIn('nothing ever answered', result['probedTitle'])
+        self.assertEqual(result['allTitleWithoutConnections'], '', 'nothing to explain with no connection cards')
+
+    def test_tshark_finished_line_moves_to_the_protocol_records_heading(self):
+        """Once tshark is done, its line ends the Protocol records heading,
+        right above its cards, and the line under the header goes; what
+        there is to wait on or click stays on that line - as does the
+        finished line when the grid has no headings."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            await new Promise(function(r) { setTimeout(r, 100); });
+            currentMd5 = 'abc123';
+            isLogAnalysisMode = false; isEmailAnalysisMode = false;
+            window.fetch = function() { return Promise.resolve({ ok: true, json: function() { return Promise.resolve({rules: [], findings: [], count: 0, counts: {}}); } }); };
+            document.getElementById('tsharkLineContainer').innerHTML = tsharkLineHtml();
+            var state = function() {
+                var h = document.getElementById('tsharkHeadingStatus');
+                return {line: document.getElementById('tsharkLineStatus').textContent,
+                        lineHidden: document.querySelector('.tshark-line').hidden,
+                        heading: h ? h.textContent : null, headingHidden: h ? h.hidden : null,
+                        headingParent: h ? h.closest('.stats-grid-heading').querySelector('.stats-grid-heading-label').textContent : null,
+                        title: h ? h.title : null};
+            };
+            tsharkTypes = new Set(['s7comm', 'conn_rsh']);
+            eventTypes = sortEventTypes(['alert', 's7comm', 'flow', 'conn_rsh']);
+            eventStats = {alert: 1, s7comm: 4, flow: 9, conn_rsh: 2};
+            sharkStatus = {status: 'running', elapsed: 3};
+            buildStats();
+            var running = state();
+            sharkStatus = {status: 'ready', merged: true, seconds: 9, types: ['s7comm', 'conn_rsh']};
+            updateTsharkLine();
+            var done = state();
+            buildStats();           // a rebuilt grid keeps it
+            var rebuilt = state();
+            eventTypes = ['flow']; eventStats = {flow: 9}; tsharkTypes = new Set();
+            buildStats();           // one section: no headings
+            var noHeadings = state();
+            window.__jsdom_result = {running: running, done: done, rebuilt: rebuilt, noHeadings: noHeadings};
+        """)
+        self.assertIn('tshark is parsing', result['running']['line'])
+        self.assertTrue(result['running']['headingHidden'])
+        self.assertEqual(result['done']['heading'], 'tshark parsed 2 additional protocols in 9s')
+        self.assertEqual(result['done']['headingParent'], 'Protocol records')
+        self.assertFalse(result['done']['headingHidden'])
+        self.assertEqual((result['done']['line'], result['done']['lineHidden']), ('', True))
+        self.assertIn('under Connections', result['done']['title'])
+        self.assertEqual(result['rebuilt']['heading'], result['done']['heading'])
+        self.assertIsNone(result['noHeadings']['heading'])
+        self.assertEqual(result['noHeadings']['line'], 'tshark found no additional protocols in 9s')
+        self.assertFalse(result['noHeadings']['lineHidden'])
+
+    # A grid with every section: three triage cards (All Events among
+    # them), two record cards and Flows plus the given number of
+    # connection cards - built with the given collapsed choices stored
+    def _sections_grid_js(self, connection_cards, choices=None):
+        conns = ['conn_p%02d' % i for i in range(connection_cards)]
+        types = ['alert', 'anomaly', 'dns', 'http', 'flow'] + conns
+        counts = dict({t: 1 for t in types}, flow=5)
+        return """
+            await new Promise(function(r) { setTimeout(r, 100); });
+            currentMd5 = 'abc123';
+            isLogAnalysisMode = false; isEmailAnalysisMode = false;
+            window.fetch = function() { return Promise.resolve({ ok: true, json: function() { return Promise.resolve({rules: [], findings: [], count: 0, counts: {}}); } }); };
+            safeStorageRemove(localStorage, 'socrates_statGroupsCollapsed');
+            """ + ("safeStorageSet(localStorage, 'socrates_statGroupsCollapsed', '%s');" % json.dumps(choices) if choices else '') + """
+            eventTypes = sortEventTypes(""" + json.dumps(types) + """);
+            eventStats = """ + json.dumps(counts) + """;
+            buildStats();
+            var grid = document.getElementById('statsGrid');
+            var shown = function() {
+                return [...grid.querySelectorAll('.stat-card:not(.stat-card-collapsed)')].map(c => c.querySelector('.stat-label').textContent);
+            };
+            var headings = function() {
+                return [...grid.querySelectorAll('.stats-grid-heading')].map(h => [h.querySelector('.stats-grid-heading-label').textContent,
+                    h.querySelector('.stats-grid-heading-toggle').getAttribute('aria-expanded'),
+                    h.querySelector('.stats-grid-heading-summary').hidden ? '' : h.querySelector('.stats-grid-heading-summary').textContent]);
+            };
+        """
+
+    def test_connections_collapse_by_default_past_the_threshold(self):
+        from tests.jsdom_helper import js_statements
+        few = js_statements(self._sections_grid_js(11) + "window.__jsdom_result = {headings: headings(), shown: shown().length};")
+        many = js_statements(self._sections_grid_js(12) + "window.__jsdom_result = {headings: headings(), shown: shown()};")
+        self.assertEqual(few['headings'][2], ['Connections', 'true', ''], '12 connection cards, Flows among them, stay open')
+        self.assertEqual(few['shown'], 3 + 2 + 12)
+        self.assertEqual(many['headings'], [['Triage', 'true', ''], ['Protocol records', 'true', ''],
+                                            ['Connections', 'false', '13 cards']])
+        self.assertEqual(many['shown'], ['Network Alerts', 'Anomalies', 'All Events', 'DNS Queries', 'HTTP'])
+
+    def test_toggling_a_section_hides_its_cards_and_is_remembered(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._sections_grid_js(2) + """
+            grid.querySelector('.stats-grid-heading[data-group="1"] .stats-grid-heading-toggle').click();
+            var afterClick = {headings: headings(), shown: shown(), stored: safeStorageGet(localStorage, 'socrates_statGroupsCollapsed')};
+            buildStats();      // a rebuild keeps it
+            var afterRebuild = shown();
+            grid.querySelector('.stats-grid-heading[data-group="1"]').click();   // anywhere on the heading
+            window.__jsdom_result = {afterClick: afterClick, afterRebuild: afterRebuild, reopened: shown(),
+                                     stored: safeStorageGet(localStorage, 'socrates_statGroupsCollapsed')};
+        """)
+        self.assertEqual(result['afterClick']['headings'][1], ['Protocol records', 'false', '2 cards'])
+        self.assertEqual(result['afterClick']['shown'], ['Network Alerts', 'Anomalies', 'All Events', 'Flows', 'P00', 'P01'])
+        self.assertEqual(json.loads(result['afterClick']['stored']), {'1': True})
+        self.assertEqual(result['afterRebuild'], result['afterClick']['shown'])
+        self.assertEqual(len(result['reopened']), 3 + 2 + 3)
+        self.assertEqual(json.loads(result['stored']), {'1': False})
+
+    def test_a_viewer_choice_beats_the_threshold(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._sections_grid_js(20, {'2': False, '0': True}) + "window.__jsdom_result = headings();")
+        self.assertEqual([h[1] for h in result], ['true', 'true', 'true'],
+                         "Triage holds the open tab, so it stays open; Connections was opened by the viewer")
+
+    def test_the_open_tabs_section_is_never_hidden(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._sections_grid_js(2, {'1': True, '2': True}) + """
+            var before = headings();
+            // opening a tab from elsewhere (a pivot, the Command Palette)
+            await loadTabData('dns');
+            window.__jsdom_result = {before: before, after: headings(), stored: safeStorageGet(localStorage, 'socrates_statGroupsCollapsed'),
+                                     dnsShown: shown().indexOf('DNS Queries') >= 0};
+        """)
+        self.assertEqual([h[1] for h in result['before']], ['true', 'false', 'false'])
+        self.assertTrue(result['dnsShown'])
+        self.assertEqual([h[1] for h in result['after']], ['true', 'true', 'false'])
+        self.assertEqual(json.loads(result['stored']), {'1': True, '2': True}, 'opened for now, not saved')
+
+    def test_left_right_skip_a_collapsed_sections_cards(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self._sections_grid_js(2, {'1': True}) + """
+            window.statsGridColumnCount = function() { return 4; };
+            var seen = [];
+            for (var i = 0; i < 5; i++) {
+                navigateStatTabs(1);
+                seen.push(grid.querySelector('.stat-card.keyboard-selected').querySelector('.stat-label').textContent);
+            }
+            window.__jsdom_result = {seen: seen};
+        """)
+        self.assertEqual(result['seen'], ['Anomalies', 'All Events', 'Flows', 'P00', 'P01'])
+
+    def test_enter_on_a_section_button_is_the_buttons_own(self):
+        keydown = JS_CONTENT.split("if (e.key === 'Enter' && (isNavigableKeyContext(e) || isAutocompleteModalActive())")[1][:200]
+        self.assertIn(".stats-grid-heading-toggle", keydown,
+                      "Enter on a focused heading button must toggle the section, not activate the arrow keys' selection")
+
+    def test_no_headings_when_the_cards_fill_one_section(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            currentMd5 = 'abc123';
+            isLogAnalysisMode = false; isEmailAnalysisMode = false;
+            eventTypes = sortEventTypes(['flow']);
+            eventStats = {flow: 3};
+            buildStats();
+            var pcap = document.querySelectorAll('#statsGrid .stats-grid-heading').length;
+            isLogAnalysisMode = true;
+            eventTypes = ['sigmaalert', 'log'];
+            eventStats = {sigmaalert: 2, log: 9};
+            buildStats();
+            var log = [...document.getElementById('statsGrid').children].map(el => el.classList.contains('stats-grid-heading') ? 'HEADING'
+                : el.querySelector('.stat-label').textContent);
+            window.__jsdom_result = {pcap: pcap, log: log};
+        """)
+        self.assertEqual(result['pcap'], 0)
+        self.assertNotIn('HEADING', result['log'], 'a log analysis keeps its cards as they were')
+
+    def test_flows_follow_the_record_types(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            window.__jsdom_result = sortEventTypes(['conn_bfd', 'flow', 'http', 'alert', 'conn__probed', 'dns']);
+        """)
+        self.assertEqual(result, ['alert', 'dns', 'http', 'flow', 'conn_bfd', 'conn__probed'])
+
+    def test_tshark_connection_rows_show_its_flow_columns_and_say_so(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            var e = {id: 1, event_type: 'conn_rsh', source: 'tshark', proto: 'TCP', app_proto: 'rsh', src_ip: '10.0.0.1',
+                     dest_ip: '10.0.0.2', src_port: 51877, dest_port: 514, timestamp: '2015-10-21T10:09:22',
+                     flow: {pkts_toserver: 6, pkts_toclient: 3, bytes_toserver: 100, bytes_toclient: 200, age: 0},
+                     shark: {protocols: {rsh: 2}, answered: 'yes'}};
+            var tb = document.createElement('tbody');
+            tb.innerHTML = buildRowForEvent(e);
+            var d = document.createElement('div'); d.innerHTML = formatEvent(e);
+            window.__jsdom_result = {cols: getColumnsForType('conn_rsh'), cells: [...tb.querySelector('tr').children].map(td => td.textContent),
+                                     detail: d.textContent};
+        """)
+        self.assertEqual(result['cols'][6:9], ['App Proto', 'Answered', 'Pkts \u2192'])
+        self.assertNotIn('State', result['cols'])
+        self.assertEqual(result['cells'][6:9], ['rsh', 'yes', '6'])
+        self.assertEqual(len(result['cells']), len(result['cols']) + 1, 'a cell per column, and the note cell')
+        self.assertIn('Answeredyes', result['detail'])
+        self.assertIn('Decoded bytshark', result['detail'])
+        self.assertIn('rsh (2 packets)', result['detail'])
+
+    def test_an_unknown_protocols_underscores_become_spaces_so_its_label_can_wrap(self):
+        """REGRESSION: STEAM_IHS_DISCOVERY had nowhere to wrap and ran out
+        of its card."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""window.__jsdom_result = [eventTypeLabel('conn_steam_ihs_discovery'),
+            eventTypeLabel('some_new_type'), eventTypeLabel('conn_bt-tracker'), eventTypeLabel('ftp_data')];""")
+        self.assertEqual(result, ['STEAM IHS DISCOVERY', 'SOME NEW TYPE', 'BT-TRACKER', 'FTP Data'])
+
+    def test_a_label_word_too_long_for_its_card_is_scaled_to_fit(self):
+        """REGRESSION: PORTCONTROL and CLASSICSTUN - single words, which a
+        label never breaks - ran out of a card on a ten-column row. jsdom
+        has no layout, so the label's widths are given."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            var root = document.createElement('div');
+            root.innerHTML = '<div class="stat-label">PORTCONTROL</div><div class="stat-label">FLOWS</div>';
+            document.body.appendChild(root);
+            var [long, short] = root.querySelectorAll('.stat-label');
+            long.style.fontSize = '9px';     // left over from a narrower layout: cleared first
+            Object.defineProperty(long, 'clientWidth', {get: () => 100});
+            Object.defineProperty(long, 'scrollWidth', {get: () => parseFloat(long.style.fontSize || '13.6') * 9});
+            Object.defineProperty(short, 'clientWidth', {get: () => 100});
+            Object.defineProperty(short, 'scrollWidth', {get: () => 60});
+            var realStyle = window.getComputedStyle;
+            window.getComputedStyle = el => ({fontSize: el.style.fontSize || '13.6px'});
+            fitStatLabels(root);
+            window.getComputedStyle = realStyle;
+            window.__jsdom_result = {long: parseFloat(long.style.fontSize), short: short.style.fontSize};
+        """)
+        self.assertLessEqual(result['long'] * 9, 100, 'fits its card')
+        self.assertGreater(result['long'], 10.5, 'shrunk only as far as it needs')
+        self.assertEqual(result['short'], '', 'a label that fits keeps its size')
+
+    def test_switched_off_there_is_no_tshark_line(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            document.getElementById('tsharkLineContainer').innerHTML = tsharkLineHtml();
+            sharkStatus = {status: 'disabled'};
+            updateTsharkLine();
+            window.__jsdom_result = {tabs: document.querySelectorAll('[data-action="switch-view"]').length,
+                                     hidden: document.querySelector('.tshark-line').hidden};
+        """)
+        self.assertEqual(result, {'tabs': 0, 'hidden': True})
+
+    def test_the_tshark_switch_is_saved_to_the_server_only_when_changed(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            var posts = [];
+            window.fetch = async function(url, opts) {
+                if (opts && opts.method === 'POST') posts.push([url, JSON.parse(opts.body)]);
+                return {ok: true, json: async () => ({enabled: true})};
+            };
+            var input = document.getElementById('sharkEnabledInput');
+            input.disabled = false; input.dataset.saved = 'true'; input.checked = true;
+            var unchanged = await saveSharkSetting();
+            input.checked = false;
+            var changed = await saveSharkSetting();
+            window.__jsdom_result = {unchanged: unchanged, changed: changed, posts: posts, saved: input.dataset.saved};
+        """)
+        self.assertEqual(result['unchanged'], 'unchanged')
+        self.assertEqual(result['changed'], 'saved')
+        self.assertEqual(result['posts'], [['/api/shark-settings', {'enabled': False}]])
+        self.assertEqual(result['saved'], 'false')
+
+    def test_no_dot_without_tshark_types(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            eventTypes = ['flow', 'dns', 'anomaly', 'fileinfo', 'stats', 'protocol_decode'];
+            eventStats = Object.fromEntries(eventTypes.map(t => [t, 1]));
+            tsharkTypes = new Set();
+            buildStats(null);
+            window.__jsdom_result = document.querySelectorAll('.stat-badge').length;
+        """)
+        self.assertEqual(result, 0)
+
+    def test_connection_cards_follow_the_records_and_stay_out_of_all_events(self):
+        """One card order: alerts, ALL EVENTS - which doesn't count
+        connections, each already one of Suricata's flows - then the
+        record types alphabetically (Suricata's and tshark's mixed), then
+        Flows and the connection cards."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            eventTypes = sortEventTypes(['flow', 'conn_rsh', 's7comm', 'alert', 'dns', 'conn_prp', 'nbns']);
+            eventStats = {flow: 10, conn_rsh: 2, s7comm: 3, alert: 1, dns: 4, conn_prp: 5, nbns: 1};
+            tsharkTypes = new Set(['s7comm', 'nbns', 'conn_rsh', 'conn_prp']);
+            buildStats(null);
+            window.__jsdom_result = [...document.querySelectorAll('.stat-card')].map(c => [c.dataset.section.replace('section-', ''),
+                c.querySelector('.stat-number').getAttribute('aria-label')]);
+        """)
+        self.assertEqual([t for t, _ in result], ['alert', 'all', 'dns', 'nbns', 's7comm', 'flow', 'conn_prp', 'conn_rsh'])
+        self.assertEqual(dict(result)['all'], '19', 'alert, dns, flow, nbns and s7comm - not the connections')
+
+    def test_column_filters_count_connection_rows_like_any_type(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            eventTypes = ['flow', 'conn_s7comm'];
+            currentFilters = {'Dest Port': {include: ['102'], exclude: []}};
+            allEvents = [
+                {event_type: 'flow', dest_port: 102},
+                {event_type: 'conn_s7comm', app_proto: 's7comm', dest_port: 102},
+                {event_type: 'conn_s7comm', app_proto: 's7comm', dest_port: 102},
+                {event_type: 'flow', dest_port: 53},
+            ];
+            ensureCappedBatch = async function() {};
+            eventMatchesFilters = function(e) { return e.dest_port === 102; };
+            window.__jsdom_result = await computeFilteredStats();
+        """)
+        self.assertEqual(result, {'flow': 1, 'conn_s7comm': 2})
+
+    TSHARK_RECORDS = {
+        'llmnr': {'event_type': 'llmnr', 'llmnr': {'type': 'response', 'queries': [{'rrname': 'wpad', 'rrtype': 'A'}],
+                                                   'answers': [{'rrname': 'wpad', 'rrtype': 'A', 'rdata': '10.1.0.70'}]}},
+        'nbns': {'event_type': 'nbns', 'nbns': {'type': 'request', 'opcode': 'registration', 'name': 'DESKTOP-TEST01',
+                                                'suffix': '20', 'service': 'Server service', 'address': '10.1.0.10'}},
+        's7comm': {'event_type': 's7comm', 's7comm': {'type': 'job', 'function': 'Read Var',
+                                                      'items': [{'area': 'Data blocks', 'db': 1, 'address': '10.0'}],
+                                                      'response': {'error_class': 'Error on supplies'}}},
+        'browser': {'event_type': 'browser', 'browser': {'message': 'Local Master Announcement', 'source_name': 'DC1',
+                                                      'destination_name': 'FIXTUREDOM', 'os_version': '10.0',
+                                                      'roles': ['workstation', 'domain controller'], 'count': 3}},
+        'coap': {'event_type': 'coap', 'coap': {'method': 'GET', 'type': 'Confirmable', 'uri': '/sensors/temp', 'query': 'unit=c',
+                                                'response_code': '2.05 Content', 'response_content_format': 'application/json',
+                                                'response_length': 10, 'resources': ['/sensors/temp']}},
+        'xdmcp': {'event_type': 'xdmcp', 'xdmcp': {'version': 1, 'messages': ['Query', 'Willing'], 'result': 'willing',
+                                                  'server_host_name': 'labsrv', 'server_status': 'Linux, load: 0.08',
+                                                  'display_addresses': ['10.1.0.40'],
+                                                  'authentication_names': ['XDM-AUTHENTICATION-1'],
+                                                  'authorization_names': ['MIT-MAGIC-COOKIE-1']}},
+        'tunnel': {'event_type': 'tunnel', 'tunnel': {'type': 'IP-in-IP', 'packets_toserver': 1, 'packets_toclient': 0,
+                                                      'inner_flows': 1, 'inner_hosts': ['10.1.0.1', '198.51.100.19'],
+                                                      'returns_to_sender': True}},
+        'rip': {'event_type': 'rip', 'rip': {'version': 'RIPv2', 'command': 'response', 'messages': 2, 'route_count': 3,
+                                              'routes': ['10.2.0.0/16 metric 1'], 'withdrawn': 1, 'metric_changes': 1,
+                                              'authentication': 'simple password'}},
+        'l2tp': {'event_type': 'l2tp', 'l2tp': {'version': 2, 'messages': ['SCCRQ', 'StopCCN'], 'client_host_name': 'l2tpscan',
+                                                'client_vendor': 'driftnet', 'client_firmware': '0x0123',
+                                                'server_host_name': 'vpn-gw', 'state': 'refused',
+                                                'stop_result': 'general error', 'calls': 2}},
+        'ipmi': {'event_type': 'ipmi', 'ipmi': {'requests': ['channel authentication capabilities'], 'result': 'answered',
+                                                'requested_privilege': 'administrator', 'ipmi_versions': ['1.5'],
+                                                'auth_types': ['none', 'MD5'], 'anonymous_login': True,
+                                                'cipher_accepted': {'authentication': 'RAKP-none'},
+                                                'weaknesses': ['anonymous login', 'no authentication offered']}},
+        'slp': {'event_type': 'slp', 'slp': {'version': 2, 'function': 'Service Request', 'xid': 2,
+                                              'service_type': 'service:VMwareInfrastructure', 'scopes': 'DEFAULT',
+                                              'response': 'Service Reply', 'status': 'OK',
+                                              'urls': ['service:VMwareInfrastructure://esx01.example.org']}},
+        'stun': {'event_type': 'stun', 'stun': {'method': 'Allocate', 'result': 'success', 'requests': 2, 'successes': 1,
+                                                'errors': 1, 'error_codes': ['401 Unauthorized'],
+                                                'mapped_addresses': ['203.0.113.50:40002'],
+                                                'relayed_addresses': ['192.0.2.30:50000'],
+                                                'client_software': 'fixture-client 1.0', 'username': 'turnuser'}},
+        'radius': {'event_type': 'radius', 'radius': {'message': 'Access-Request', 'user': 'alice', 'calling_station': 'AA-BB-CC-DD-EE-01',
+                                                    'nas_identifier': 'wlc-1', 'nas_ip': '10.1.0.2', 'result': 'accepted',
+                                                    'eap_methods': ['EAP-PEAP'], 'reply_message': 'Welcome, alice',
+                                                    'challenges': 1, 'response_time': 3.0}},
+        'socks': {'event_type': 'socks', 'socks': {'version': '5', 'command': 'connect', 'request_name': 'files.example.net',
+                                                  'request_port': 80, 'status': 'succeeded', 'user': 'proxyuser',
+                                                  'tunneled': 'http', 'bound_host': '192.0.2.10', 'bound_port': 50123}},
+        'rpc': {'event_type': 'rpc', 'rpc': {'program': 'mountd', 'program_number': 100005, 'version': 3, 'procedure': 'MNT',
+                                             'reply': 'RPC executed successfully', 'machine_name': 'client1',
+                                             'uid': 1000, 'gid': 1000, 'path': '/export/home'}},
+        'tls_failure': {'event_type': 'tls_failure', 'proto': 'TCP',
+                        'tls_failure': {'alert': 'Unknown CA', 'sent_by': 'client', 'alerts': ['client: Unknown CA'],
+                                        'sni': 'vpn.example', 'version': 'TLS 1.2',
+                                        'subject': 'C=US, O=Fixture Ltd, CN=dtls.example',
+                                        'issuerdn': 'C=US, O=Fixture Ltd, CN=dtls.example'}},
+        'dtls': {'event_type': 'dtls', 'dtls': {'sni': 'dtls.example', 'version': 'DTLS 1.2', 'handshake': 'completed',
+                                                'subject': 'C=US, O=Fixture Ltd, CN=dtls.example',
+                                                'ja4': 'dd2d0105wc_648b5c445417_7d72a171e567'}},
+        'syslog': {'event_type': 'syslog', 'syslog': {'severity': 'info', 'facility': 'auth', 'hostname': 'sw-core',
+                                                    'program': 'sshd', 'pid': '812', 'format': 'RFC 3164',
+                                                    'message': 'Failed password for admin from 10.1.0.77'}},
+        'dhcpv6': {'event_type': 'dhcpv6', 'dhcpv6': {'message': 'Request', 'reply': 'Reply', 'hostname': 'LAPTOP.example.com',
+                                                    'client_mac': '00:1b:21:00:00:10',
+                                                    'assigned_addresses': ['2001:0db8:0000:0000:0000:0000:0000:0010'],
+                                                    'vendor_class': 'MSFT 5.0', 'status': 'Success'}},
+        'lldp': {'event_type': 'lldp', 'lldp': {'system_name': 'sw1.example', 'chassis_id': '00:1b:21:00:00:01',
+                                                'port_id': 'Gi1/0/1', 'capabilities': ['bridge', 'router'],
+                                                'management_addresses': ['10.1.0.1'], 'vlan': 10, 'count': 2}},
+        'cdp': {'event_type': 'cdp', 'cdp': {'device_id': 'sw1', 'port_id': 'GigabitEthernet1/0/1',
+                                             'platform': 'cisco WS-C2960-24TT', 'capabilities': ['switch', 'IGMP'],
+                                             'addresses': ['10.1.0.1'], 'native_vlan': 10, 'count': 1}},
+        'goose': {'event_type': 'goose', 'goose': {'gocb_ref': 'IED1LD0/LLN0$GO$gcb1', 'dataset': 'IED1LD0/LLN0$Trips', 'stnum': 10,
+                                                  'repeats': 0, 'values': [True, '40', 7], 'stnum_gap': 7,
+                                                  'anomaly': 'stNum skipped 7'}},
+        'opcua': {'event_type': 'opcua', 'opcua': {'endpoint': 'opc.tcp://10.1.0.48:4840/fixture', 'security_policy': 'None',
+                                                  'security_mode': 'None', 'client_application': 'Fixture Client',
+                                                  'username': 'user1', 'password': 's3cret', 'activation': 'Good',
+                                                  'services': {'Write': 1}, 'errors': 0}},
+        'opcua_action': {'event_type': 'opcua_action', 'opcua_action': {'service': 'Call', 'node': 'ns=1;i=62541', 'object': 'i=85',
+                                                                        'arguments': ['Hello'], 'result': 'BadNodeIdUnknown'}},
+        'bacnet': {'event_type': 'bacnet', 'bacnet': {'service': 'reinitializeDevice', 'kind': 'confirmed', 'state': 'warmstart',
+                                                      'password': 'filister', 'result': 'error: services: password-failure'}},
+        'bacnet_property': {'event_type': 'bacnet_property', 'bacnet_property': {
+            'service': 'readProperty', 'object': 'analog-value,1', 'property': 'present-value', 'count': 2, 'errors': 1,
+            'last_value': 72.5, 'last_error': 'error: property: unknown-property'}},
+        'bacnet_device': {'event_type': 'bacnet_device', 'bacnet_device': {'device': 1047, 'vendor_id': 42, 'announcements': 2,
+                                                                           'vendor': 'Acuity Brands Lighting, Inc.'}},
+        'iec104': {'event_type': 'iec104', 'iec104': {'type_id': 45, 'type': 'C_SC_NA_1', 'action': 'Single command', 'cause': 'act',
+                                                      'station': 7, 'ioa': 2001, 'value': 'on', 'result': 'confirmed, terminated',
+                                                      'response': {'cause': 'actcon', 'negative': False}, 'terminated': True}},
+        'iec104_point': {'event_type': 'iec104_point', 'iec104_point': {'station': 7, 'ioa': 1001, 'type_id': 13, 'type': 'M_ME_NC_1',
+                                                                        'updates': 2, 'causes': {'spont': 2}, 'last_value': 231.0}},
+        'telnet': {'event_type': 'telnet', 'telnet': {'banner': 'MOXA EtherDevice Switch EDS-508A', 'username': 'admin',
+                                                      'password': 'admin', 'login': 'failed', 'commands': ['ls', 'exit']}},
+        'ssdp': {'event_type': 'ssdp', 'ssdp': {'type': 'request', 'method': 'M-SEARCH', 'search_target': 'upnp:rootdevice',
+                                                'location': 'http://10.1.0.60/d.xml', 'server': 'TestGateway/1.0'}},
+    }
+    TSHARK_EXPECTED = {
+        'llmnr': ['wpad', 'A'],
+        'nbns': ['registration', 'DESKTOP-TEST01', 'Server service', '10.1.0.10'],
+        's7comm': ['job', 'Read Var', 'Data blocks', 'Error on supplies'],
+        'ssdp': ['M-SEARCH', 'upnp:rootdevice', 'http://10.1.0.60/d.xml', 'TestGateway/1.0'],
+        'telnet': ['MOXA EtherDevice Switch EDS-508A', 'admin', 'admin', 'failed'],
+        'iec104': ['Single command', '7', '2001', 'on', 'confirmed, terminated'],
+        'browser': ['Local Master Announcement', 'DC1', 'FIXTUREDOM', '10.0', 'workstation, domain controller', '3'],
+        'rpc': ['mountd', '3', 'MNT', 'RPC executed successfully', 'client1'],
+        'coap': ['GET', '/sensors/temp', 'unit=c', '2.05 Content', 'application/json', 'Confirmable'],
+        'xdmcp': ['willing', 'labsrv', 'Linux, load: 0.08', 'Query, Willing', '10.1.0.40', 'XDM-AUTHENTICATION-1',
+                  'MIT-MAGIC-COOKIE-1'],
+        'tunnel': ['IP-in-IP', '1', '0', '1', '10.1.0.1', 'yes'],
+        'rip': ['response', 'RIPv2', '3', '10.2.0.0/16 metric 1', '1', '1', 'simple password'],
+        'l2tp': ['l2tpscan', 'driftnet', '0x0123', 'vpn-gw', 'refused', 'general error', '2'],
+        'ipmi': ['channel authentication capabilities', 'answered', '1.5', 'none, MD5', 'administrator', 'RAKP-none',
+                 'anonymous login, no authentication offered'],
+        'slp': ['Service Request', 'service:VMwareInfrastructure', 'DEFAULT',
+                'service:VMwareInfrastructure://esx01.example.org', 'Service Reply', 'OK', '2'],
+        'stun': ['Allocate', 'success', '2', '203.0.113.50:40002', '192.0.2.30:50000', 'fixture-client 1.0', 'turnuser'],
+        'radius': ['Access-Request', 'alice', 'AA-BB-CC-DD-EE-01', 'wlc-1', 'accepted', 'EAP-PEAP', 'Welcome, alice'],
+        'socks': ['5', 'connect', 'files.example.net', '80', 'succeeded', 'proxyuser', 'http'],
+        'tls_failure': ['Unknown CA', 'client', 'vpn.example', 'C=US, O=Fixture Ltd, CN=dtls.example',
+                        'C=US, O=Fixture Ltd, CN=dtls.example'],
+        'dtls': ['dtls.example', 'DTLS 1.2', 'completed', 'C=US, O=Fixture Ltd, CN=dtls.example',
+                 'dd2d0105wc_648b5c445417_7d72a171e567'],
+        'syslog': ['info', 'auth', 'sw-core', 'sshd', 'Failed password for admin from 10.1.0.77'],
+        'dhcpv6': ['Request', 'Reply', 'LAPTOP.example.com', '00:1b:21:00:00:10',
+                   '2001:0db8:0000:0000:0000:0000:0000:0010', 'MSFT 5.0', 'Success'],
+        'lldp': ['sw1.example', '00:1b:21:00:00:01', 'Gi1/0/1', 'bridge, router', '10.1.0.1', '10', '2'],
+        'cdp': ['sw1', 'GigabitEthernet1/0/1', 'cisco WS-C2960-24TT', 'switch, IGMP', '10.1.0.1', '10', '1'],
+        'goose': ['IED1LD0/LLN0$GO$gcb1', 'IED1LD0/LLN0$Trips', '10', '0', 'stNum skipped 7'],
+        'opcua': ['opc.tcp://10.1.0.48:4840/fixture', 'None', 'Fixture Client', 'user1', 's3cret', 'Good'],
+        'opcua_action': ['Call', 'ns=1;i=62541', 'Hello', 'BadNodeIdUnknown'],
+        'bacnet': ['reinitializeDevice', '', '', '', 'filister', 'error: services: password-failure'],
+        'bacnet_property': ['readProperty', 'analog-value,1', 'present-value', '2', '1', '72.5'],
+        'bacnet_device': ['1047', 'Acuity Brands Lighting, Inc.', '2'],
+        'iec104_point': ['7', '1001', 'M_ME_NC_1', '2', '231'],
+    }
+
+    def test_tshark_record_types_render_their_columns(self):
+        """LLMNR, NBNS, S7comm and SSDP: a row cell per column (plus the
+        row-note cell) holding extractValue's value, and a detail panel."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(f"""
+            var records = {json.dumps(self.TSHARK_RECORDS)};
+            var out = {{}};
+            Object.keys(records).forEach(function(t) {{
+                var e = Object.assign({{id: 1, timestamp: '2026-01-01T00:00:00', proto: 'UDP', src_ip: '10.1.0.10',
+                                        dest_ip: '10.1.0.20', src_port: 1, dest_port: 2}}, records[t]);
+                var cols = getColumnsForType(t);
+                var tb = document.createElement('tbody');
+                tb.innerHTML = buildRowForEvent(e);
+                out[t] = {{cols: cols, cells: [...tb.querySelector('tr').children].map(td => td.textContent),
+                          values: cols.slice(6).map(c => extractValue(e, c)),
+                          // just its section titles: the helper's output is limited to 64 KB
+                          detail: (formatEvent(e).match(/[^<>]+ Details(?=<)/g) || []).join('|'),
+                          label: eventTypeLabel(t)}};
+            }});
+            window.__jsdom_result = out;
+        """)
+        for t, expected in self.TSHARK_EXPECTED.items():
+            with self.subTest(event_type=t):
+                r = result[t]
+                self.assertEqual(r['values'], expected)
+                self.assertEqual(len(r['cells']), len(r['cols']) + 1)
+                self.assertEqual(r['cells'][6:6 + len(expected)], expected)
+                # one record per point, so its section is a point's
+                section = {'iec104_point': 'IEC 104 Point', 'bacnet_property': 'BACnet Property',
+                           'bacnet_device': 'BACnet Device', 'opcua_action': 'OPC UA Action',
+                           'tls_failure': 'TLS Failure'}.get(t, r['label'])
+                self.assertIn(f'{section} Details', r['detail'])
+
+    def test_telnet_details_list_the_commands_one_per_line(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            var e = {id: 1, event_type: 'telnet', timestamp: '2026-01-01T00:00:00', proto: 'TCP', source: 'tshark',
+                     telnet: {banner: 'Ubuntu', username: 'admin', password: 's3cret', commands: ['ls -la', '<b>exit</b>']}};
+            var d = document.createElement('div'); d.innerHTML = formatEvent(e);
+            var block = [...d.querySelectorAll('.detail-label')].find(l => l.textContent === 'Commands').nextElementSibling;
+            window.__jsdom_result = {text: block.textContent, html: block.innerHTML, label: eventTypeLabel('telnet')};
+        """)
+        self.assertEqual(result['text'], 'ls -la\n<b>exit</b>', 'escaped, one per line')
+        self.assertNotIn('<b>', result['html'])
+        self.assertEqual(result['label'], 'Telnet')
+
+    def test_llmnr_details_show_transmissions_and_responses(self):
+        """tshark folds an LLMNR query's resends and repeated answers into
+        one record; its details give both counts, when there are any."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements("""
+            var base = {id: 1, timestamp: '2026-01-01T00:00:00', event_type: 'llmnr', proto: 'UDP',
+                        src_ip: '10.1.0.10', dest_ip: '224.0.0.252', src_port: 53012, dest_port: 5355};
+            var many = Object.assign({}, base, {llmnr: {type: 'response', id: 1, transmissions: 2, responses: 3,
+                                                        queries: [{rrname: 'wpad', rrtype: 'A'}]}});
+            var once = Object.assign({}, base, {llmnr: {type: 'response', id: 1, queries: [{rrname: 'wpad', rrtype: 'A'}]}});
+            var text = function(e) { var d = document.createElement('div'); d.innerHTML = formatEvent(e); return d.textContent; };
+            window.__jsdom_result = {many: text(many), once: text(once)};
+        """)
+        self.assertIn('Transmissions2', result['many'])
+        self.assertIn('Responses3', result['many'])
+        self.assertNotIn('Transmissions', result['once'])
+        self.assertNotIn('Responses', result['once'])
+
+    def test_tshark_columns_are_all_aggregatable_server_side(self):
+        """Every column past the six shared ones has a JSON path in db.py's
+        AGGREGATION_JSON_PATHS - the server can't aggregate one it lacks."""
+        import db
+        from tests.jsdom_helper import js_statements
+        cols = js_statements("""window.__jsdom_result = Object.fromEntries(
+            ['llmnr', 'nbns', 's7comm', 'ssdp', 'telnet', 'iec104', 'iec104_point', 'bacnet', 'bacnet_property', 'bacnet_device', 'opcua', 'opcua_action', 'goose', 'browser', 'lldp', 'cdp', 'dhcpv6', 'syslog', 'dtls', 'tls_failure', 'rpc', 'socks', 'radius', 'stun', 'coap', 'slp', 'ipmi', 'l2tp', 'rip', 'tunnel', 'xdmcp'].map(t => [t, getColumnsForType(t).slice(6)]));""")
+        for t, columns in cols.items():
+            self.assertEqual(list(db.AGGREGATION_JSON_PATHS[t]), columns, t)
+
+    def test_refresh_falls_back_to_the_first_tab_when_the_open_one_is_gone(self):
+        """REGRESSION: with the open tab's type missing from the new data
+        (Network Alerts open, then a search that matched no alerts), every
+        section was hidden and nothing loaded."""
+        body = JS_CONTENT[JS_CONTENT.index('async function refreshAnalysisData()'):]
+        body = body[:body.index('updateFilterBarVisibility();\n            // See seedVerticalNavSelectionIfStale')]
+        self.assertIn("const sectionEl = activeType && activeType !== eventTypes[0]\n                    ? document.getElementById('section-' + activeType) : null;", body)
+        self.assertIn('if (sectionEl) {', body)
+        self.assertIn('} else if (eventTypes[0]) {\n                    await loadTabData(eventTypes[0], null);', body)
+
+
+
+WORLD_MAP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'static', 'world-110m.json')
+
+
+class TestTrafficMap(unittest.TestCase):
+    """The Traffic Map panel: collapsed until opened, only for a capture,
+    its clicks toggling country: search terms, and the map's panels built
+    from its data (escaped). The canvases are stubbed - JSDOM can't draw."""
+
+    STUBS = r"""
+        localStorage.setItem('socrates_hideHelp', 'true');
+        await new Promise(r => setTimeout(r, 50));
+        var ctxStub = new Proxy({}, {
+            get(t, k) {
+                if (k === 'getImageData') return (x, y, w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) });
+                if (k === 'createRadialGradient' || k === 'createLinearGradient') return () => ({ addColorStop() {} });
+                if (k === 'measureText') return () => ({ width: 10 });
+                if (k in t) return t[k];
+                return function() {};
+            },
+            set(t, k, v) { t[k] = v; return true; },
+        });
+        HTMLCanvasElement.prototype.getContext = function() { return ctxStub; };
+        window.Path2D = class { moveTo() {} lineTo() {} arc() {} };
+        window.requestAnimationFrame = () => 1;
+        window.cancelAnimationFrame = () => {};
+        var square = (x, y) => ({ type: 'Polygon', coordinates: [[[x, y], [x + 5, y], [x + 5, y + 5], [x, y + 5], [x, y]]] });
+        var world = {
+            features: [{ type: 'Feature', id: 'US', cc: 'US', geometry: square(-100, 35) },
+                       { type: 'Feature', id: 'FR', cc: 'FR', geometry: square(0, 45) }],
+            places: { SG: [103.8, 1.35] },
+            names: { US: 'United States', FR: 'France', SG: 'Singapore' },
+        };
+        var mapData = {
+            start: 1767225600, span: 100, bins: 1200, flows: 4, alertCount: 1,
+            geo: { source: 'DB-IP IP to Country Lite', date: '2026-11' },
+            buckets: [[0, 'US', 'FR', 3, 300], [600, 'SG', 'FR', 1, 10]],
+            alerts: [[0.5, 'US', 'FR', 1, '<img src=x onerror=alert(1)>', '8.8.8.8', '203.0.113.9']],
+            totals: { US: [3, 300], FR: [4, 310], SG: [1, 10] },
+        };
+    """
+
+    def test_static_wiring(self):
+        sankey = HTML_CONTENT.index('id="sankeyPanel"')
+        panel = HTML_CONTENT.index('id="trafficMapPanel"')
+        self.assertLess(sankey, panel)
+        self.assertLess(panel, HTML_CONTENT.index('id="aggregations"'))
+        self.assertIn('<script src="static/topojson-client.min.js"></script>', HTML_CONTENT)
+        self.assertTrue(os.path.exists(os.path.join(os.path.dirname(JS_PATH), 'topojson-client.min.js')))
+        self.assertIn("'toggle-traffic-map': () => toggleTrafficMap(),", JS_CONTENT)
+        self.assertIn("trafficMap: '#trafficMapPanel > .section-toggle-bar',", JS_CONTENT)
+        self.assertIn('body.file-analysis #trafficMapPanel { display: none !important; }', CSS_CONTENT)
+        # alerts keep the app's fixed severity colors
+        self.assertIn("colors['s' + s] = d3.rgb(COLORS.SEVERITY[s])", JS_CONTENT)
+
+    def test_world_map_file(self):
+        with open(WORLD_MAP_PATH) as f:
+            world = json.load(f)
+        ids = [g['id'] for g in world['objects']['countries']['geometries']]
+        self.assertTrue(all(re.fullmatch(r'[A-Z]{2}', i) for i in ids), 'shapes keyed by ISO alpha-2')
+        self.assertNotIn('AQ', ids, 'the map leaves Antarctica out')
+        for cc in ('US', 'FR', 'CN', 'BR', 'XK'):
+            self.assertIn(cc, ids)
+        for cc in ('SG', 'HK', 'MT'):
+            self.assertIn(cc, world['places'], f'{cc} is too small for a shape, so it gets a point')
+            self.assertNotIn(cc, ids)
+        lon, lat = world['places']['SG']
+        self.assertTrue(-180 <= lon <= 180 and -90 <= lat <= 90)
+        self.assertEqual(world['names']['DE'], 'Germany')
+
+    def test_collapsed_until_opened_and_only_for_a_capture(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.STUBS + r"""
+            var fetches = [];
+            window.fetch = function(url) { fetches.push(url); return new Promise(() => {}); };
+            currentMd5 = 'a'.repeat(32);
+            trafficMapMode = false;
+            await updateTrafficMap();
+            var panel = document.getElementById('trafficMapPanel');
+            var collapsed = { display: panel.style.display, html: panel.textContent };
+            isLogAnalysisMode = true;
+            await updateTrafficMap();
+            var log = panel.style.display;
+            isLogAnalysisMode = false;
+            isEmailAnalysisMode = true;
+            await updateTrafficMap();
+            var email = panel.style.display;
+            isEmailAnalysisMode = false;
+            window.__jsdom_result = { collapsed: collapsed, log: log, email: email, fetches: fetches };
+        """)
+        self.assertEqual(result['collapsed'], {'display': '', 'html': '▸ Traffic Map'})
+        self.assertEqual(result['log'], 'none')
+        self.assertEqual(result['email'], 'none')
+        self.assertEqual(result['fetches'], [], 'nothing is fetched until the map is opened')
+
+    def test_resize_on_the_welcome_screen_leaves_it_hidden(self):
+        """currentMd5 outlives a return to the welcome screen - a resize
+        there redrew the diagrams and brought the map back above it."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.STUBS + r"""
+            window.fetch = function() { return new Promise(() => {}); };
+            currentMd5 = 'a'.repeat(32);
+            diagramMode = true;
+            trafficMapMode = true;
+            showAnalysisUI();
+            updateTrafficMap();
+            var panel = document.getElementById('trafficMapPanel');
+            var shown = panel.style.display;
+            clearAnalysisContainers();
+            showWelcomeUI();
+            window.dispatchEvent(new Event('resize'));
+            await new Promise(r => setTimeout(r, 500));
+            window.__jsdom_result = { shown: shown, after: panel.style.display, html: panel.innerHTML };
+        """)
+        self.assertEqual(result['shown'], '')
+        self.assertEqual(result['after'], 'none')
+        self.assertEqual(result['html'], '')
+
+    def test_country_click_toggles_its_search_term(self):
+        from tests.jsdom_helper import js_statements
+        # currentSearch is a `let` binding test code can't reach (see
+        # test_only_leaves_currentSearch_untouched): it's seeded through
+        # huntFilterValue() and read back through buildSearchQuery()
+        result = js_statements(self.STUBS + r"""
+            var refreshes = 0;
+            refreshAnalysisData = async function() { refreshes++; };
+            await huntFilterValue('country:de');
+            await toggleCountryFilter('FR');
+            var added = buildSearchQuery();
+            var countries = Array.from(trafficMapCountries()).sort();
+            await toggleCountryFilter('FR');
+            var removed = buildSearchQuery();
+            await toggleCountryFilter('DE');
+            window.__jsdom_result = { added: added, countries: countries, removed: removed,
+                                      lowerCaseRemoved: buildSearchQuery(), refreshes: refreshes };
+        """)
+        self.assertEqual(result['added'], '&q=country%3Ade&q=country%3AFR')
+        self.assertEqual(result['countries'], ['DE', 'FR'])
+        self.assertEqual(result['removed'], '&q=country%3Ade')
+        self.assertEqual(result['lowerCaseRemoved'], '', 'a term typed in lower case is the same country')
+        self.assertEqual(result['refreshes'], 4)
+
+    def test_panels_from_data(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.STUBS + r"""
+            var clicked = [];
+            toggleCountryFilter = function(cc) { clicked.push(cc); };
+            var root = document.createElement('div');
+            document.body.appendChild(root);
+            var map = createTrafficMap(root, world);
+            map.setData(mapData, new Set(['US']), false);
+            var q = s => root.querySelector(s);
+            var atStart = { flows: q('[data-tm="flows"]').textContent, play: q('[data-tm="play"]').getAttribute('aria-label'),
+                            feed: q('[data-tm="feed"]').textContent };
+            map.seek(1);
+            var buttons = Array.from(root.querySelectorAll('.tm-top button'));
+            buttons[0].click();
+            window.__jsdom_result = {
+                atStart: atStart,
+                flows: q('[data-tm="flows"]').textContent,
+                alerts: q('[data-tm="alerts"]').textContent,
+                places: q('[data-tm="places"]').textContent,
+                title: q('[data-tm="top-title"]').textContent,
+                top: buttons.map(b => [b.dataset.cc, b.className, b.querySelector('.n').textContent]),
+                feedText: q('[data-tm="feed"]').textContent,
+                feedImages: root.querySelectorAll('.tm-feed img').length,
+                clock: q('[data-tm="clock"]').textContent,
+                clicked: clicked,
+                credit: q('.tm-credit').hidden,
+            };
+            map.destroy();
+        """, with_d3=True)
+        self.assertEqual(result['atStart']['flows'], '0')
+        self.assertEqual(result['atStart']['play'], 'Pause', 'it plays once data arrives')
+        self.assertEqual(result['atStart']['feed'], 'No alerts yet')
+        self.assertEqual((result['flows'], result['alerts'], result['places']), ('4', '1', '3'))
+        self.assertEqual(result['title'], 'Top sources')
+        self.assertEqual(result['top'], [['US', 'on', '3'], ['SG', '', '1']])
+        self.assertIn('<img src=x onerror=alert(1)>', result['feedText'])
+        self.assertEqual(result['feedImages'], 0, 'a signature is text, never markup')
+        self.assertIn('8.8.8.8 (US)', result['feedText'])
+        self.assertEqual(result['clock'], '00:01:40')
+        self.assertEqual(result['clicked'], ['US'])
+        self.assertFalse(result['credit'])
+
+    def test_any_alert_severity_draws(self):
+        """Severity 4 (Suricata's tcp-connection class) and a custom rule's
+        priority:9 have colors too - a missing one threw on every frame."""
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.STUBS + r"""
+            var root = document.createElement('div');
+            document.body.appendChild(root);
+            var map = createTrafficMap(root, world);
+            var data = Object.assign({}, mapData, { alertCount: 2, alerts: [
+                [0.5, 'US', 'FR', 4, 'TCP connection', '8.8.8.8', '203.0.113.9'],
+                [0.6, 'SG', 'FR', 9, 'custom priority', '103.1.1.1', '203.0.113.9']] });
+            var error = null;
+            try {
+                map.setData(data, new Set(), false);
+                map.seek(1);
+                map.seek(0.5);
+            } catch (e) { error = String(e); }
+            window.__jsdom_result = { error: error, alerts: root.querySelector('[data-tm="alerts"]').textContent };
+            map.destroy();
+        """, with_d3=True)
+        self.assertIsNone(result['error'])
+        self.assertEqual(result['alerts'], '2')
+
+    def test_notes_for_no_data_and_no_location_data(self):
+        from tests.jsdom_helper import js_statements
+        result = js_statements(self.STUBS + r"""
+            var root = document.createElement('div');
+            document.body.appendChild(root);
+            var map = createTrafficMap(root, world);
+            map.setData(Object.assign({}, mapData, { geo: null }), new Set(), false);
+            var noGeo = { note: root.querySelector('[data-tm="note"]').textContent, credit: root.querySelector('.tm-credit').hidden };
+            map.setData({ start: null, span: 0, bins: 1200, flows: 0, alertCount: 0, geo: mapData.geo,
+                          buckets: [], alerts: [], totals: {} }, new Set(), false);
+            window.__jsdom_result = { noGeo: noGeo, empty: root.querySelector('[data-tm="note"]').textContent,
+                                      play: root.querySelector('[data-tm="play"]').getAttribute('aria-label') };
+            map.destroy();
+        """, with_d3=True)
+        self.assertIn("IP location data isn't installed", result['noGeo']['note'])
+        self.assertTrue(result['noGeo']['credit'])
+        self.assertEqual(result['empty'], 'No flows or alerts to map')
+        self.assertEqual(result['play'], 'Play')
+
+    def test_menus_keep_their_own_arrow_keys(self):
+        guard = JS_CONTENT.split('function isNavigableKeyContext(e) {')[1].split('\n        }')[0]
+        self.assertIn("e.target.tagName !== 'SELECT'", guard)
 
 
 if __name__ == '__main__':

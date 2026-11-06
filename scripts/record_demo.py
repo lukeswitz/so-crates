@@ -5,14 +5,14 @@ Requires: pip install -r requirements-screenshots.txt, plus a one-time
 `playwright install ffmpeg` (Playwright's video muxing needs its own bundled
 ffmpeg, separate from any system ffmpeg). Also needs a running server
 (default http://127.0.0.1:8000/socrates.html - override with --base-url).
-Uses the app's own default "Sample pcap file" (DEFAULT_SAMPLE_URL in
-static/socrates.js - a one-click convenience link to an external pcap on
-malware-traffic-analysis.net, not something bundled with the app), same as
+Loads the URL box's default (DEFAULT_SAMPLE_URL in static/socrates.js - a
+real infection's traffic on malware-traffic-analysis.net, richer than the
+built-in Sample PCAP file) with its Go button, same as
 scripts/capture_screenshots.py, so it needs no pre-existing local analysis
 or hardcoded MD5 - it works on a clean checkout with an empty DATA_DIR.
 Before recording starts, main() pre-warms that exact sample via a plain
 /api/load-url POST (see _prewarm_sample_analysis) and blocks until it's
-ready - so the recorded click hits _commit_file_or_return_ready's dedup
+ready - so the recorded Go click hits _commit_file_or_return_ready's dedup
 fast path (see socrates.py) instead of waiting through a real Suricata/
 YARA/Sigma run on camera. Running against a container's fresh volume (see
 AGENTS.md's Release Checklist) is also the only way to get real Playbook/
@@ -65,7 +65,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MP4_OUTPUT = os.path.join(REPO_ROOT, 'docs', 'videos', 'demo.mp4')
 WEBM_FALLBACK_OUTPUT = os.path.join(REPO_ROOT, 'docs', 'videos', 'demo.webm')
 POSTER_OUTPUT = os.path.join(REPO_ROOT, 'docs', 'videos', 'demo-poster.jpg')
-POSTER_TIMESTAMP_SECONDS = 80  # lands on the full merged All Events Sankey diagram, pointer arrow included - re-tune this if the recorded workflow's timing shifts (e.g. steps added/removed/re-ordered)
+POSTER_TIMESTAMP_SECONDS = 18  # lands on "Analysis complete": the three card sections and the full Sankey diagram, before the demo collapses it - re-tune this if the recorded workflow's timing shifts (e.g. steps added/removed/re-ordered)
 # Playwright's raw recording's very first frame can be captured before the
 # page has fully painted into the configured viewport - observed as a
 # corrupted frame 0 showing only a small upper-left region of real content
@@ -81,7 +81,7 @@ MP4_TRIM_START_SECONDS = 0.15
 VIEWPORT = {'width': 1920, 'height': 1400}
 
 # Solid on-brand blue (not translucent black) - a black/near-black caption
-# box used to disappear into the app's own near-black UI (welcome screen,
+# box used to disappear into the app's own near-black UI (main screen,
 # dark theme background) since rgba(0,0,0,0.85) barely differs from what's
 # behind it. #1f6feb matches the app's own button/accent blue (see
 # so-crates-welcome.png's "Got it!" button) so it reads as part of the UI's
@@ -132,7 +132,7 @@ CAPTION_JS = """
 # The arrowhead lands inside the target (its horizontal center, a quarter
 # of the way down) rather than at the nearest edge point - REGRESSION: an
 # earlier version pointed at the nearest edge, which for tightly-packed
-# neighbors (e.g. the three "Sample ... file" cards sitting side by side)
+# neighbors (e.g. the four "Sample ... file" cards sitting side by side)
 # put the arrowhead right on the shared border between two cards, reading
 # as ambiguous or pointing at the wrong one. Landing inside the target's
 # own body instead of on any edge it might share with a neighbor is
@@ -229,7 +229,7 @@ def find_chromium():
 
 
 
-async def _arrow_down_to(page, target, max_presses=5):
+async def _arrow_down_to(page, target, max_presses=10):
     """Press Down until target is the keyboard selection. With nothing
     selected yet, Down starts from the first navigable item - the filter
     bar or the active stat card (see getVerticalNavItems in
@@ -364,7 +364,7 @@ async def main(base_url):
             '__CAPTION_TEXT__', json.dumps(welcome_caption))
         await page.add_init_script(caption_init_script)
 
-        # Welcome screen
+        # Main screen
         await page.goto(base_url, wait_until="networkidle")
         await page.wait_for_selector('#helpModal.active .modal-content', timeout=10000)
         welcome_modal = page.locator('#helpModal.active .modal-content')
@@ -377,27 +377,71 @@ async def main(base_url):
                             "where you can upload a new file or re-open a previous analysis")
         await page.wait_for_timeout(5800)
 
-        # Select the sample pcap file
-        sample_card = page.locator(".sample-card:has-text('Sample pcap file')")
-        await caption(page, "Selecting the default sample pcap file", sample_card)
-        await page.wait_for_timeout(2200)
-        await sample_card.click()
+        # Load the URL box's default pcap - a real infection's traffic, which
+        # makes a richer demo than the built-in Sample PCAP file.
+        go_button = page.locator("button[data-action='load-from-url']")
+        await caption(page, "Loading a real infection's traffic from malware-traffic-analysis.net", go_button)
+        await page.wait_for_timeout(2600)
+        await go_button.click()
         await page.wait_for_selector('#statsGrid .stat-card', timeout=60000)
         # No single target - "Analysis complete" is a general status, not a
         # reference to one specific element.
         await caption(page, "Analysis complete")
+        # tshark's cards join Suricata's when it finishes (usually first) -
+        # wait for them, so the cards walked below are all there is. They
+        # don't join while the pointer is over the cards (the heading offers
+        # "Show them" instead), so it's moved off them first.
+        await page.mouse.move(2, VIEWPORT['height'] - 2)
+        try:
+            await page.wait_for_function(
+                "() => { const t = (document.getElementById('tsharkHeadingStatus') || {}).textContent || ''; "
+                "return /tshark (parsed|found no)/.test(t) && !/Show them|Update the cards/.test(t); }",
+                timeout=120000)
+        except Exception:
+            print('WARNING: tshark never finished - walking only the cards shown', file=sys.stderr)
         await page.wait_for_timeout(2500)
 
-        # Look at each of the individual data types
-        card_count = await page.locator('.stat-card:not(.stat-disabled)').count()
-        for i in range(card_count):
-            card = page.locator('.stat-card:not(.stat-disabled)').nth(i)
+        # Collapse the Sankey Diagram before walking the cards, so each
+        # card's records show below the three card sections instead of the
+        # Sankey filling the screen. Via the keyboard, not a click - Down
+        # selects the toggle bar (getVerticalNavItems in static/socrates.js)
+        # and Enter activates it exactly like a click would
+        # (activateKeyboardSelection's plain verticalNavSelection.click()
+        # fallback for anything that isn't a data row/filter chip/previous-
+        # analysis row).
+        selected = page.locator('.keyboard-selected')
+        sankey_toggle = page.locator('.section-toggle-bar', has_text='Sankey Diagram').first
+        if await sankey_toggle.count() > 0:
+            await _arrow_down_to(page, sankey_toggle)
+            await caption(page, "Arrow keys navigate the whole page too - Down selects the "
+                                "Sankey Diagram toggle, Enter collapses it to make room for "
+                                "the Data Table", selected)
+            await page.wait_for_timeout(3800)
+            await page.keyboard.press('Enter')
+            await page.wait_for_timeout(1400)
+
+        # Look at each of the individual data types (not a collapsed
+        # section's - hidden, they can't be clicked). Each card is found
+        # again by its section, not its position: REGRESSION - .nth(i) of
+        # the visible cards, re-resolved after the click, could be a
+        # different card once the click showed or hid one (the
+        # Acknowledged Alerts card), so "Viewing FILE INFO" pointed at an
+        # empty spot in the first section.
+        sections = await page.locator('.stat-card:not(.stat-disabled):not(.stat-card-collapsed)').evaluate_all(
+            "cards => cards.map(c => c.dataset.section)")
+        for section in sections:
+            card = page.locator(f'.stat-card[data-section="{section}"]')
             label = (await card.inner_text()).strip().split('\n')[-1]
             if label == 'ALL EVENTS':
                 continue
-            await card.click()
+            # Caption first, so it never lags the click; the arrow is drawn
+            # again after it, since the click can move the cards (the
+            # filter bar appears)
             await caption(page, f"Viewing {label}", card)
-            await page.wait_for_timeout(3200)
+            await card.click()
+            await page.wait_for_timeout(400)
+            await point_to(page, card)
+            await page.wait_for_timeout(2800)
 
             # Drill into a real Suricata alert to show the Playbook section -
             # only reachable from here, since Network Alerts is the one card
@@ -534,28 +578,10 @@ async def main(base_url):
         await caption(page, "Switching to the merged All Events view", all_events_card)
         await page.wait_for_timeout(2800)
 
-        # Collapse the Sankey Diagram via the keyboard, not a click - Down
-        # selects the toggle bar (getVerticalNavItems in static/socrates.js)
-        # and Enter activates it exactly like a click would
-        # (activateKeyboardSelection's plain verticalNavSelection.click()
-        # fallback for anything that isn't a data row/filter chip/previous-
-        # analysis row) - so the Aggregation Tables and Data Table have room
-        # to show, now that we're ready to expand them.
-        selected = page.locator('.keyboard-selected')
-        sankey_toggle = page.locator('.section-toggle-bar', has_text='Sankey Diagram').first
-        if await sankey_toggle.count() > 0:
-            await _arrow_down_to(page, sankey_toggle)
-            await caption(page, "Arrow keys navigate the whole page too - Down selects the "
-                                "Sankey Diagram toggle, Enter collapses it to make room for "
-                                "the Data Table", selected)
-            await page.wait_for_timeout(3800)
-            await page.keyboard.press('Enter')
-            await page.wait_for_timeout(1400)
-
-        # Expand Aggregation Tables the same way - Down moves to the next
-        # toggle bar, Enter expands it.
+        # Expand Aggregation Tables with the keyboard, as the Sankey Diagram
+        # was collapsed above - Down to its toggle bar, Enter expands it.
         await _arrow_down_to(page, page.locator('.section-toggle-bar', has_text='Aggregation Tables').first)
-        await caption(page, "Down again, Enter again - expanding Aggregation Tables", selected)
+        await caption(page, "Down to Aggregation Tables, Enter expands them", selected)
         await page.wait_for_timeout(2800)
         await page.keyboard.press('Enter')
         await page.wait_for_timeout(600)
@@ -725,7 +751,7 @@ async def main(base_url):
 
         # crf 18 (not the more typical 23) plus preset slow - the source is
         # a screen recording dominated by large flat/near-black regions
-        # (welcome screen, dark theme background), and crf 23's coarser
+        # (main screen, dark theme background), and crf 23's coarser
         # quantization on those regions was visible as banding (shade
         # shifting in what should be a single flat black) rather than the
         # blocking/blur crf differences usually show on natural video. This

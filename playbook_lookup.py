@@ -23,6 +23,8 @@ import os
 # source. Production/Docker never sets this, so it defaults to the same
 # path the Dockerfile's resources-builder stage bakes into.
 BAKED_IN_PLAYBOOKS_DIR = os.environ.get('PLAYBOOKS_DIR', '/usr/share/playbooks')
+if 'PLAYBOOKS_DIR' not in os.environ and not os.path.isdir(BAKED_IN_PLAYBOOKS_DIR):
+    BAKED_IN_PLAYBOOKS_DIR = os.path.join(os.environ.get('DATA_DIR', os.path.expanduser('~/socrates-data')), 'playbooks')
 
 _playbook_index_cache = {}  # (base_dir, detection_type) -> index dict
 

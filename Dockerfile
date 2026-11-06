@@ -186,6 +186,34 @@ for detection_type, filename in (
     print(f'Baked {len(index)} {detection_type} AI summary entries -> {out_path}')
 PY
 
+# YARA Forge rules, for baking into the image for air-gapped deployments
+# (copied in by the final stage). Baked in gzip-compressed (measured:
+# ~19MB -> 3MB) - see yara_analyzer.py's BAKED_IN_YARA_FILE/
+# setup_yara_rules() for the matching decompress-on-read.
+RUN mkdir -p /tmp/yara-rules-out && \
+    curl -fsSL -o /tmp/yara-forge-full.zip \
+    "https://github.com/YARAHQ/yara-forge/releases/latest/download/yara-forge-rules-full.zip" && \
+    python3 -c "import zipfile; zipfile.ZipFile('/tmp/yara-forge-full.zip').extract('packages/full/yara-rules-full.yar', '/tmp/yara-forge-extract')" && \
+    gzip -9 -c /tmp/yara-forge-extract/packages/full/yara-rules-full.yar > /tmp/yara-rules-out/yara-rules-full.yar.gz && \
+    rm -rf /tmp/yara-forge-full.zip /tmp/yara-forge-extract
+
+# Sigma rules (Zircolite JSON format), for baking into the image for
+# air-gapped deployments (copied in by the final stage). Destination filenames must be windows.json.gz/linux.json.gz
+# (not the upstream rules_*.json names) - sigma_analyzer.py's
+# setup_sigma_rules() looks for '<ruleset>.json.gz' under BAKED_IN_SIGMA_DIR,
+# keyed by the ZIRCOLITE_RULES_URLS dict keys ('windows'/'linux'), not by
+# the source URL's own filename. Baked in gzip-compressed (measured:
+# windows.json ~7.4MB -> 0.9MB) - see setup_sigma_rules() for the matching
+# decompress-on-read.
+RUN mkdir -p /tmp/sigma-rules-out && \
+    curl -fsSL -o /tmp/windows.json \
+    "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_windows_merged.json" && \
+    curl -fsSL -o /tmp/linux.json \
+    "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_linux.json" && \
+    gzip -9 -c /tmp/windows.json > /tmp/sigma-rules-out/windows.json.gz && \
+    gzip -9 -c /tmp/linux.json > /tmp/sigma-rules-out/linux.json.gz && \
+    rm -f /tmp/windows.json /tmp/linux.json
+
 # Downloads the pinned, checksum-verified CyberChef release - see
 # scripts/fetch-cyberchef.sh for the pins and what it strips. Last in this
 # stage so a CyberChef upgrade doesn't re-run the slow YAML conversions
@@ -193,6 +221,22 @@ PY
 COPY scripts/fetch-cyberchef.sh /tmp/fetch-cyberchef.sh
 RUN sh /tmp/fetch-cyberchef.sh /tmp/cyberchef-out
 
+# DB-IP's "IP to Country Lite" (CC BY 4.0), for the Traffic Map and the
+# country: filter - see geo_lookup.py. DB-IP publishes it monthly under a
+# dated name, so this takes the current month's, or last month's early in
+# a month before the new one is out. Unpinned, like the playbooks: it's
+# reference data, and scripts/build_geoip.py refuses a truncated or
+# malformed file. Converted to a compact index (about 2 MB) so the CSV
+# stays out of the runtime image.
+COPY scripts/build_geoip.py /tmp/build_geoip.py
+RUN mkdir -p /tmp/geoip-out && \
+    for month in "$(date -u +%Y-%m)" "$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m)"; do \
+        if curl -fsSL -o /tmp/dbip.csv.gz "https://download.db-ip.com/free/dbip-country-lite-${month}.csv.gz"; then \
+            python3 /tmp/build_geoip.py /tmp/dbip.csv.gz /tmp/geoip-out/country.bin.gz "${month}" && break; \
+        fi; \
+    done && \
+    test -s /tmp/geoip-out/country.bin.gz && \
+    rm -f /tmp/dbip.csv.gz
 
 FROM debian:13-slim
 
@@ -202,7 +246,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # logging for several protocols this app supports (enip/ntp - no output
 # module in 7.0.10 at all; websocket/pop3/mdns/ldap/arp - don't exist in
 # 7.0.10's app-layer protocol list at all). Suricata 8 is available via
-# Debian's own trixie-backports repo (8.0.6 as of writing, confirmed via
+# Debian's own trixie-backports repo (8.0.7 as of writing, confirmed via
 # packages.debian.org) - this mirrors the exact upgrade path validated on a
 # real trixie install, rather than pulling in OISF's own third-party repo.
 # suricata-update is pulled from backports too (1.3.8 vs. regular trixie's
@@ -216,7 +260,6 @@ RUN echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sou
     tcpdump \
     tshark \
     yara \
-    curl \
     file \
     libimage-exiftool-perl \
     libxml2 \
@@ -225,7 +268,9 @@ RUN echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sou
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=zircolite-builder /usr/local/lib/zircolite /usr/local/lib/zircolite
-COPY --from=zircolite-builder --chown=1000:1000 /usr/local/lib/zircolite-venv /usr/local/lib/zircolite-venv
+# Root-owned, like the rest of the image: the runtime user runs it, never
+# writes to it
+COPY --from=zircolite-builder /usr/local/lib/zircolite-venv /usr/local/lib/zircolite-venv
 RUN ln -s /usr/local/lib/zircolite/zircolite.py /usr/local/bin/zircolite.py
 
 ENV DATA_DIR=/data
@@ -234,7 +279,7 @@ ENV PORT=8000
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
-COPY config.py db.py models.py validators.py url_fetch.py storage.py analysis_cache.py suricata_analyzer.py suricata_sid_ranges.py yara_analyzer.py sigma_analyzer.py file_analyzer.py exif_analyzer.py ohmydebn_colors.py playbook_lookup.py ai_summary_lookup.py cyberchef.py stream_payload.py live_capture.py macos_sandbox.py socrates.py socrates.html ./
+COPY config.py db.py models.py validators.py url_fetch.py storage.py analysis_cache.py email_analyzer.py samples.py suricata_analyzer.py suricata_sid_ranges.py yara_analyzer.py sigma_analyzer.py file_analyzer.py exif_analyzer.py ohmydebn_colors.py playbook_lookup.py ai_summary_lookup.py geo_lookup.py cyberchef.py stream_payload.py shark_analyzer.py shark_protocols.py pcap_subset.py findings.py traffic_map.py live_capture.py macos_sandbox.py socrates.py socrates.html ./
 COPY static/ static/
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
@@ -274,95 +319,114 @@ PY
 RUN mkdir -p /usr/share/suricata/rules-available && python3 - <<'PY'
 import gzip
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, '/app')
 from suricata_analyzer import BAKED_IN_SURICATA_SOURCES, _source_filename
 
+ATTEMPTS = 3
+SID = re.compile(r'\bsid\s*:\s*(\d+)')
+
+# suricata-update adds Suricata's own bundled rules (decoder, stream,
+# app-layer events...) to every output, so a source counts as baked only
+# with rules of its own beyond those. REGRESSION: suricata-update exits 0
+# when a fetch fails (HTTP 410 from abuse.ch's retired URLhaus feed), so
+# the image shipped a "URLhaus" file of nothing but the bundled rules.
+bundled_sids = set()
+for name in os.listdir('/etc/suricata/rules'):
+    if name.endswith('.rules'):
+        with open(os.path.join('/etc/suricata/rules', name), encoding='utf-8', errors='replace') as f:
+            bundled_sids.update(SID.findall(f.read()))
+
+
+def own_rules(path):
+    with open(path, encoding='utf-8', errors='replace') as f:
+        return sum(1 for sid in SID.findall(f.read()) if sid not in bundled_sids)
+
+
 for slug in BAKED_IN_SURICATA_SOURCES:
-    scratch_data = tempfile.mkdtemp()
-    scratch_out = tempfile.mkdtemp()
-    try:
-        # Populates the local source-index cache that enable-source resolves
-        # slugs against - required for any slug not already in
-        # suricata-update's own bundled index (e.g. the-hunters-ledger/open,
-        # a much less common source than the long-established ones like
-        # et/open). Without this, enable-source on a brand-new --data-dir
-        # fails with a StopIteration deep in suricata-update's own
-        # get_sources_from_dir() (empty/nonexistent index directory) for any
-        # slug that isn't bundled - confirmed for real in CI. Mirrors
-        # _fetch_single_source()'s equivalent runtime call in
-        # suricata_analyzer.py exactly, just with check=True instead of a
-        # swallowed failure - a build-time network hiccup should fail the
-        # image build loudly, not silently ship an incomplete bake.
-        subprocess.run(
-            ['suricata-update', 'update-sources', '--data-dir', scratch_data],
-            check=True,
-        )
-        subprocess.run(
-            ['suricata-update', 'enable-source', slug, '--data-dir', scratch_data],
-            check=True,
-        )
-        # enable-source on a brand-new --data-dir always ALSO silently
-        # auto-enables et/open as its own "default source" regardless of
-        # what was actually requested - must be explicitly disabled again
-        # for every other source, or this isolated single-source fetch
-        # isn't actually isolated (verified: an unpatched fetch of
-        # oisf/trafficid alone produced a merged file with et/open's full
-        # ~52k rules mixed in, not just trafficid's 34).
-        if slug != 'et/open':
+    # A few attempts each, a growing pause between them: one source's
+    # server timing out mid-download failed a real CI build, which a
+    # moment later fetched fine. Still a failed build, never an incomplete
+    # bake, once they're spent.
+    for attempt in range(1, ATTEMPTS + 1):
+        scratch_data = tempfile.mkdtemp()
+        scratch_out = tempfile.mkdtemp()
+        try:
+            # Populates the local source-index cache that enable-source resolves
+            # slugs against - required for any slug not already in
+            # suricata-update's own bundled index (e.g. the-hunters-ledger/open,
+            # a much less common source than the long-established ones like
+            # et/open). Without this, enable-source on a brand-new --data-dir
+            # fails with a StopIteration deep in suricata-update's own
+            # get_sources_from_dir() (empty/nonexistent index directory) for any
+            # slug that isn't bundled - confirmed for real in CI. Mirrors
+            # _fetch_single_source()'s equivalent runtime call in
+            # suricata_analyzer.py exactly, just with check=True instead of a
+            # swallowed failure - a build-time network hiccup should fail the
+            # image build loudly, not silently ship an incomplete bake.
             subprocess.run(
-                ['suricata-update', 'disable-source', 'et/open', '--data-dir', scratch_data],
+                ['suricata-update', 'update-sources', '--data-dir', scratch_data],
                 check=True,
             )
-        subprocess.run(
-            ['suricata-update', '--no-test', '--suricata-conf', '/etc/suricata/suricata.yaml',
-             '--data-dir', scratch_data, '--output', scratch_out],
-            check=True,
-        )
-        # Baked in gzip-compressed - plain-text Suricata rules compress
-        # ~93% (measured 2026-09-25: ~84MB -> ~6MB across the 14 baked-in
-        # sources) - see
-        # _seed_active_from_library() in suricata_analyzer.py for the
-        # matching decompress-on-read.
-        dest = f'/usr/share/suricata/rules-available/{_source_filename(slug)}.gz'
-        with open(os.path.join(scratch_out, 'suricata.rules'), 'rb') as f_in, gzip.open(dest, 'wb') as f_out:
-            shutil.copyfileobj(f_in, f_out)
-        print(f'Baked in {slug} -> {dest}')
-    finally:
-        shutil.rmtree(scratch_data, ignore_errors=True)
-        shutil.rmtree(scratch_out, ignore_errors=True)
+            subprocess.run(
+                ['suricata-update', 'enable-source', slug, '--data-dir', scratch_data],
+                check=True,
+            )
+            # enable-source on a brand-new --data-dir always ALSO silently
+            # auto-enables et/open as its own "default source" regardless of
+            # what was actually requested - must be explicitly disabled again
+            # for every other source, or this isolated single-source fetch
+            # isn't actually isolated (verified: an unpatched fetch of
+            # oisf/trafficid alone produced a merged file with et/open's full
+            # ~52k rules mixed in, not just trafficid's 34).
+            if slug != 'et/open':
+                subprocess.run(
+                    ['suricata-update', 'disable-source', 'et/open', '--data-dir', scratch_data],
+                    check=True,
+                )
+            subprocess.run(
+                ['suricata-update', '--no-test', '--suricata-conf', '/etc/suricata/suricata.yaml',
+                 '--data-dir', scratch_data, '--output', scratch_out],
+                check=True,
+            )
+            rules_path = os.path.join(scratch_out, 'suricata.rules')
+            count = own_rules(rules_path)
+            if not count:
+                raise RuntimeError('no rules of its own beyond Suricata\'s bundled ones - its fetch failed')
+            # Baked in gzip-compressed - plain-text Suricata rules compress
+            # ~93% (measured 2026-09-25: ~84MB -> ~6MB across the baked-in
+            # sources) - see
+            # _seed_active_from_library() in suricata_analyzer.py for the
+            # matching decompress-on-read.
+            dest = f'/usr/share/suricata/rules-available/{_source_filename(slug)}.gz'
+            with open(rules_path, 'rb') as f_in, gzip.open(dest, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+            print(f'Baked in {slug} ({count} rules of its own) -> {dest}', flush=True)
+            break
+        except (subprocess.CalledProcessError, RuntimeError, OSError) as e:
+            if attempt == ATTEMPTS:
+                sys.exit(f'Could not bake {slug} after {ATTEMPTS} attempts: {e}. If its feed is gone '
+                         'for good, remove it from SURICATA_RULE_SOURCES in suricata_analyzer.py.')
+            print(f'{slug}: attempt {attempt} failed ({e}) - trying again in {attempt * 20}s', flush=True)
+            time.sleep(attempt * 20)
+        finally:
+            shutil.rmtree(scratch_data, ignore_errors=True)
+            shutil.rmtree(scratch_out, ignore_errors=True)
 PY
 
-# Bake YARA Forge rules into image for air-gapped deployments. Baked in
-# gzip-compressed (measured: ~19MB -> 3MB) - see yara_analyzer.py's
-# BAKED_IN_YARA_FILE/setup_yara_rules() for the matching decompress-on-read.
-RUN mkdir -p /usr/share/yara-rules && \
-    curl -fsSL -o /tmp/yara-forge-full.zip \
-    "https://github.com/YARAHQ/yara-forge/releases/latest/download/yara-forge-rules-full.zip" && \
-    python3 -c "import zipfile; zipfile.ZipFile('/tmp/yara-forge-full.zip').extract('packages/full/yara-rules-full.yar', '/tmp/yara-forge-extract')" && \
-    gzip -9 -c /tmp/yara-forge-extract/packages/full/yara-rules-full.yar > /usr/share/yara-rules/yara-rules-full.yar.gz && \
-    rm -rf /tmp/yara-forge-full.zip /tmp/yara-forge-extract
-
-# Bake Sigma rules (Zircolite JSON format) into image for air-gapped
-# deployments. Destination filenames must be windows.json.gz/linux.json.gz
-# (not the upstream rules_*.json names) - sigma_analyzer.py's
-# setup_sigma_rules() looks for '<ruleset>.json.gz' under BAKED_IN_SIGMA_DIR,
-# keyed by the ZIRCOLITE_RULES_URLS dict keys ('windows'/'linux'), not by
-# the source URL's own filename. Baked in gzip-compressed (measured:
-# windows.json ~7.4MB -> 0.9MB) - see setup_sigma_rules() for the matching
-# decompress-on-read.
-RUN mkdir -p /usr/share/sigma-rules && \
-    curl -fsSL -o /tmp/windows.json \
-    "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_windows_merged.json" && \
-    curl -fsSL -o /tmp/linux.json \
-    "https://raw.githubusercontent.com/wagga40/Zircolite-Rules-v2/main/rules_linux.json" && \
-    gzip -9 -c /tmp/windows.json > /usr/share/sigma-rules/windows.json.gz && \
-    gzip -9 -c /tmp/linux.json > /usr/share/sigma-rules/linux.json.gz && \
-    rm -f /tmp/windows.json /tmp/linux.json
+# YARA Forge and Sigma rules, baked in for air-gapped deployments - fetched
+# and gzip-compressed in the resources-builder stage, so curl stays out of
+# the runtime image. See yara_analyzer.py's BAKED_IN_YARA_FILE and
+# sigma_analyzer.py's setup_sigma_rules() for the decompress-on-read.
+COPY --from=resources-builder /tmp/yara-rules-out/yara-rules-full.yar.gz /usr/share/yara-rules/yara-rules-full.yar.gz
+COPY --from=resources-builder /tmp/sigma-rules-out/windows.json.gz /usr/share/sigma-rules/windows.json.gz
+COPY --from=resources-builder /tmp/sigma-rules-out/linux.json.gz /usr/share/sigma-rules/linux.json.gz
 
 # Bake Security Onion Playbooks (investigation guidance) into image for
 # air-gapped deployments - see the resources-builder stage above for how
@@ -377,6 +441,10 @@ COPY --from=resources-builder /tmp/ai-summaries-out/ /usr/share/ai-summaries/
 # Bake CyberChef in so the pivot menu's CyberChef lookup works air-gapped -
 # see the resources-builder stage above and cyberchef.py.
 COPY --from=resources-builder /tmp/cyberchef-out/ /usr/share/cyberchef/
+
+# IP-to-country data for the Traffic Map - see the resources-builder stage
+# above and geo_lookup.py.
+COPY --from=resources-builder /tmp/geoip-out/ /usr/share/geoip/
 
 RUN mkdir -p /data && chown -R 1000:1000 /data
 

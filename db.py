@@ -4,6 +4,7 @@
 import concurrent.futures
 import json
 import os
+import re
 import sqlite3
 import subprocess
 from contextlib import contextmanager
@@ -19,6 +20,8 @@ from models import (
     get_timestamp,
 )
 import config
+import geo_lookup
+import macos_sandbox
 from suricata_sid_ranges import sid_ranges_sql_case
 
 
@@ -159,20 +162,55 @@ def _escape_fts5(term):
     return ' '.join('"' + t.replace('"', '""') + '"' for t in tokens)
 
 
+# A search term of this shape filters to events with an address in a
+# country (the Traffic Map's click) rather than searching the text:
+# country:FR, country:LAN for addresses that don't route on the internet,
+# country:?? for those with no known country. See geo_lookup.country().
+COUNTRY_TERM_RE = re.compile(r'country:([A-Za-z]{2}|LAN|\?\?)', re.IGNORECASE)
+
+
+class SearchTerms(list):
+    """The text terms of a search - what FTS or LIKE matches, so a list of
+    only them keeps every `terms and has_fts` check meaning "join the FTS
+    index" - with its country: terms apart in .countries."""
+
+    def __init__(self, text=(), countries=()):
+        super().__init__(text)
+        self.countries = list(countries)
+
+
+def country_term(term):
+    """The country code a country: search term names, or None."""
+    m = COUNTRY_TERM_RE.fullmatch(term.strip())
+    return m.group(1).upper() if m else None
+
+
 def _build_search_terms(q):
     if q is None:
-        return []
+        return SearchTerms()
     if isinstance(q, str):
-        return [q.strip()[:config.MAX_SEARCH_TERM_LENGTH]] if q.strip() else []
-    if isinstance(q, list):
-        return [x.strip()[:config.MAX_SEARCH_TERM_LENGTH] for x in q if x.strip()]
-    return []
+        q = [q]
+    if not isinstance(q, list):
+        return SearchTerms()
+    text, countries = [], []
+    for x in q:
+        x = x.strip()[:config.MAX_SEARCH_TERM_LENGTH]
+        if not x:
+            continue
+        cc = country_term(x)
+        if cc is None:
+            text.append(x)
+        elif cc not in countries:
+            countries.append(cc)
+    return SearchTerms(text, countries)
 
 
 @contextmanager
 def _db_connection(db_path):
     conn = sqlite3.connect(db_path, timeout=config.SQLITE_TIMEOUT_SECONDS)
     conn.execute('PRAGMA busy_timeout = 30000;')
+    # for country: search terms (_build_where_conditions)
+    conn.create_function('geo_country', 1, geo_lookup.country, deterministic=True)
     try:
         yield conn
     finally:
@@ -206,22 +244,9 @@ def _insert_event(conn, event_dict, has_fts):
 
     Returns the rowid of the inserted event.
     """
-    line = json.dumps(event_dict, separators=(',', ':'))
-    cur = conn.execute(
-        '''INSERT INTO events (event_type, timestamp, src_ip, src_port, dest_ip, dest_port, protocol, app_proto, json_data)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-        (
-            event_dict.get('event_type', ''),
-            event_dict.get('timestamp', ''),
-            event_dict.get('src_ip', ''),
-            event_dict.get('src_port', 0),
-            event_dict.get('dest_ip', ''),
-            event_dict.get('dest_port', 0),
-            event_dict.get('proto') or event_dict.get('protocol', ''),
-            event_dict.get('app_proto', ''),
-            line,
-        )
-    )
+    row = _event_row(event_dict)
+    line = row[-1]
+    cur = conn.execute(_INSERT_EVENT, row)
     if has_fts:
         conn.execute(
             'INSERT INTO events_fts (rowid, json_data) VALUES (?, ?)',
@@ -230,12 +255,68 @@ def _insert_event(conn, event_dict, has_fts):
     return cur.lastrowid
 
 
+_INSERT_EVENT = ('INSERT INTO events (event_type, timestamp, src_ip, src_port, dest_ip, dest_port, protocol, '
+                 'app_proto, json_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+_BULK_BATCH = 5000
+
+
+class _BulkLoad:
+    """Loading a new database's events fast: its events indexes dropped
+    while the rows go in, in batches, and built once at the end - with the
+    full-text index, rebuilt from the table in one pass ('rebuild'). Kept
+    up row by row, they were most of a big import's time. A database that
+    already has events gets them row by row, as _insert_event does."""
+
+    def __init__(self, conn, has_fts):
+        self.conn, self.has_fts, self.batch = conn, has_fts, []
+        self.bulk = conn.execute('SELECT 1 FROM events LIMIT 1').fetchone() is None
+        self.indexes = []
+        if self.bulk:
+            self.indexes = conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'index' "
+                                        "AND tbl_name = 'events' AND sql IS NOT NULL").fetchall()
+            # In the load's own transaction, so an import that fails - never
+            # committed - leaves them in place, as it always did
+            if not conn.in_transaction:
+                conn.execute('BEGIN')
+            for name, _ in self.indexes:
+                conn.execute(f'DROP INDEX "{name}"')
+
+    def add(self, event, rowid_needed=False):
+        """Queue an event; inserted at once (and its rowid returned) when
+        the caller needs its rowid."""
+        if not self.bulk:
+            return _insert_event(self.conn, event, self.has_fts)
+        self.batch.append(_event_row(event))
+        if rowid_needed:
+            row = self.batch.pop()
+            self.flush()
+            return self.conn.execute(_INSERT_EVENT, row).lastrowid
+        if len(self.batch) >= _BULK_BATCH:
+            self.flush()
+        return None
+
+    def flush(self):
+        if self.batch:
+            self.conn.executemany(_INSERT_EVENT, self.batch)
+            self.batch = []
+
+    def finish(self):
+        self.flush()
+        if not self.bulk:
+            return
+        for _, sql in self.indexes:
+            self.conn.execute(sql)
+        if self.has_fts:
+            self.conn.execute("INSERT INTO events_fts(events_fts) VALUES('rebuild')")
+
+
 def create_sqlite_db(db_path, eve_file):
     with _db_connection(db_path) as conn:
         has_fts = _init_db(conn)
 
         fileinfo_by_sha256 = {}
         fileinfo_rowids = {}
+        load = _BulkLoad(conn, has_fts)
 
         with open(eve_file, 'r', errors='replace') as f:
             for line in f:
@@ -263,16 +344,17 @@ def create_sqlite_db(db_path, eve_file):
                     # ~/socrates-data/suricata/classification.config.
                     if event.get('event_type') == 'alert' and event.get('alert', {}).get('category') == 'Generic Protocol Command Decode':
                         event['event_type'] = 'protocol_decode'
-                    rowid = _insert_event(conn, event, has_fts)
-
                     # Index fileinfo events by SHA256 for YARA correlation
-                    if event.get('event_type') == 'fileinfo':
-                        sha256 = event.get('fileinfo', {}).get('sha256')
-                        if sha256:
-                            fileinfo_by_sha256[sha256] = event
-                            fileinfo_rowids[sha256] = rowid
+                    # (by rowid, so one is inserted at once)
+                    sha256 = (event.get('fileinfo') or {}).get('sha256') if event.get('event_type') == 'fileinfo' \
+                        else None
+                    rowid = load.add(event, rowid_needed=bool(sha256))
+                    if sha256:
+                        fileinfo_by_sha256[sha256] = event
+                        fileinfo_rowids[sha256] = rowid
                 except json.JSONDecodeError:
                     continue
+        load.finish()
 
         # Create synthetic filealerts events from YARA matches correlated with fileinfo
         yara_file = _related_file_path(db_path, 'yara_matches.json')
@@ -352,8 +434,8 @@ def create_sqlite_db(db_path, eve_file):
                 print(f'Warning: could not parse file_metadata.json: {e}')
 
         # Built after the bulk insert, not before - incrementally maintaining
-        # 6 extra indexes across a million single-row inserts is much slower
-        # than one bulk build at the end (measured ~9.8s for all 6 on 1M rows).
+        # 7 extra indexes across a million inserts is much slower
+        # than one bulk build at the end (measured ~9.8s for 6 of them on 1M rows).
         _ensure_flow_json_indexes(conn)
         conn.execute('PRAGMA optimize;')
         conn.commit()
@@ -368,7 +450,7 @@ def create_file_analysis_db(db_path, file_path, yara_matches, file_md5, file_sha
     if not magic_desc:
         try:
             result = subprocess.run(
-                ['file', '--brief', file_path],
+                macos_sandbox.confine(['file', '--brief', file_path], read=[file_path]),
                 capture_output=True, text=True, timeout=config.FILE_COMMAND_TIMEOUT
             )
             if result.returncode == 0:
@@ -432,7 +514,28 @@ def create_file_analysis_db(db_path, file_path, yara_matches, file_md5, file_sha
         conn.commit()
 
 
-def _build_where_conditions(has_acknowledged_table, terms, has_fts, event_type, event_type_col, acknowledged_only=False):
+# tshark's connection rows: 'conn_<app proto>' (e.g. conn_openvpn), one per
+# connection carrying a protocol that neither Suricata parses nor
+# shark_protocols has records for (shark_analyzer.merge). Each type gets
+# its own tab, with flow's columns; all-events queries leave them out,
+# since Suricata's own flow rows already list those connections.
+CONNECTION_TYPE_PREFIX = 'conn_'
+# One connection type for every protocol whose connections were all
+# probes - none answered (shark_analyzer.probe_only_protocols) - rather
+# than a card each; its rows keep their own app_proto.
+PROBED_CONNECTION_TYPE = CONNECTION_TYPE_PREFIX + '_probed'
+
+
+def _columns_type(event_type):
+    """The event type whose columns (AGGREGATION_JSON_PATHS) event_type
+    uses - flow's, for a connection type."""
+    if event_type and event_type.startswith(CONNECTION_TYPE_PREFIX):
+        return 'flow'
+    return event_type
+
+
+def _build_where_conditions(has_acknowledged_table, terms, has_fts, event_type, event_type_col, acknowledged_only=False,
+                            include_connections=False):
     """Build WHERE conditions and parameters for event queries.
 
     Args:
@@ -464,6 +567,9 @@ def _build_where_conditions(has_acknowledged_table, terms, has_fts, event_type, 
             non-alert event_types either way: nothing but 'alert' rows can
             ever be in acknowledged_alerts, so this condition simply never
             matches (and never excludes anything) for e.g. dns/http/tls.
+        include_connections: with no event_type, keep tshark's connection
+            rows (left out of "all events" otherwise) - for the per-type
+            counts, which give each connection type its own tab.
 
     Returns:
         (conditions_list, params_list)
@@ -480,14 +586,27 @@ def _build_where_conditions(has_acknowledged_table, terms, has_fts, event_type, 
             conditions.append("json_data LIKE ? ESCAPE '\\'")
             params.append(_sanitize_like(term))
 
+    # Each country: term is its own condition, like each text term: two of
+    # them find the traffic between those two countries.
+    col_prefix = 'e.' if (event_type_col or '').startswith('e.') else ''
+    for cc in getattr(terms, 'countries', ()):
+        conditions.append(f'(geo_country({col_prefix}src_ip) = ? OR geo_country({col_prefix}dest_ip) = ?)')
+        params.extend((cc, cc))
+
     if event_type:
         conditions.append(f'{event_type_col} = ?')
         params.append(event_type)
     else:
         # 'stats' is an internal per-analysis summary row, not a displayable
         # event - only relevant to exclude for the merged "all types" query,
-        # since a specific event_type filter never matches it anyway.
-        conditions.append(f"{event_type_col} != 'stats'")
+        # since a specific event_type filter never matches it anyway. Nor
+        # are tshark's connection rows: each is a connection Suricata's own
+        # flow row already lists, so "all events" would show it twice.
+        if include_connections:
+            conditions.append(f"{event_type_col} != 'stats'")
+        else:
+            conditions.append(f"{event_type_col} != 'stats' AND "
+                              f"substr({event_type_col}, 1, {len(CONNECTION_TYPE_PREFIX)}) != '{CONNECTION_TYPE_PREFIX}'")
 
     if has_acknowledged_table:
         # Must be a fully-qualified reference (events.id / e.id), never a
@@ -537,6 +656,210 @@ def _events_select(terms, has_fts, plain_cols, fts_cols):
         return (f'SELECT {fts_cols} FROM events_fts JOIN events e ON events_fts.rowid = e.id',
                 'e.event_type')
     return f'SELECT {plain_cols} FROM events', 'event_type'
+
+
+def create_email_analysis_db(db_path, events):
+    """Create events.db for an email message (.eml) analysis from the
+    events email_analyzer.analyze_message built: email, link, fileinfo and
+    filealerts, all with empty network fields."""
+    with _db_connection(db_path) as conn:
+        has_fts = _init_db(conn)
+        for event in events:
+            _insert_event(conn, event, has_fts)
+        conn.execute('PRAGMA optimize;')
+        conn.commit()
+
+
+# shark.db is a staging store: read by the merge (in id order - all but the
+# flows it would drop, shark_analyzer._mergeable_rows) and
+# for its flows by type (shark_analyzer.probe_only_protocols) - never
+# searched, sorted or paged. So it has events.db's table but none of its
+# indexes but the event type's, and no full-text index: those cost most of
+# the time writing a capture's million records took, and the merge indexes
+# the rows it copies into events.db anyway.
+_SHARK_SCHEMA = (SQLITE_SCHEMA[:SQLITE_SCHEMA.index('CREATE INDEX')]
+                 + 'CREATE INDEX IF NOT EXISTS idx_event_type ON events(event_type);\n')
+
+def _event_row(event_dict):
+    """An event dict as an events row (see _insert_event)."""
+    return (event_dict.get('event_type', ''), event_dict.get('timestamp', ''), event_dict.get('src_ip', ''),
+            event_dict.get('src_port', 0), event_dict.get('dest_ip', ''), event_dict.get('dest_port', 0),
+            event_dict.get('proto') or event_dict.get('protocol', ''), event_dict.get('app_proto', ''),
+            json.dumps(event_dict, separators=(',', ':')))
+
+
+def create_shark_db(db_path, events):
+    """Create shark.db for tshark's records of a PCAP from the events
+    shark_analyzer built - events.db's events table (so its query
+    functions read it), without its search indexes (_SHARK_SCHEMA)."""
+    with _db_connection(db_path) as conn:
+        conn.execute('PRAGMA journal_mode = WAL;')
+        conn.execute('PRAGMA synchronous = NORMAL;')
+        conn.executescript(_SHARK_SCHEMA)
+        # In batches, committed every so often, so a capture's million
+        # records don't pile up in one transaction's journal (events can be
+        # a generator - shark_analyzer streams them in as it builds them)
+        batch = []
+        for i, event in enumerate(events, 1):
+            batch.append(_event_row(event))
+            if len(batch) >= _BULK_BATCH:
+                conn.executemany(_INSERT_EVENT, batch)
+                batch = []
+            if i % 50000 == 0:
+                conn.commit()
+        if batch:
+            conn.executemany(_INSERT_EVENT, batch)
+        conn.commit()
+
+
+# Rows tshark adds to an analysis's events.db (shark_analyzer.merge) carry
+# this in their JSON, so a later merge can replace them.
+TSHARK_SOURCE = 'tshark'
+
+
+def replace_tshark_events(db_path, events, stamp):
+    """Replace the rows tshark added to events.db (TSHARK_SOURCE) with
+    events, and record stamp - which shark.db they came from - so the
+    same one isn't merged twice. Committed every so often; returns how
+    many rows were added."""
+    with _db_connection(db_path) as conn:
+        has_fts = _init_db(conn)
+        old = conn.execute("SELECT id, json_data FROM events WHERE json_extract(json_data, '$.source') = ?",
+                           (TSHARK_SOURCE,)).fetchall()
+        for rowid, data in old:
+            if has_fts:
+                # events_fts takes its text from events: removing a row
+                # from it means handing it the text that was indexed
+                conn.execute("INSERT INTO events_fts (events_fts, rowid, json_data) VALUES ('delete', ?, ?)", (rowid, data))
+            conn.execute('DELETE FROM events WHERE id = ?', (rowid,))
+        added, types = 0, set()
+        for added, event in enumerate(events, 1):
+            event['source'] = TSHARK_SOURCE
+            types.add(event.get('event_type', ''))
+            _insert_event(conn, event, has_fts)
+            if added % 50000 == 0:
+                conn.commit()
+        conn.execute('DROP TABLE IF EXISTS tshark_merge')
+        conn.execute('CREATE TABLE tshark_merge (stamp TEXT, rows INTEGER, types TEXT)')
+        conn.execute('INSERT INTO tshark_merge VALUES (?, ?, ?)', (stamp, added, json.dumps(sorted(types))))
+        conn.commit()
+    return added
+
+
+def tshark_types(db_path):
+    """The event types tshark added to events.db (replace_tshark_events) -
+    the cards the page marks as tshark's."""
+    try:
+        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+        try:
+            try:
+                row = conn.execute('SELECT types FROM tshark_merge').fetchone()
+                return json.loads(row[0]) if row and row[0] else []
+            except sqlite3.OperationalError:     # merged before the types were recorded, or never
+                rows = conn.execute("SELECT DISTINCT event_type FROM events WHERE json_extract(json_data, '$.source') = ?",
+                                    (TSHARK_SOURCE,)).fetchall()
+                return sorted(r[0] for r in rows)
+        finally:
+            conn.close()
+    except (sqlite3.Error, ValueError):
+        return []
+
+
+def tshark_merge_stamp(db_path):
+    """The stamp replace_tshark_events last recorded in events.db, or None."""
+    try:
+        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+        try:
+            row = conn.execute('SELECT stamp FROM tshark_merge').fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None
+
+
+def iter_events_json(db_path):
+    """Every event in a database, as stored, one at a time."""
+    with _db_connection(db_path) as conn:
+        for (data,) in conn.execute('SELECT json_data FROM events ORDER BY id'):
+            yield data
+
+
+# Event types that aren't the output of Suricata's protocol parsing
+# (protocol_decode is an alert too - create_sqlite_db's name for Suricata's
+# own decoder ones, such as 'Applayer Detect protocol only one direction')
+_NOT_PROTOCOL_RECORDS = ('flow', 'alert', 'protocol_decode', 'anomaly', 'fileinfo', 'stats', 'netflow', 'frame', 'drop')
+
+
+def suricata_identified_flows(db_path):
+    """Community ID -> [(start, end)] (epoch seconds) of the flows Suricata
+    identified: gave a protocol (not none or 'failed') and backed it with
+    at least one record of its protocol parsing during the flow. A bare
+    label isn't enough - Suricata 8.0.6 called an SSDP NOTIFY 'sip' and
+    logged no SIP for it (8.0.7 calls it 'failed')."""
+    out = {}
+    with _db_connection(db_path) as conn:
+        records = {}
+        placeholders = ','.join('?' * len(_NOT_PROTOCOL_RECORDS))
+        # (rows tshark added on an earlier merge are tshark's, not Suricata's)
+        for cid, when in conn.execute("SELECT json_extract(json_data, '$.community_id'), timestamp FROM events "
+                                      f"WHERE event_type NOT IN ({placeholders}) "
+                                      "AND json_extract(json_data, '$.source') IS NOT ?",
+                                      _NOT_PROTOCOL_RECORDS + (TSHARK_SOURCE,)):
+            at = _iso_epoch(when)
+            if cid and at is not None:
+                records.setdefault(cid, []).append(at)
+        rows = conn.execute("SELECT json_extract(json_data, '$.community_id'), json_extract(json_data, '$.flow.start'), "
+                            "json_extract(json_data, '$.flow.end'), app_proto FROM events WHERE event_type = 'flow'")
+        for cid, start, end, app in rows:
+            if not (cid and app and app != 'failed' and cid in records):
+                continue
+            first, last = _iso_epoch(start), _iso_epoch(end)
+            if first is None:
+                continue
+            last = last if last is not None else first
+            if any(first - 1 <= at <= last + 1 for at in records[cid]):
+                out.setdefault(cid, []).append((first, last))
+    return out
+
+
+# What shark_analyzer's tls_failure records take from Suricata's tls
+# record of the same connection - the certificate refused, and the host
+# the client asked for
+TLS_FAILURE_CONTEXT = ('sni', 'version', 'subject', 'issuerdn', 'subjectaltname', 'serial', 'fingerprint', 'notbefore',
+                       'notafter')
+
+
+def suricata_tls_records(db_path, community_ids):
+    """Community ID -> [(epoch seconds, {the TLS_FAILURE_CONTEXT fields
+    it has})] of Suricata's tls records on these flows."""
+    wanted, out = set(community_ids), {}
+    if not wanted:
+        return out
+    with _db_connection(db_path) as conn:
+        for cid, when, data in conn.execute(
+                "SELECT json_extract(json_data, '$.community_id'), timestamp, json_extract(json_data, '$.tls') "
+                "FROM events WHERE event_type = 'tls' AND json_extract(json_data, '$.source') IS NOT ?",
+                (TSHARK_SOURCE,)):
+            at = _iso_epoch(when)
+            if cid not in wanted or at is None:
+                continue
+            try:
+                tls = json.loads(data) if data else {}
+            except ValueError:
+                continue
+            if isinstance(tls, dict):
+                out.setdefault(cid, []).append(
+                    (at, {f: tls[f] for f in TLS_FAILURE_CONTEXT if tls.get(f) not in (None, '', [])}))
+    return out
+
+
+def _iso_epoch(text):
+    """Suricata's (and tshark's) timestamp - 2015-10-21T10:09:16.074689+0000 - in epoch seconds."""
+    try:
+        return datetime.strptime(text, '%Y-%m-%dT%H:%M:%S.%f%z').timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 def init_empty_db(db_path):
@@ -809,7 +1132,8 @@ def get_event_types_sqlite(db_path, q=None):
         has_fts = _has_fts5(conn) if terms else False
 
         select, event_type_col = _events_select(terms, has_fts, 'event_type, COUNT(*) as cnt', 'e.event_type, COUNT(*) as cnt')
-        conditions, params = _build_where_conditions(_has_acknowledged_alerts_table(conn), terms, has_fts, None, event_type_col)
+        conditions, params = _build_where_conditions(_has_acknowledged_alerts_table(conn), terms, has_fts, None, event_type_col,
+                                                     include_connections=True)
 
         sql = select
         if conditions:
@@ -1031,6 +1355,11 @@ AGGREGATION_JSON_PATHS = {
         'Bytes ←': ['$.flow.bytes_toclient'],
         'State': ['$.flow.state'],
         'Alerted': ['$.flow.alerted'],
+        # tshark's flow table shows this in place of State/Alerted,
+        # which only Suricata records.
+        'App Proto': ['$.app_proto'],
+        # whether the server answered: yes, no, or ICMP error only
+        'Answered': ['$.shark.answered'],
     },
     'fileinfo': {
         'Filename': ['$.fileinfo.filename'],
@@ -1201,6 +1530,242 @@ AGGREGATION_JSON_PATHS = {
         'Query': ['$.mdns.queries[0].rrname'],
         'Type': ['$.mdns.queries[0].rrtype'],
     },
+    # tshark-only types (shark_protocols.py)
+    'llmnr': {
+        'Query': ['$.llmnr.queries[0].rrname'],
+        'Type': ['$.llmnr.queries[0].rrtype'],
+    },
+    's7comm': {
+        'Type': ['$.s7comm.type'],
+        'Function': ['$.s7comm.function', '$.s7comm.function_group'],
+        'Area': ['$.s7comm.items[0].area'],
+        'Error': ['$.s7comm.response.error_class'],
+    },
+    'browser': {
+        'Message': ['$.browser.message'],
+        'NetBIOS Name': ['$.browser.source_name'],
+        'Workgroup': ['$.browser.destination_name'],
+        'Windows': ['$.browser.os_version'],
+        'Roles': ['$.browser.roles'],
+        'Count': ['$.browser.count'],
+    },
+    'rpc': {
+        'Program': ['$.rpc.program'],
+        'Version': ['$.rpc.version'],
+        'Procedure': ['$.rpc.procedure'],
+        'Reply': ['$.rpc.reply'],
+        'Machine Name': ['$.rpc.machine_name'],
+    },
+    'coap': {
+        'Method': ['$.coap.method'],
+        'URI': ['$.coap.uri'],
+        'Query': ['$.coap.query'],
+        'Response Code': ['$.coap.response_code'],
+        'Content Format': ['$.coap.response_content_format', '$.coap.request_content_format'],
+        'Type': ['$.coap.type'],
+    },
+    'xdmcp': {
+        'Result': ['$.xdmcp.result'],
+        'Server Host': ['$.xdmcp.server_host_name'],
+        'Server Status': ['$.xdmcp.server_status'],
+        'Messages': ['$.xdmcp.messages[0]'],
+        'Display Address': ['$.xdmcp.display_addresses[0]'],
+        'Authentication': ['$.xdmcp.authentication_names[0]'],
+        'Authorization': ['$.xdmcp.authorization_names[0]'],
+    },
+    'tunnel': {
+        'Tunnel Type': ['$.tunnel.type'],
+        'Tunnel Packets →': ['$.tunnel.packets_toserver'],
+        'Tunnel Packets ←': ['$.tunnel.packets_toclient'],
+        'Inner Flows': ['$.tunnel.inner_flows'],
+        'Inner Host': ['$.tunnel.inner_hosts[0]'],
+        'Returns to Sender': ['$.tunnel.returns_to_sender'],
+    },
+    'rip': {
+        'Command': ['$.rip.command'],
+        'Version': ['$.rip.version'],
+        'Route Count': ['$.rip.route_count'],
+        'Route': ['$.rip.routes[0]', '$.rip.requested[0]'],
+        'Withdrawn': ['$.rip.withdrawn'],
+        'Metric Changes': ['$.rip.metric_changes'],
+        'Authentication': ['$.rip.authentication'],
+    },
+    'l2tp': {
+        'Client Host': ['$.l2tp.client_host_name'],
+        'Vendor': ['$.l2tp.client_vendor'],
+        'Firmware': ['$.l2tp.client_firmware'],
+        'Server Host': ['$.l2tp.server_host_name'],
+        'State': ['$.l2tp.state'],
+        'Result': ['$.l2tp.stop_result', '$.l2tp.call_result'],
+        'Calls': ['$.l2tp.calls'],
+    },
+    'ipmi': {
+        'Requests': ['$.ipmi.requests[0]'],
+        'Result': ['$.ipmi.result'],
+        'IPMI Versions': ['$.ipmi.ipmi_versions[0]'],
+        'Auth Types': ['$.ipmi.auth_types[0]'],
+        'Privilege': ['$.ipmi.requested_privilege'],
+        'Cipher': ['$.ipmi.cipher_accepted.authentication', '$.ipmi.cipher_requested.authentication'],
+        'Weaknesses': ['$.ipmi.weaknesses[0]'],
+    },
+    'slp': {
+        'Function': ['$.slp.function'],
+        'Service Type': ['$.slp.service_type', '$.slp.service_types[0]'],
+        'Scopes': ['$.slp.scopes'],
+        'URL': ['$.slp.url', '$.slp.urls[0]'],
+        'Response': ['$.slp.response'],
+        'Status': ['$.slp.status'],
+        'Version': ['$.slp.version'],
+    },
+    'stun': {
+        'Method': ['$.stun.method'],
+        'Result': ['$.stun.result'],
+        'Requests': ['$.stun.requests'],
+        'Mapped Address': ['$.stun.mapped_addresses[0]'],
+        'Relayed Address': ['$.stun.relayed_addresses[0]'],
+        'Software': ['$.stun.client_software', '$.stun.server_software'],
+        'User': ['$.stun.username'],
+    },
+    'radius': {
+        'Message': ['$.radius.message'],
+        'User': ['$.radius.user'],
+        'Calling Station': ['$.radius.calling_station'],
+        'NAS': ['$.radius.nas_identifier', '$.radius.nas_ip'],
+        'Result': ['$.radius.result'],
+        'EAP Method': ['$.radius.eap_methods[0]'],
+        'Reply Message': ['$.radius.reply_message'],
+    },
+    'socks': {
+        'Version': ['$.socks.version'],
+        'Command': ['$.socks.command'],
+        'Destination': ['$.socks.request_name', '$.socks.request_host'],
+        'Destination Port': ['$.socks.request_port'],
+        'Status': ['$.socks.status'],
+        'User': ['$.socks.user'],
+        'Tunneled': ['$.socks.tunneled'],
+    },
+    'tls_failure': {
+        'Alert': ['$.tls_failure.alert'],
+        'Sent By': ['$.tls_failure.sent_by'],
+        'SNI / Host': ['$.tls_failure.sni'],
+        'Subject': ['$.tls_failure.subject'],
+        'Issuer': ['$.tls_failure.issuerdn'],
+    },
+    'dtls': {
+        'SNI / Host': ['$.dtls.sni'],
+        'Version': ['$.dtls.version'],
+        'Handshake': ['$.dtls.handshake'],
+        'Subject': ['$.dtls.subject'],
+        'JA4': ['$.dtls.ja4'],
+    },
+    'syslog': {
+        'Severity': ['$.syslog.severity'],
+        'Facility': ['$.syslog.facility'],
+        'Host': ['$.syslog.hostname'],
+        'Program': ['$.syslog.program'],
+        'Message': ['$.syslog.message'],
+    },
+    'dhcpv6': {
+        'Message': ['$.dhcpv6.message'],
+        'Reply': ['$.dhcpv6.reply'],
+        'Hostname': ['$.dhcpv6.hostname'],
+        'Client MAC': ['$.dhcpv6.client_mac'],
+        'Assigned IP': ['$.dhcpv6.assigned_addresses', '$.dhcpv6.prefixes'],
+        'Vendor Class': ['$.dhcpv6.vendor_class'],
+        'Result': ['$.dhcpv6.status'],
+    },
+    'lldp': {
+        'System Name': ['$.lldp.system_name'],
+        'Chassis ID': ['$.lldp.chassis_id'],
+        'Port ID': ['$.lldp.port_id'],
+        'Capabilities': ['$.lldp.capabilities'],
+        'Management IP': ['$.lldp.management_addresses'],
+        'VLAN': ['$.lldp.vlan'],
+        'Count': ['$.lldp.count'],
+    },
+    'cdp': {
+        'Device ID': ['$.cdp.device_id'],
+        'Port ID': ['$.cdp.port_id'],
+        'Platform': ['$.cdp.platform'],
+        'Capabilities': ['$.cdp.capabilities'],
+        'Management IP': ['$.cdp.addresses'],
+        'Native VLAN': ['$.cdp.native_vlan'],
+        'Count': ['$.cdp.count'],
+    },
+    'goose': {
+        'Control Block': ['$.goose.gocb_ref'],
+        'Dataset': ['$.goose.dataset'],
+        'stNum': ['$.goose.stnum'],
+        'Repeats': ['$.goose.repeats'],
+        'Anomaly': ['$.goose.anomaly'],
+    },
+    'opcua': {
+        'Endpoint': ['$.opcua.endpoint'],
+        'Security': ['$.opcua.security_policy'],
+        'Application': ['$.opcua.client_application'],
+        'User': ['$.opcua.username'],
+        'Password': ['$.opcua.password'],
+        'Activation': ['$.opcua.activation'],
+    },
+    'opcua_action': {
+        'Service': ['$.opcua_action.service'],
+        'Node': ['$.opcua_action.node'],
+        'Value': ['$.opcua_action.value'],
+        'Result': ['$.opcua_action.result'],
+    },
+    'bacnet': {
+        'Service': ['$.bacnet.service'],
+        'Object': ['$.bacnet.object'],
+        'Property': ['$.bacnet.property'],
+        'Value': ['$.bacnet.value'],
+        'Password': ['$.bacnet.password'],
+        'Result': ['$.bacnet.result'],
+    },
+    'bacnet_property': {
+        'Service': ['$.bacnet_property.service'],
+        'Object': ['$.bacnet_property.object'],
+        'Property': ['$.bacnet_property.property'],
+        'Count': ['$.bacnet_property.count'],
+        'Errors': ['$.bacnet_property.errors'],
+        'Last Value': ['$.bacnet_property.last_value'],
+    },
+    'bacnet_device': {
+        'Device': ['$.bacnet_device.device'],
+        'Vendor': ['$.bacnet_device.vendor'],
+        'Announcements': ['$.bacnet_device.announcements'],
+    },
+    'iec104': {
+        'Command': ['$.iec104.action'],
+        'Station': ['$.iec104.station'],
+        'IOA': ['$.iec104.ioa'],
+        'Value': ['$.iec104.value'],
+        'Result': ['$.iec104.result'],
+    },
+    'iec104_point': {
+        'Station': ['$.iec104_point.station'],
+        'IOA': ['$.iec104_point.ioa'],
+        'Type': ['$.iec104_point.type'],
+        'Updates': ['$.iec104_point.updates'],
+        'Last Value': ['$.iec104_point.last_value'],
+    },
+    'telnet': {
+        'Banner': ['$.telnet.banner'],
+        'User': ['$.telnet.username'],
+        'Password': ['$.telnet.password'],
+        'Login': ['$.telnet.login'],
+    },
+    'ssdp': {
+        'Method': ['$.ssdp.method', '$.ssdp.status'],
+        'Search Target': ['$.ssdp.search_target', '$.ssdp.notification_type'],
+        'Location': ['$.ssdp.location'],
+        'Server': ['$.ssdp.server'],
+    },
+    'nbns': {
+        'Opcode': ['$.nbns.opcode'],
+        'NetBIOS Name': ['$.nbns.name'],
+        'Service': ['$.nbns.service'],
+        'Address': ['$.nbns.address'],
+    },
     # 'ldap' intentionally has no entry here: like mqtt, its request/response
     # detail lives under a differently-named sub-object per operation type
     # (bind_request/search_request/modify_request/.../bind_response/
@@ -1240,6 +1805,9 @@ AGGREGATION_TRUNCATE = {
     ('http', 'User-Agent'): 50,
     ('tls', 'Subject'): 40,
     ('tls', 'Issuer'): 40,
+    ('dtls', 'Subject'): 40,
+    ('tls_failure', 'Subject'): 40,
+    ('tls_failure', 'Issuer'): 40,
 }
 
 # Value transforms beyond plain extraction, matching extractValue's own
@@ -1327,12 +1895,16 @@ _FLOW_JSON_INDEX_NAMES = {
     'Pkts →': 'idx_flow_pkts_toserver', 'Pkts ←': 'idx_flow_pkts_toclient',
     'Bytes →': 'idx_flow_bytes_toserver', 'Bytes ←': 'idx_flow_bytes_toclient',
     'State': 'idx_flow_state', 'Alerted': 'idx_flow_alerted',
+    'App Proto': 'idx_flow_app_proto',
+    # No index for 'Answered': only tshark's connection rows have it, few
+    # enough that the event_type index finds them - one over every flow
+    # would only slow a big capture's import.
 }
 
 
 def _ensure_flow_json_indexes(conn):
-    """Backfill covering indexes for flow's 6 JSON-extracted aggregation
-    columns (Pkts/Bytes/State/Alerted) - measured as the standout bottleneck
+    """Backfill covering indexes for flow's 7 JSON-extracted aggregation
+    columns (Pkts/Bytes/State/Alerted, and App Proto for tshark) - measured as the standout bottleneck
     at 1M+ rows (~2s per column, unindexed json_extract() over the full
     json_data blob). event_type leads each index, matching the real-column
     fix in _ensure_ip_port_indexes. Built from the real _aggregation_expr()
@@ -1348,8 +1920,10 @@ def _ensure_flow_json_indexes(conn):
     query-planner stats need refreshing here too, not just after ingest.
     """
     for label, paths in AGGREGATION_JSON_PATHS['flow'].items():
+        name = _FLOW_JSON_INDEX_NAMES.get(label)
+        if name is None:
+            continue
         expr = _aggregation_expr('flow', label, paths)
-        name = _FLOW_JSON_INDEX_NAMES[label]
         try:
             conn.execute(f'CREATE INDEX IF NOT EXISTS {name} ON events(event_type, {expr})')
         except sqlite3.OperationalError:
@@ -1444,8 +2018,9 @@ def _sort_expr(event_type, label, prefix=''):
         # casting to TEXT here would sort "3306" before "443" before "80".
         col, _cast_text = REAL_AGGREGATION_COLUMNS[label]
         return f'{prefix}{col}'
-    if event_type in AGGREGATION_JSON_PATHS and label in AGGREGATION_JSON_PATHS[event_type]:
-        return _aggregation_expr(event_type, label, AGGREGATION_JSON_PATHS[event_type][label], prefix=prefix)
+    columns_type = _columns_type(event_type)
+    if columns_type in AGGREGATION_JSON_PATHS and label in AGGREGATION_JSON_PATHS[columns_type]:
+        return _aggregation_expr(columns_type, label, AGGREGATION_JSON_PATHS[columns_type][label], prefix=prefix)
     if event_type is None:
         # Merged 'all events' view only - 'Type'/'Detail' aren't real columns
         # of any specific event_type, so this must never fire for a specific
@@ -1465,6 +2040,7 @@ def _aggregation_column_specs(event_type, prefix):
     can never drift on which columns/expressions they aggregate over.
     Returns None if event_type isn't one of the supported per-type tabs (and
     isn't the merged 'all events' view, event_type=None)."""
+    event_type = _columns_type(event_type)
     if event_type is not None and event_type not in AGGREGATION_JSON_PATHS:
         return None
     column_specs = []

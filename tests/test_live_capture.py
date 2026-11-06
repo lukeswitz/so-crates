@@ -52,7 +52,7 @@ class TestInterfaceListing(unittest.TestCase):
         with unittest.mock.patch('live_capture._iface_names',
                                  return_value=['lo0', 'en1', 'en0', 'utun0']), \
              unittest.mock.patch('live_capture._iface_address',
-                                 side_effect=lambda n: '10.0.0.5' if n == 'en0' else None):
+                                 side_effect=lambda n: '192.0.2.5' if n == 'en0' else None):
             interfaces = live_capture.list_interfaces()
         self.assertEqual([i['name'] for i in interfaces], ['en0', 'en1'])
         self.assertEqual(live_capture.default_interface(interfaces), 'en0')
@@ -82,7 +82,7 @@ class TestCaptureSupport(unittest.TestCase):
     def test_unsupported_without_permission_names_the_fix(self):
         with unittest.mock.patch('live_capture.shutil.which', return_value='/usr/sbin/tcpdump'), \
              unittest.mock.patch('live_capture.list_interfaces',
-                                 return_value=[{'name': 'en0', 'address': '10.0.0.5'}]), \
+                                 return_value=[{'name': 'en0', 'address': '192.0.2.5'}]), \
              unittest.mock.patch('live_capture.has_capture_permission', return_value=False):
             support = live_capture.capture_support()
         self.assertFalse(support['supported'])
@@ -92,7 +92,7 @@ class TestCaptureSupport(unittest.TestCase):
     def test_supported_reports_no_reason(self):
         with unittest.mock.patch('live_capture.shutil.which', return_value='/usr/sbin/tcpdump'), \
              unittest.mock.patch('live_capture.list_interfaces',
-                                 return_value=[{'name': 'en0', 'address': '10.0.0.5'}]), \
+                                 return_value=[{'name': 'en0', 'address': '192.0.2.5'}]), \
              unittest.mock.patch('live_capture.has_capture_permission', return_value=True):
             support = live_capture.capture_support()
         self.assertTrue(support['supported'])
@@ -241,6 +241,40 @@ except SystemExit:
 
     def test_without_hook_tcpdump_is_orphaned(self):
         self.assertTrue(self._run(unregister=True))
+
+
+class TestEmptyCapture(unittest.TestCase):
+    def setUp(self):
+        import shark_analyzer
+        import storage
+        import struct
+        import suricata_analyzer
+        self.shark = shark_analyzer
+        self.storage = storage
+        self.suricata = suricata_analyzer
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+        self.pcap = os.path.join(self.dir, 'capture.pcap')
+        with open(self.pcap, 'wb') as f:
+            f.write(struct.pack('<IHHiIII', 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1))
+
+    def test_no_packets_is_ready_at_once_without_running_suricata(self):
+        with unittest.mock.patch.object(self.shark, 'packet_count', return_value=0), \
+                unittest.mock.patch.object(self.suricata.subprocess, 'Popen') as popen:
+            self.assertTrue(self.suricata.spawn_suricata(self.dir, self.pcap, data_dir=self.dir))
+        popen.assert_not_called()
+        self.assertFalse(os.path.exists(os.path.join(self.dir, '.phase')))
+        self.assertTrue(os.path.exists(os.path.join(self.dir, 'events.db')))
+        self.assertEqual(self.storage.read_analysis_warnings(self.dir),
+                         ['The capture has no packets, so there was nothing to analyze'])
+
+    def test_a_capture_that_cant_be_counted_still_goes_to_suricata(self):
+        with unittest.mock.patch.object(self.shark, 'packet_count', return_value=None), \
+                unittest.mock.patch.object(self.shark, 'enabled', return_value=False), \
+                unittest.mock.patch.object(self.suricata.subprocess, 'Popen', side_effect=OSError('stop here')) as popen:
+            self.suricata.spawn_suricata(self.dir, self.pcap, data_dir=self.dir)
+        popen.assert_called_once()
 
 
 if __name__ == '__main__':

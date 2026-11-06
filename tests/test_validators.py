@@ -227,6 +227,22 @@ class TestIsLogFile(unittest.TestCase):
         xml += b'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
         self._assert_not_log(xml, 'Office Open XML disguised as generic XML')
 
+    # Negative: email messages (.eml) - REGRESSION: a first header with a
+    # comma ("Date: Tue, 3 Feb ...") passed the CSV check, so the message
+    # went to Sigma as a log and the analysis came back empty.
+    def test_eml_starting_with_date_header(self):
+        self._assert_not_log(b'Date: Tue, 3 Feb 2026 10:00:00 +0000\r\n'
+                             b'From: "Billing, Dept" <billing@example.com>\r\n'
+                             b'Subject: Invoice\r\n\r\nbody, with a comma\r\n', '.eml starting with Date:')
+
+    def test_eml_with_folded_header(self):
+        self._assert_not_log(b'Received: from mx.example.com (mx.example.com [192.0.2.1]),\n'
+                             b'\tby mail.example.com; Tue, 3 Feb 2026 10:00:00 +0000\n'
+                             b'Subject: hi\n\nbody\n', '.eml with a folded Received: header')
+
+    def test_csv_whose_header_row_looks_like_a_field(self):
+        self._assert_log(b'Note: first,second\n1,2\n3,4\n', 'CSV with a colon in its first column name')
+
     def test_plain_text_no_commas(self):
         self._assert_not_log(b'hello world\n', 'plain text without commas')
 
@@ -238,6 +254,34 @@ class TestIsLogFile(unittest.TestCase):
 
     def test_binary_all_zeros(self):
         self._assert_not_log(b'\x00' * 100, 'all-zero binary')
+
+
+class TestIsEmailFile(unittest.TestCase):
+    """is_email_file: an email message's header block, by content."""
+
+    def test_messages(self):
+        for data in (
+            b'From: a@example.com\nTo: b@example.com\nSubject: hi\n\nbody\n',
+            b'Received: from mx (mx [192.0.2.1])\n\tby mail; Tue, 3 Feb 2026\nX-Spam: no\n\n',
+            b'Return-Path: <a@example.com>\r\nDelivered-To: b@example.com\r\n\r\n',
+        ):
+            with self.subTest(data=data[:30]):
+                self.assertTrue(validators.is_email_file(data))
+
+    def test_not_messages(self):
+        for data in (
+            b'{"EventID": 1, "Computer": "PC"}\n{"EventID": 3, "User": "x"}\n',
+            b'Host: server1\nPort: 22\nUser: admin\n',
+            b'From: a@example.com\n',
+            b'timestamp,message\n2024-01-01,hello\n',
+            b' From: indented first line\nTo: x\n',
+        ):
+            with self.subTest(data=data[:30]):
+                self.assertFalse(validators.is_email_file(data))
+
+    def test_extension(self):
+        self.assertTrue(validators.is_email_file_by_extension('Invoice.EML'))
+        self.assertFalse(validators.is_email_file_by_extension('invoice.msg'))
 
 
 class TestIsLogFileByExtension(unittest.TestCase):
@@ -444,6 +488,21 @@ class TestResolveSafeIps(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validators.resolve_safe_ips('v6mapped-private.example.com')
 
+    def test_rejects_6to4_and_nat64_carrying_a_private_ipv4(self):
+        """6to4 (2002::/16) and NAT64 (64:ff9b::/96) addresses are judged by
+        the IPv4 address they carry, not only by Python's own classes for
+        them (which differ between versions - 3.13 already calls both
+        prefixes private or reserved, so those are switched off here)."""
+        import ipaddress
+        off = unittest.mock.PropertyMock(return_value=False)
+        with unittest.mock.patch.object(ipaddress.IPv6Address, 'is_private', off), \
+                unittest.mock.patch.object(ipaddress.IPv6Address, 'is_reserved', off), \
+                unittest.mock.patch.object(ipaddress.IPv6Address, 'is_global', unittest.mock.PropertyMock(return_value=True)):
+            for addr in ('2002:a00:1::1', '2002:7f00:1::1', '64:ff9b::10.0.0.1', '64:ff9b::127.0.0.1', '64:ff9b::100.64.0.1'):
+                self.assertTrue(validators._ip_is_blocked(ipaddress.ip_address(addr)), addr)
+            for addr in ('2002:808:808::1', '64:ff9b::8.8.8.8'):
+                self.assertFalse(validators._ip_is_blocked(ipaddress.ip_address(addr)), addr)
+
     def test_rejects_ipv4_compatible_loopback(self):
         """::127.0.0.1 (IPv4-compatible) must be blocked."""
         with unittest.mock.patch('socket.getaddrinfo', return_value=self._fake_addrinfo('::127.0.0.1')):
@@ -577,8 +636,30 @@ class TestZipMemberCap(unittest.TestCase):
             validators.validate_zip_extraction(zf, td)  # must not raise
 
 
-if __name__ == '__main__':
-    unittest.main(verbosity=2)
+
+class TestLongFilenames(unittest.TestCase):
+    def test_a_name_too_long_to_save_is_cut_keeping_its_extension(self):
+        """REGRESSION: a name past the filesystem's 255 bytes failed at
+        save time with a bare 500."""
+        name = validators.sanitize_filename('a' * 300 + '.pcap')
+        self.assertLessEqual(len(name.encode('utf-8')), 200)
+        self.assertTrue(name.endswith('a.pcap'))
+        multibyte = validators.sanitize_filename('\u00e9' * 150 + '.pcapng')
+        self.assertLessEqual(len(multibyte.encode('utf-8')), 200)
+        self.assertTrue(multibyte.endswith('.pcapng'))
+        self.assertEqual(validators.sanitize_filename('capture.pcap'), 'capture.pcap')
+
+
+class TestModelsFallbacks(unittest.TestCase):
+    def test_a_string_source_is_no_ecs_object(self):
+        """tshark's rows carry source: 'tshark' - reading its src_ip
+        must not try it as {ip: ...}."""
+        import models
+        self.assertEqual(models.get_src_ip({'src_ip': '1.2.3.4', 'source': 'tshark'}), '1.2.3.4')
+        self.assertEqual(models.get_src_ip({'source': 'tshark'}), '')
+        self.assertEqual(models.get_src_port({'source': {'port': 99}}), 99)
+        self.assertEqual(models.get_dest_ip({'destination': {'ip': '5.6.7.8'}}), '5.6.7.8')
+
 
 
 class TestSecurityValidatorsHardening(unittest.TestCase):
@@ -660,3 +741,117 @@ class TestGunzipAtomically(unittest.TestCase):
         with open(self.dest, 'rb') as f:
             self.assertEqual(f.read(), b'previous complete ruleset')
         self.assertFalse(os.path.exists(self.dest + '.tmp'))
+
+
+class TestCustomRuleChecks(unittest.TestCase):
+    """The checks custom Suricata rules pass before Suricata itself sees
+    them (check_custom_rules), and the parsing they rest on."""
+
+    RANGE = (1000000, 1999999)
+
+    def _problems(self, text):
+        return validators.check_custom_rules(text, self.RANGE)[1]
+
+    def test_rule_lines_skip_comments_and_join_continued_rules(self):
+        text = ('# heading\n\n'
+                'alert tcp any any -> any any (msg:"a"; sid:1000001;)\n'
+                '  #alert tcp any any -> any any (msg:"off"; sid:1000002;)\n'
+                'alert tcp any any -> any any (msg:"b"; \\\n'
+                '    content:"x"; sid:1000003;)\n')
+        self.assertEqual(validators.custom_rule_lines(text), [
+            (3, 'alert tcp any any -> any any (msg:"a"; sid:1000001;)'),
+            (5, 'alert tcp any any -> any any (msg:"b"; content:"x"; sid:1000003;)'),
+        ])
+
+    def test_indented_rule_is_a_problem(self):
+        """Suricata skips a line starting with a space or tab, so an indented
+        rule would be saved and never load."""
+        problems = self._problems('alert tcp any any -> any any (msg:"a"; sid:1000001;)\n'
+                                  '\talert tcp any any -> any any (msg:"b"; sid:1000002;)\n'
+                                  '  # an indented comment is fine\n')
+        self.assertEqual([p['line'] for p in problems], [2])
+        self.assertIn('starts with a space or tab', problems[0]['message'])
+
+    def test_control_characters_are_refused(self):
+        """Python's splitlines() ends a line at a lone carriage return (and
+        more), Suricata only at a newline - so a forbidden keyword could hide
+        on what looked like a comment. Lines are read as Suricata reads them,
+        and such characters are refused."""
+        hidden = 'alert tcp any any -> any any (sid:1000002; msg:"x)\r#"; dataset:isset,x;)'
+        for ch in ('\r', '\x0b', '\x0c', '\x1c', '\x85', ' '):
+            with self.subTest(ch=repr(ch)):
+                problems = self._problems('# lab\n' + hidden.replace('\r', ch))
+                self.assertEqual(len(problems), 1)
+                self.assertEqual(problems[0]['line'], 2)
+                self.assertIn('control character', problems[0]['message'])
+        # Windows line endings are fine
+        count, problems = validators.check_custom_rules(
+            'alert tcp any any -> any any (msg:"a"; sid:1000001;)\r\n# note\r\n', self.RANGE)
+        self.assertEqual((count, problems), (1, []))
+
+    def test_rule_options_split_like_suricata(self):
+        options = validators.rule_options(
+            'alert tcp any any -> any any (msg:"uses dataset\\; really"; content:"lua"; nocase; sid:1000001;)')
+        self.assertEqual(options, [('msg', '"uses dataset\\; really"'), ('content', '"lua"'),
+                                   ('nocase', None), ('sid', '1000001')])
+        self.assertIsNone(validators.rule_options('not a rule at all'))
+
+    def test_good_rules_pass(self):
+        count, problems = validators.check_custom_rules(
+            '# lab\nalert http any any -> any any (msg:"C2"; http.uri; content:"/gate.php"; sid:1000001; rev:1;)\n'
+            'alert tcp any any -> any any (msg:"filestore is fine"; filestore; sid:1999999; rev:1;)', self.RANGE)
+        self.assertEqual((count, problems), (2, []))
+
+    def test_each_forbidden_keyword_is_refused_with_its_line(self):
+        for line, keyword in enumerate(sorted(validators.CUSTOM_RULE_FORBIDDEN_KEYWORDS), 1):
+            text = '\n' * (line - 1) + f'alert ip any any -> any any (msg:"x"; {keyword}:whatever; sid:1000001;)'
+            self.assertEqual(self._problems(text),
+                             [{'line': line, 'message': f'{keyword} is not allowed in custom rules'}], keyword)
+
+    def test_keyword_names_in_content_or_msg_are_allowed(self):
+        self.assertEqual(self._problems(
+            'alert http any any -> any any (msg:"dataset lua iprep"; content:"dataset:"; sid:1000001;)'), [])
+
+    def test_sid_checks(self):
+        problems = self._problems(
+            'alert tcp any any -> any any (msg:"low"; sid:999999;)\n'
+            'alert tcp any any -> any any (msg:"high"; sid:2000000;)\n'
+            'alert tcp any any -> any any (msg:"none"; rev:1;)\n'
+            'alert tcp any any -> any any (msg:"word"; sid:abc;)\n'
+            'alert tcp any any -> any any (msg:"first"; sid:1000001;)\n'
+            'alert tcp any any -> any any (msg:"again"; sid:1000001;)')
+        self.assertEqual([(p['line'], p['message'].split(' - ')[0]) for p in problems], [
+            (1, 'sid 999999 is outside 1000000-1999999, the range custom rules use'),
+            (2, 'sid 2000000 is outside 1000000-1999999, the range custom rules use'),
+            (3, 'no sid'),
+            (4, 'sid abc is not a number'),
+            (6, 'sid 1000001 is already used on line 5'),
+        ])
+
+    def test_text_that_is_not_a_rule(self):
+        self.assertEqual(self._problems('hello world'),
+                         [{'line': 1, 'message': 'not a rule - no options in parentheses'}])
+
+    def test_size_caps(self):
+        rule = 'alert tcp any any -> any any (msg:"x"; sid:{};)\n'
+        with unittest.mock.patch.object(validators.config, 'CUSTOM_RULES_MAX_COUNT', 2):
+            self.assertEqual(self._problems(rule.format(1000001) + rule.format(1000002)), [])
+            problems = self._problems(''.join(rule.format(1000001 + i) for i in range(3)))
+            self.assertIn('at most 2 are allowed', problems[0]['message'])
+        just_fits = rule.format(1000001)
+        with unittest.mock.patch.object(validators.config, 'CUSTOM_RULES_MAX_BYTES', len(just_fits)):
+            self.assertEqual(self._problems(just_fits), [])
+            self.assertIsNone(self._problems(just_fits + ' ')[0]['line'])
+        self.assertIn('NUL', self._problems('alert\x00')[0]['message'])
+
+
+class TestEtproCode(unittest.TestCase):
+    def test_letters_and_digits_only(self):
+        from validators import is_valid_etpro_code
+        self.assertTrue(is_valid_etpro_code('0123456789abcdef'))
+        self.assertTrue(is_valid_etpro_code('ABCDEFGH'))
+        for bad in ['short', 'a' * 65, '../../etc/passwd', 'abcd efgh', 'abcdefgh?x=1', 'abcdefgh/', '', None, 12345678]:
+            self.assertFalse(is_valid_etpro_code(bad), bad)
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

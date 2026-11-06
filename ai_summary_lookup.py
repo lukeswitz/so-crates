@@ -23,6 +23,8 @@ import os
 # Production/Docker never sets this, so it defaults to the same path the
 # Dockerfile's resources-builder stage bakes into.
 AI_SUMMARIES_DIR = os.environ.get('AI_SUMMARIES_DIR', '/usr/share/ai-summaries')
+if 'AI_SUMMARIES_DIR' not in os.environ and not os.path.isdir(AI_SUMMARIES_DIR):
+    AI_SUMMARIES_DIR = os.path.join(os.environ.get('DATA_DIR', os.path.expanduser('~/socrates-data')), 'ai-summaries')
 
 _ai_summary_index_cache = {}  # (base_dir, detection_type) -> index dict
 

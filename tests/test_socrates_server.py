@@ -12,6 +12,7 @@ import threading
 import time
 import zipfile
 import io
+import inspect
 import re
 import sqlite3
 import subprocess
@@ -441,6 +442,147 @@ class TestFetchUrlSafely(unittest.TestCase):
             self.assertEqual(f.read(), b'final-payload')
         os.unlink(path)
 
+    def test_network_failures_are_value_errors_with_a_reason(self):
+        """A refused connection, a malformed reply, a slow server: reported
+        as the ValueError Load from URL turns into a 400 with its reason,
+        not whatever http.client raised (a bare 500)."""
+        import socket as socket_mod
+        closed = socket_mod.socket()
+        closed.bind(('127.0.0.1', 0))
+        port = closed.getsockname()[1]
+        closed.close()                       # nothing listens there now
+        with unittest.mock.patch('url_fetch.validate_url_safety', return_value=None), \
+             unittest.mock.patch('url_fetch.resolve_safe_ips', return_value=['127.0.0.1']):
+            with self.assertRaisesRegex(ValueError, 'Could not download the URL: Connection refused'):
+                url_fetch.fetch_url_safely(f'http://localhost:{port}/x', timeout=5, max_size=100,
+                                           tmp_dir=storage.upload_tmp_dir(server.DATA_DIR))
+            with self.assertRaisesRegex(ValueError, 'took too long'):
+                url_fetch.fetch_url_safely(f'http://localhost:{self.port}/big', timeout=5, max_size=10_000,
+                                           tmp_dir=storage.upload_tmp_dir(server.DATA_DIR), chunk_size=10,
+                                           max_seconds=-1)
+        self.assertEqual(self._upload_tmp_contents(), [], 'nothing left behind')
+
+
+class TestZipExtractionErrors(unittest.TestCase):
+    def test_a_damaged_zip_is_a_value_error_saying_so(self):
+        """REGRESSION: only RuntimeError/NotImplementedError were caught, so
+        a corrupt 'PK' file - or a wrong ZipCrypto password slipping past its
+        one-byte check - came back as a bare 500."""
+        import zipfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(d, ignore_errors=True))
+        garbage = os.path.join(d, 'garbage.zip')
+        with open(garbage, 'wb') as f:
+            f.write(b'PK\x03\x04' + bytes(100))
+        with self.assertRaisesRegex(ValueError, 'damaged'):
+            storage.extract_zip_contents(garbage, os.path.join(d, 'out'))
+        good = os.path.join(d, 'good.zip')
+        with zipfile.ZipFile(good, 'w') as z:
+            z.writestr('a.txt', 'hello')
+        with unittest.mock.patch('zipfile.ZipFile.extractall', side_effect=zipfile.BadZipFile('Bad CRC-32')):
+            with self.assertRaisesRegex(ValueError, 'could not be extracted'):
+                storage.extract_zip_contents(good, os.path.join(d, 'out2'), [b'infected'])
+
+
+class TestDetectFileType(unittest.TestCase):
+    """_detect_file_type - shared by every upload path and reanalyze."""
+
+    def test_detection(self):
+        cases = [
+            (b'Date: Tue, 3 Feb 2026 10:00:00 +0000\nFrom: a@example.com\n\nhi\n', 'x.bin', 'email'),
+            (b'anything at all', 'message.eml', 'email'),
+            (b'{"EventID": 1, "Computer": "PC"}\n{"EventID": 3}\n', 'test.json', 'log'),
+            (b'{"EventID": 1, "Computer": "PC"}\n{"EventID": 3}\n', 'noext', 'log'),
+            (b'Subject: looks like mail\nFrom: a@example.com\n\n', 'app.log', 'log'),
+            (b'Host: server1\nPort: 22\n', 'settings', 'binary'),
+            (b'MZ' + b'\x00' * 62, 'tool.exe', 'binary'),
+        ]
+        for prefix, name, expected in cases:
+            with self.subTest(name=name, prefix=prefix[:30]):
+                self.assertEqual(server._detect_file_type(prefix, name), expected)
+
+    def test_oversized_email_is_analyzed_as_a_file(self):
+        """Email parsing holds the whole message in memory - past
+        MAX_EMAIL_SIZE it's a plain file instead."""
+        with tempfile.NamedTemporaryFile(suffix='.eml') as f:
+            f.write(b'From: a@example.com\nSubject: big\n\n' + b'x' * 100)
+            f.flush()
+            self.assertEqual(server._detect_file_type(b'From: a@example.com\nSubject: big\n', f.name), 'email')
+            with unittest.mock.patch.object(config, 'MAX_EMAIL_SIZE', 50):
+                self.assertEqual(server._detect_file_type(b'From: a@example.com\nSubject: big\n', f.name), 'binary')
+
+
+class TestCleanupStaleTmp(unittest.TestCase):
+    """storage.cleanup_stale_tmp() removes what a server that died left in
+    /tmp - flows carved for transcripts, tshark runs' folders - but, since
+    /tmp can be shared with another SO-CRATES on the same computer, only
+    this user's and only once old enough not to be in use there."""
+
+    NAMES = [('socrates-flow-', '.pcap'), ('shark-run-', '')]
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        patcher = unittest.mock.patch.object(tempfile, 'tempdir', self.tmp)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _make(self, name, is_dir=False, age=0):
+        path = os.path.join(self.tmp, name)
+        if is_dir:
+            os.makedirs(os.path.join(path, 'inner'))
+            with open(os.path.join(path, 'inner', 'frames'), 'wb') as f:
+                f.write(b'x')
+        else:
+            with open(path, 'wb') as f:
+                f.write(b'x')
+        then = time.time() - age
+        os.utime(path, (then, then))
+        return path
+
+    def test_removes_only_old_entries_with_its_names(self):
+        old = config.STALE_TMP_SECONDS + 60
+        self._make('socrates-flow-ab1_cd2e.pcap', age=old)
+        self._make('shark-run-zz9yy8xx', is_dir=True, age=old)
+        kept = [
+            self._make('socrates-flow-young123.pcap'),                        # maybe another server's, in use
+            self._make('shark-run-young456', is_dir=True, age=60),
+            self._make('shark-captures', age=old),                            # not a name of ours
+            self._make('socrates-flow-ab1_cd2e.pcap.bak', age=old),
+            self._make('shark-run-TOOLONG123', is_dir=True, age=old),
+        ]
+        storage.cleanup_stale_tmp(self.NAMES)
+        self.assertEqual(sorted(os.listdir(self.tmp)), sorted(os.path.basename(p) for p in kept))
+
+    def test_a_symlink_is_removed_not_followed(self):
+        target = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, target, True)
+        with open(os.path.join(target, 'keep'), 'w') as f:
+            f.write('x')
+        link = os.path.join(self.tmp, 'shark-run-link1234')
+        os.symlink(target, link)
+        then = time.time() - config.STALE_TMP_SECONDS - 60
+        os.utime(link, (then, then), follow_symlinks=False)
+        storage.cleanup_stale_tmp(self.NAMES)
+        self.assertFalse(os.path.lexists(link))
+        self.assertTrue(os.path.exists(os.path.join(target, 'keep')))
+
+    def test_another_users_entry_is_left_alone(self):
+        path = self._make('shark-run-other123', is_dir=True, age=config.STALE_TMP_SECONDS + 60)
+        with unittest.mock.patch.object(storage.os, 'getuid', return_value=os.getuid() + 1):
+            storage.cleanup_stale_tmp(self.NAMES)
+        self.assertTrue(os.path.exists(path))
+
+    def test_main_sweeps_every_name_it_puts_in_tmp(self):
+        """Wired into main() before serving, and given the flow carve's
+        and tshark's names - the ones the code that makes them uses."""
+        with open(SERVER_FILE, 'r') as f:
+            main_section = f.read().split('\ndef main():')[1]
+        sweep = main_section.index('cleanup_stale_tmp(')
+        self.assertLess(sweep, main_section.index('serve_forever()'))
+        for name in ('FLOW_CARVE_PREFIX', 'shark_analyzer.RUN_TMP_PREFIX', 'shark_analyzer.LEGACY_TMP_PREFIXES'):
+            self.assertIn(name, main_section[sweep:sweep + 300])
+
 
 class TestCleanupUploadTmpDir(unittest.TestCase):
     """storage.cleanup_upload_tmp_dir() sweeps orphaned files/dirs left behind in
@@ -817,6 +959,43 @@ class TestAPIEndpoints(unittest.TestCase):
         data = json.loads(body)
         self.assertEqual(data['count'], 1)
 
+    def test_findings_endpoint(self):
+        md5 = 'f1d1f1d1f1d1f1d1f1d1f1d1f1d1f1d1'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+            f.write(json.dumps({'event_type': 'tunnel', 'timestamp': '2026-01-01T00:00:00', 'src_ip': '1.2.3.4',
+                                'dest_ip': '5.6.7.8', 'tunnel': {'type': 'GRE', 'returns_to_sender': True}}) + '\n')
+            f.write('{"event_type": "dns", "timestamp": "2026-01-01T00:00:01", "src_ip": "5.6.7.8"}\n')
+        db.create_sqlite_db(os.path.join(md5dir, 'events.db'), os.path.join(md5dir, 'eve.json'))
+
+        status, body = self._get(f'/api/findings?md5={md5}')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual([r['id'] for r in data['rules']], ['tunnel_return'])
+        self.assertEqual(data['findings'][0]['event']['tunnel']['type'], 'GRE')
+
+        status, body = self._get(f'/api/findings?md5={md5}&counts=1')
+        data = json.loads(body)
+        self.assertEqual((data['rules'][0]['count'], data['findings']), (1, []))
+
+        status, body = self._get(f'/api/findings?md5={md5}&q=9.9.9.9')
+        self.assertEqual(json.loads(body), {'rules': [], 'findings': []})
+
+        # one row's own records: by its rule, detail and server (no port here)
+        status, body = self._get(f'/api/findings?md5={md5}&rule=tunnel_return&detail=GRE&dest_ip=5.6.7.8&dest_port=')
+        data = json.loads(body)
+        self.assertEqual((data['rules'][0]['count'], [f['event']['src_ip'] for f in data['findings']]), (1, ['1.2.3.4']))
+        status, body = self._get(f'/api/findings?md5={md5}&rule=tunnel_return&detail=VXLAN&dest_ip=5.6.7.8')
+        self.assertEqual(json.loads(body)['findings'], [])
+
+        status, _ = self._get('/api/findings?md5=../etc/passwd')
+        self.assertEqual(status, 400)
+        # a port that isn't ASCII digits - '²' passes str.isdigit but not int()
+        for port in ('%C2%B2', 'abc', '-1'):
+            status, _ = self._get(f'/api/findings?md5={md5}&rule=tunnel_return&detail=GRE&dest_ip=5.6.7.8&dest_port={port}')
+            self.assertEqual(status, 400, port)
+
     def test_events_all_types_excludes_stats_row(self):
         md5 = '11223344556677889900aabbccddeeff'
         md5dir = os.path.join(self.tmpdir, md5)
@@ -1034,6 +1213,53 @@ class TestAPIEndpoints(unittest.TestCase):
         names = {n['name'] for n in data['nodes']}
         self.assertIn('5.5.5.5', names)
         self.assertNotIn('1.1.1.1', names)
+
+    def test_traffic_map_with_events(self):
+        md5 = 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a1'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        with open(os.path.join(md5dir, 'eve.json'), 'w') as f:
+            f.write(json.dumps({'event_type': 'flow', 'timestamp': '2026-01-01T00:00:05.000000+0000',
+                                'src_ip': '10.0.0.5', 'dest_ip': '10.0.0.9', 'dest_port': 443,
+                                'flow': {'start': '2026-01-01T00:00:00.000000+0000', 'bytes_toserver': 10,
+                                         'bytes_toclient': 5}}) + '\n')
+            f.write(json.dumps({'event_type': 'alert', 'timestamp': '2026-01-01T00:00:01.000000+0000',
+                                'src_ip': '10.0.0.5', 'dest_ip': '10.0.0.9', 'dest_port': 443,
+                                'alert': {'severity': 2, 'signature': 'TEST alert'}}) + '\n')
+        db.create_sqlite_db(os.path.join(md5dir, 'events.db'), os.path.join(md5dir, 'eve.json'))
+
+        status, body = self._get(f'/api/traffic-map?md5={md5}')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['flows'], 1)
+        self.assertEqual(data['buckets'], [[0, 'LAN', 'LAN', 1, 15]])
+        self.assertEqual(data['alerts'], [[1.0, 'LAN', 'LAN', 2, 'TEST alert', '10.0.0.5', '10.0.0.9']])
+        with analysis_cache.CACHE_LOCK:
+            self.assertIn((md5,), analysis_cache.TRAFFIC_MAP_CACHE)
+
+        # a search isn't cached, and filters like any other view's
+        status, body = self._get(f'/api/traffic-map?md5={md5}&q=country:FR')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['flows'], 0)
+        analysis_cache.evict_analysis_cache(md5)
+        with analysis_cache.CACHE_LOCK:
+            self.assertNotIn((md5,), analysis_cache.TRAFFIC_MAP_CACHE)
+
+    def test_traffic_map_without_events_db(self):
+        md5 = 'e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b2'
+        md5dir = os.path.join(self.tmpdir, md5)
+        os.makedirs(md5dir, exist_ok=True)
+        status, body = self._get(f'/api/traffic-map?md5={md5}')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['flows'], 0)
+        self.assertEqual(os.listdir(md5dir), [], 'no events.db may be created by asking')
+
+    def test_traffic_map_requires_valid_md5(self):
+        for path in ('/api/traffic-map', '/api/traffic-map?md5=invalid', '/api/traffic-map?md5=../etc/passwd'):
+            with self.subTest(path=path):
+                status, body = self._get(path)
+                self.assertEqual(status, 400)
+                self.assertIn('error', json.loads(body))
 
     def test_sankey_data_requires_md5(self):
         status, body = self._get('/api/sankey-data')
@@ -2546,6 +2772,27 @@ bright_magenta = "#D9B9D9"
         finally:
             shutil.rmtree(md5dir, ignore_errors=True)
 
+    def test_acknowledging_evicts_the_cached_unfiltered_results(self):
+        """The cached Sankey and aggregation results were computed with the
+        old acknowledged set - so they go, both ways and in bulk too."""
+        import analysis_cache
+        md5 = hashlib.md5(b'ack_evicts_cache').hexdigest()
+        md5dir, event_id, _ = self._make_events_db_with_rows(md5)
+        cached = lambda: any(k[0] == md5 for cache in analysis_cache.ALL_CACHES for k in cache)
+        try:
+            for path, body in (('/api/acknowledge-alert', {'acknowledged': True, 'rowId': event_id}),
+                               ('/api/acknowledge-alert', {'acknowledged': False, 'rowId': event_id}),
+                               ('/api/acknowledge-alerts-bulk', {'rowIds': [event_id]})):
+                status, _ = self._get(f'/api/sankey-data?md5={md5}&type=alert')
+                self.assertEqual(status, 200)
+                self.assertTrue(cached(), 'the Sankey result is cached')
+                status, _ = self._post(path, dict(body, md5=md5, table='events'))
+                self.assertEqual(status, 200)
+                self.assertFalse(cached(), path)
+        finally:
+            analysis_cache.evict_analysis_cache(md5)
+            shutil.rmtree(md5dir, ignore_errors=True)
+
     def test_acknowledge_alerts_bulk_invalid_row_ids_type_returns_400(self):
         md5 = hashlib.md5(b'ack_bulk_invalid_type').hexdigest()
         md5dir, event_id, _ = self._make_events_db_with_rows(md5)
@@ -2718,6 +2965,37 @@ bright_magenta = "#D9B9D9"
         status, _ = self._get('/api/ascii-stream?src=1.2.3.4')
         self.assertEqual(status, 400)
 
+    def _stream_analysis(self, md5):
+        dir_path = os.path.join(server.DATA_DIR, md5)
+        os.makedirs(dir_path, exist_ok=True)
+        with open(os.path.join(dir_path, 'capture.pcap'), 'wb') as f:
+            f.write(b'\xd4\xc3\xb2\xa1' + b'\x00' * 20)
+        return f'src=1.2.3.4&sport=80&dst=5.6.7.8&dport=443&md5={md5}'
+
+    def test_hexdump_stops_at_its_packet_limit(self):
+        """Stopped at MAX_HEXDUMP_PACKETS, the next packet's header alone
+        isn't sent as one more, empty packet."""
+        query = self._stream_analysis('b' * 32)
+        out = ''.join(f'12:00:0{i} IP 1.2.3.4.80 > 5.6.7.8.443: tcp 4\n\t0x0000:  4500 0028  E..(\n' for i in range(3))
+        with unittest.mock.patch.object(server.config, 'MAX_HEXDUMP_PACKETS', 2), \
+                unittest.mock.patch('socrates._run_capped', return_value=(0, out, False)):
+            status, body = self._get('/api/hexdump-stream?' + query)
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(len(data['packets']), 2)
+        self.assertTrue(all(p['lines'] for p in data['packets']))
+        self.assertTrue(data['truncated'])
+
+    def test_unreadable_capture_is_an_error_not_an_empty_stream(self):
+        """tcpdump failing to read the capture at all (no output) is a 500,
+        not an empty transcript or 'No payload found'."""
+        query = self._stream_analysis('c' * 32)
+        with unittest.mock.patch('socrates._run_capped', return_value=(1, b'', False)):
+            for path in ('/api/ascii-stream?', '/api/raw-stream?direction=src&'):
+                status, body = self._get(path + query)
+                self.assertEqual(status, 500, path)
+                self.assertIn("Couldn't read the capture", body)
+
     def test_hexdump_stream_requires_md5(self):
         status, _ = self._get('/api/hexdump-stream?src=1.2.3.4&sport=80&dst=5.6.7.8&dport=443')
         self.assertEqual(status, 400)
@@ -2840,9 +3118,9 @@ bright_magenta = "#D9B9D9"
         self.assertEqual(data.get('phase'), 'files', 'Non-PCAP upload must report files phase')
 
     @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
-    @unittest.mock.patch('socrates.scan_single_file')
-    @unittest.mock.patch('socrates.check_yara_executable')
-    @unittest.mock.patch('socrates.setup_yara_rules')
+    @unittest.mock.patch('yara_analyzer.scan_single_file')
+    @unittest.mock.patch('yara_analyzer.check_yara_executable')
+    @unittest.mock.patch('yara_analyzer.setup_yara_rules')
     def test_upload_non_pcap_creates_file_analysis_db(self, mock_setup, mock_check, mock_scan):
         """Uploading a non-PCAP file creates events.db with fileinfo + filealerts.
 
@@ -2902,9 +3180,9 @@ bright_magenta = "#D9B9D9"
         mock_check.assert_called_once()
         mock_scan.assert_called_once()
 
-    @unittest.mock.patch('socrates.scan_single_file')
-    @unittest.mock.patch('socrates.check_yara_executable')
-    @unittest.mock.patch('socrates.setup_yara_rules')
+    @unittest.mock.patch('yara_analyzer.scan_single_file')
+    @unittest.mock.patch('yara_analyzer.check_yara_executable')
+    @unittest.mock.patch('yara_analyzer.setup_yara_rules')
     def test_upload_zip_with_non_pcap_creates_file_analysis_db(self, mock_setup, mock_check, mock_scan):
         """Uploading a ZIP containing a non-PCAP file creates events.db with correct extracted name."""
         mock_setup.return_value = '/tmp/fake-yara-rules'
@@ -3015,6 +3293,135 @@ bright_magenta = "#D9B9D9"
             meta = json.load(f)
         self.assertEqual(meta['detected_type'], 'binary')
         self.assertEqual(meta['original'], 'test.exe')
+
+    def _wait_ready(self, md5):
+        for _ in range(50):
+            status, body = self._post('/api/check-status', {'md5': md5})
+            if json.loads(body).get('status') == 'ready':
+                return
+            time.sleep(0.2)
+        self.fail(f'analysis {md5} never became ready')
+
+    def test_upload_eml_end_to_end(self):
+        """An .eml upload is analyzed as an email: email/link/fileinfo
+        events, attachments stored where /api/extracted-file (Send to
+        CyberChef) finds them, and Reanalyze rebuilds the same."""
+        from tests import eml_fixtures
+        raw = b'X-Test: upload-eml-end-to-end\n' + eml_fixtures.phishing_message()
+        status, body = self._post_multipart('/api/upload', 'phish.eml', raw)
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['phase'], 'email')
+        md5 = data['md5']
+        self._wait_ready(md5)
+        with open(os.path.join(server.DATA_DIR, md5, '.meta')) as f:
+            self.assertEqual(json.load(f)['detected_type'], 'email')
+
+        def check():
+            counts = json.loads(self._get(f'/api/stats?md5={md5}')[1])['counts']
+            self.assertEqual(counts['email'], 2, 'the message and its forwarded message')
+            self.assertEqual(counts['fileinfo'], 3, 'the message and two attachments')
+            links = json.loads(self._get(f'/api/events?md5={md5}&type=link')[1])
+            self.assertTrue(any(e['link']['mismatch'] for e in links))
+            eicar_sha = hashlib.sha256(eml_fixtures.EICAR).hexdigest()
+            status, body = self._get(f'/api/extracted-file?md5={md5}&sha256={eicar_sha}')
+            self.assertEqual(status, 200)
+            self.assertEqual(body.encode(), eml_fixtures.EICAR)
+
+        check()
+        status, body = self._post('/api/reanalyze', {'md5': md5})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['phase'], 'email')
+        self._wait_ready(md5)
+        check()
+
+    def test_load_sample_email(self):
+        """The built-in Sample email file: generated server-side, analyzed
+        as an email, and the same analysis on a second load."""
+        status, body = self._post('/api/load-sample', {'name': 'email'})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        md5 = data['md5']
+        if data['status'] == 'processing':
+            self.assertEqual(data['phase'], 'email')
+        self._wait_ready(md5)
+        counts = json.loads(self._get(f'/api/stats?md5={md5}')[1])['counts']
+        self.assertEqual(counts['email'], 2)
+        status, body = self._post('/api/load-sample', {'name': 'email'})
+        self.assertEqual(json.loads(body), {'status': 'ready', 'md5': md5})
+
+    def test_load_sample_binary(self):
+        status, body = self._post('/api/load-sample', {'name': 'binary'})
+        self.assertEqual(status, 200)
+        md5 = json.loads(body)['md5']
+        import samples
+        self.assertEqual(md5, hashlib.md5(samples.build_binary_sample()).hexdigest())
+        self._wait_ready(md5)
+        with open(os.path.join(server.DATA_DIR, md5, '.meta')) as f:
+            meta = json.load(f)
+        self.assertEqual((meta['detected_type'], meta['original']), ('binary', 'sample-update.exe'))
+
+    def test_load_sample_pcap(self):
+        status, body = self._post('/api/load-sample', {'name': 'pcap'})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data.get('phase', 'network'), 'network')
+        with open(os.path.join(server.DATA_DIR, data['md5'], '.meta')) as f:
+            meta = json.load(f)
+        self.assertEqual((meta['detected_type'], meta['original']), ('pcap', 'sample-workstation-traffic.pcap'))
+
+    def test_load_sample_log(self):
+        """Analyzed as a log (Sigma via Zircolite, which this test
+        environment may not have - only the routing is checked here)."""
+        status, body = self._post('/api/load-sample', {'name': 'log'})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data.get('phase', 'logs'), 'logs')
+        with open(os.path.join(server.DATA_DIR, data['md5'], '.meta')) as f:
+            meta = json.load(f)
+        self.assertEqual((meta['detected_type'], meta['original']), ('log', 'sample-sysmon-log.json'))
+
+    def test_load_sample_rejects_unknown_names(self):
+        for name in ('nope', '../etc/passwd', None, 7, [], {}):
+            with self.subTest(name=name):
+                status, body = self._post('/api/load-sample', {'name': name})
+                self.assertEqual(status, 400)
+                self.assertEqual(json.loads(body)['error'], 'Unknown sample')
+
+    def test_reanalyze_repairs_an_old_detected_type(self):
+        """REGRESSION (4.4.0 review): reanalyze restored the old .meta's
+        detected_type, so an .eml 4.3.0 had misread as a CSV log stayed a
+        'log' in the UI even after being reanalyzed as an email."""
+        from tests import eml_fixtures
+        raw = b'X-Test: reanalyze-repairs-detected-type\n' + eml_fixtures.plain_message()
+        md5 = json.loads(self._post_multipart('/api/upload', 'old.eml', raw)[1])['md5']
+        self._wait_ready(md5)
+        meta_path = os.path.join(server.DATA_DIR, md5, '.meta')
+        with open(meta_path) as f:
+            meta = json.load(f)
+        meta['detected_type'] = 'log'
+        with open(meta_path, 'w') as f:
+            json.dump(meta, f)
+        status, body = self._post('/api/reanalyze', {'md5': md5})
+        self.assertEqual(json.loads(body)['phase'], 'email')
+        with open(meta_path) as f:
+            self.assertEqual(json.load(f)['detected_type'], 'email')
+        self._wait_ready(md5)
+
+    def test_non_string_md5_is_a_400(self):
+        """REGRESSION (4.4.0 review): a number or list md5 raised out of
+        the handler, dropping the connection with no response."""
+        for md5 in (1, [], {}):
+            with self.subTest(md5=md5):
+                status, body = self._post('/api/reanalyze', {'md5': md5})
+                self.assertEqual(status, 400)
+
+    def test_upload_eml_detected_by_content(self):
+        """No .eml extension needed - a message's header block is enough."""
+        from tests import eml_fixtures
+        raw = b'X-Test: detected-by-content\n' + eml_fixtures.plain_message()
+        status, body = self._post_multipart('/api/upload', 'message.txt', raw)
+        self.assertEqual(json.loads(body)['phase'], 'email')
 
     def test_upload_zip_pcap_writes_meta_with_detected_type(self):
         """ZIP containing PCAP must write .meta with detected_type 'pcap' and extracted filename."""
@@ -3157,9 +3564,9 @@ bright_magenta = "#D9B9D9"
             meta = json.load(f)
         self.assertEqual(meta['detected_type'], 'log')
 
-    @unittest.mock.patch('socrates.is_zircolite_available', return_value=True)
-    @unittest.mock.patch('socrates.run_sigma_pipeline')
-    @unittest.mock.patch('socrates.parse_zircolite_results')
+    @unittest.mock.patch('sigma_analyzer.is_zircolite_available', return_value=True)
+    @unittest.mock.patch('sigma_analyzer.run_sigma_pipeline')
+    @unittest.mock.patch('sigma_analyzer.parse_zircolite_results')
     def test_log_analysis_end_to_end(self, mock_parse, mock_pipeline, mock_avail):
         """Full log analysis pipeline: upload -> mocked Zircolite -> DB -> API queries."""
         # 1. Create a fake Zircolite unified DB with a logs table
@@ -3255,7 +3662,7 @@ bright_magenta = "#D9B9D9"
         self.assertFalse(os.path.exists(os.path.join(dir_path, '.zircolite_events.db')),
                          'Temp Zircolite DB must be deleted after import')
 
-    @unittest.mock.patch('socrates.is_zircolite_available', return_value=False)
+    @unittest.mock.patch('sigma_analyzer.is_zircolite_available', return_value=False)
     def test_analyze_log_file_zircolite_missing_writes_error(self, mock_zircolite):
         """Log analysis with Zircolite unavailable must write .error and create empty DB."""
         json_data = b'{"timestamp":"2024-01-01T00:00:00Z","event_type":"zircolite_missing_test"}'
@@ -3276,31 +3683,31 @@ bright_magenta = "#D9B9D9"
         self.assertIn('unavailable', error_msg.lower())
         self.assertTrue(os.path.exists(db_path), 'events.db must be created even when Zircolite is unavailable')
 
-    @unittest.mock.patch('socrates.setup_yara_rules', return_value='/dummy/rules.yar')
-    @unittest.mock.patch('socrates.check_yara_executable', return_value=True)
-    @unittest.mock.patch('socrates.scan_single_file', side_effect=Exception('YARA fail'))
-    def test_analyze_standalone_file_yara_error_writes_error(self, mock_scan, mock_yara_exec, mock_rules):
-        """Standalone file analysis with YARA failure must write .error and create empty DB."""
+    @unittest.mock.patch('yara_analyzer.setup_yara_rules', return_value='/dummy/rules.yar')
+    @unittest.mock.patch('yara_analyzer.check_yara_executable', return_value=True)
+    @unittest.mock.patch('yara_analyzer.scan_single_file', side_effect=Exception('YARA fail'))
+    def test_analyze_standalone_file_yara_error_warns(self, mock_scan, mock_yara_exec, mock_rules):
+        """Standalone file analysis with YARA failure must warn (not fail the
+        analysis - .error would show "Analysis failed") and create an empty DB."""
         file_data = b'MZ' + b'\x00' * 62 + b'YARA_ERROR_TEST'
         status, body = self._post_multipart('/api/upload', 'test.exe', file_data)
         self.assertEqual(status, 200)
         data = json.loads(body)
         md5 = data['md5']
         dir_path = os.path.join(server.DATA_DIR, md5)
-        error_path = os.path.join(dir_path, '.error')
+        warnings_path = os.path.join(dir_path, '.warnings')
         db_path = os.path.join(dir_path, 'events.db')
         for _ in range(30):
             time.sleep(0.2)
-            if os.path.exists(error_path):
+            if os.path.exists(warnings_path) and not os.path.exists(os.path.join(dir_path, '.phase')):
                 break
-        self.assertTrue(os.path.exists(error_path), '.error must be written when YARA scan fails')
-        with open(error_path, 'r') as f:
-            error_msg = f.read()
-        self.assertIn('YARA scan failed', error_msg)
+        self.assertFalse(os.path.exists(os.path.join(dir_path, '.error')), 'a failed YARA scan must not fail the analysis')
+        with open(warnings_path, 'r') as f:
+            self.assertIn('The YARA scan failed', f.read())
         self.assertTrue(os.path.exists(db_path), 'events.db must be created with empty matches when YARA fails')
 
-    @unittest.mock.patch('socrates.setup_yara_rules', return_value='/dummy/rules.yar')
-    @unittest.mock.patch('socrates.check_yara_executable', return_value=False)
+    @unittest.mock.patch('yara_analyzer.setup_yara_rules', return_value='/dummy/rules.yar')
+    @unittest.mock.patch('yara_analyzer.check_yara_executable', return_value=False)
     def test_analyze_standalone_file_never_allows_network_rule_refresh(self, mock_yara_exec, mock_rules):
         """REGRESSION: analyzing a file must never silently phone home to
         refresh YARA rules as a side effect of just uploading it - that's
@@ -3391,6 +3798,66 @@ bright_magenta = "#D9B9D9"
         self.assertEqual(sorted(results), [200, 409])
         self.assertEqual(len(launches), 1)
         shutil.rmtree(dir_path)
+
+    def test_reanalyze_waits_for_a_merge_in_progress(self):
+        """REGRESSION: reanalyze removed events.db while a tshark merge that
+        had passed its checks was about to write into it - the merge
+        recreated it with tshark's rows alone, and Suricata's import, which
+        skips an events.db that exists, never ran. Reanalyze holds the
+        merge's lock while it removes events.db and starts the new run."""
+        md5 = 'e' * 32
+        dir_path = os.path.join(server.DATA_DIR, md5)
+        os.makedirs(dir_path, exist_ok=True)
+        with open(os.path.join(dir_path, 'capture.pcap'), 'wb') as f:
+            f.write(b'\xd4\xc3\xb2\xa1' + b'\x00' * 20)
+        events_db = os.path.join(dir_path, 'events.db')
+        open(events_db, 'w').close()
+        results = []
+        lock = server.shark_analyzer.merge_lock(dir_path)
+        with lock:   # a merge under way
+            t = threading.Thread(target=lambda: results.append(self._post('/api/reanalyze', {'md5': md5})[0]))
+            t.start()
+            time.sleep(0.4)
+            self.assertTrue(os.path.exists(events_db), 'reanalyze must wait for the merge')
+            self.assertEqual(results, [])
+        t.join(5)
+        self.assertEqual(results, [200])
+        self.assertFalse(os.path.exists(events_db))
+        shutil.rmtree(dir_path)
+
+    def test_delete_refused_while_analyzing(self):
+        """Deleting an analysis still being analyzed is a 409 - its run
+        would go on writing into the folder, or recreate it. A .phase left
+        by a server that died (older than the stale threshold) is no bar."""
+        md5 = 'f' * 32
+        dir_path = os.path.join(server.DATA_DIR, md5)
+        os.makedirs(dir_path, exist_ok=True)
+        phase = os.path.join(dir_path, '.phase')
+        with open(phase, 'w') as f:
+            f.write('logs')
+        status, body = self._post('/api/delete-analysis', {'md5': md5})
+        self.assertEqual(status, 409)
+        self.assertIn('in progress', json.loads(body)['error'])
+        self.assertTrue(os.path.isdir(dir_path))
+        old = time.time() - server.config.STALE_THRESHOLD_SECONDS - 60
+        os.utime(phase, (old, old))
+        status, _ = self._post('/api/delete-analysis', {'md5': md5})
+        self.assertEqual(status, 200)
+        self.assertFalse(os.path.exists(dir_path))
+
+    def test_delete_all_leaves_a_running_analysis(self):
+        running, done = os.path.join(server.DATA_DIR, '1' * 32), os.path.join(server.DATA_DIR, '2' * 32)
+        for d in (running, done):
+            os.makedirs(d, exist_ok=True)
+        with open(os.path.join(running, '.phase'), 'w') as f:
+            f.write('network')
+        status, body = self._post('/api/delete-all-analyses', {})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertGreaterEqual(data.get('skipped', 0), 1)
+        self.assertTrue(os.path.isdir(running))
+        self.assertFalse(os.path.exists(done))
+        shutil.rmtree(running)
 
     def test_reanalyze_detects_log_by_content(self):
         """REGRESSION: reanalyze chose log vs binary by extension only, so a
@@ -4513,7 +4980,7 @@ bright_magenta = "#D9B9D9"
         SyncThread makes the spawned thread run inline, so by the time the
         POST response is sent the (mocked, instant) job has already
         finished - no polling needed here."""
-        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None, custom_rules_enabled=None):
             on_progress('suricata rules updated (fake)')
         mock_suricata.side_effect = fake_suricata
 
@@ -4565,7 +5032,7 @@ bright_magenta = "#D9B9D9"
         """POST /api/update-rules with ruleset='all' must trigger all three
         rulesets (spawned as separate threads - SyncThread just makes each
         one run inline here for a deterministic assertion)."""
-        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None, custom_rules_enabled=None):
             on_progress('suricata done (fake)')
         def fake_yara(data_dir, on_progress=print, network_allowed=True, force=False):
             on_progress('yara done (fake)')
@@ -4636,7 +5103,7 @@ bright_magenta = "#D9B9D9"
         setup_suricata_config() as its own kwarg - the only way this
         setting actually takes effect (see the disable.conf --disable-conf
         wiring in _fetch_single_source)."""
-        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None, custom_rules_enabled=None):
             on_progress('suricata rules updated (fake)')
         mock_suricata.side_effect = fake_suricata
 
@@ -4651,7 +5118,7 @@ bright_magenta = "#D9B9D9"
         """Omitting 'showProtocolDecodeAlerts' entirely must reach
         setup_suricata_config() as show_protocol_decode_alerts=None, so the
         previously persisted setting is left untouched rather than reset."""
-        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None, custom_rules_enabled=None):
             on_progress('suricata rules updated (fake)')
         mock_suricata.side_effect = fake_suricata
 
@@ -4666,14 +5133,14 @@ bright_magenta = "#D9B9D9"
         """A valid 'sources' list must reach setup_suricata_config() as its
         enabled_sources kwarg - the only way source selection actually
         takes effect."""
-        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None, custom_rules_enabled=None):
             on_progress('suricata rules updated (fake)')
         mock_suricata.side_effect = fake_suricata
 
-        status, body = self._post('/api/update-rules', {'ruleset': 'suricata', 'sources': ['et/open', 'abuse.ch/urlhaus']})
+        status, body = self._post('/api/update-rules', {'ruleset': 'suricata', 'sources': ['et/open', 'abuse.ch/feodotracker']})
         self.assertEqual(status, 200)
         mock_suricata.assert_called_once()
-        self.assertEqual(mock_suricata.call_args.kwargs.get('enabled_sources'), ['et/open', 'abuse.ch/urlhaus'])
+        self.assertEqual(mock_suricata.call_args.kwargs.get('enabled_sources'), ['et/open', 'abuse.ch/feodotracker'])
 
     @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
     @unittest.mock.patch('socrates.setup_suricata_config')
@@ -4682,7 +5149,7 @@ bright_magenta = "#D9B9D9"
         interaction) must reach setup_suricata_config() as
         enabled_sources=None, so reconciliation is skipped and behavior is
         unchanged from before this feature existed."""
-        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+        def fake_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None, custom_rules_enabled=None):
             on_progress('suricata rules updated (fake)')
         mock_suricata.side_effect = fake_suricata
 
@@ -4699,7 +5166,7 @@ bright_magenta = "#D9B9D9"
         release = threading.Event()
         entered = threading.Event()
 
-        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None, custom_rules_enabled=None):
             entered.set()
             release.wait(timeout=5)
 
@@ -4729,7 +5196,7 @@ bright_magenta = "#D9B9D9"
         release = threading.Event()
         entered = threading.Event()
 
-        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None, custom_rules_enabled=None):
             entered.set()
             release.wait(timeout=5)
 
@@ -4770,7 +5237,7 @@ bright_magenta = "#D9B9D9"
         release = threading.Event()
         entered = threading.Event()
 
-        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None):
+        def blocking_suricata(data_dir, enable_arp=False, on_progress=print, network_allowed=True, enabled_sources=None, show_protocol_decode_alerts=None, custom_rules_enabled=None):
             entered.set()
             release.wait(timeout=5)
 
@@ -4793,7 +5260,7 @@ bright_magenta = "#D9B9D9"
 
     _FAKE_SUPPORT = {
         'supported': True, 'reason': None,
-        'interfaces': [{'name': 'en0', 'address': '10.0.0.5'},
+        'interfaces': [{'name': 'en0', 'address': '192.0.2.5'},
                        {'name': 'en1', 'address': None}],
         'default_interface': 'en0', 'max_duration': 3600,
         'default_duration': 60, 'host_label': 'this Mac',
@@ -5016,6 +5483,213 @@ bright_magenta = "#D9B9D9"
         # would have silently swallowed every curated range above it.
         urlhaus = next(r for r in ranges if r['label'] == 'Abuse.ch URLhaus')
         self.assertIsNotNone(urlhaus['max'])
+        local = next(r for r in ranges if r['label'] == 'Local / Custom Rules')
+        self.assertEqual((local['min'], local['max']), (1000000, 1999999))
+        # Ahead of every curated source, like classify_alert_ruleset()
+        self.assertLess(labels.index('Local / Custom Rules'), labels.index('Emerging Threats Open'))
+
+    # ---- Custom Suricata rules ----
+
+    CUSTOM_RULE = 'alert http any any -> any any (msg:"Lab beacon"; http.uri; content:"/gate.php"; sid:1000001; rev:1;)'
+
+    def _custom_rules_paths(self):
+        return (os.path.join(self.tmpdir, 'suricata', 'custom.rules'),
+                os.path.join(self.tmpdir, 'suricata', 'rules', 'custom.rules'))
+
+    def tearDown(self):
+        for path in (*self._custom_rules_paths(), os.path.join(self.tmpdir, 'suricata', 'etpro.code')):
+            if os.path.exists(path):
+                os.remove(path)
+
+    def test_custom_rules_none_saved(self):
+        status, body = self._get('/api/custom-rules')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertEqual(result['rules'], '')
+        self.assertIsNone(result['count'])
+        self.assertFalse(result['enabled'])
+        self.assertTrue(result['allowed'])
+        self.assertEqual(result['sidRange'], {'min': 1000000, 'max': 1999999})
+
+    @unittest.mock.patch('suricata_analyzer.check_rules_with_suricata', return_value=[])
+    def test_custom_rules_save_turns_them_on(self, _mock_check):
+        status, body = self._post('/api/custom-rules', {'rules': f'# lab 7\n{self.CUSTOM_RULE}'})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {'saved': True, 'count': 1})
+        saved, active = self._custom_rules_paths()
+        for path in (saved, active):
+            with open(path) as f:
+                self.assertEqual(f.read(), f'# lab 7\n{self.CUSTOM_RULE}\n')
+        result = json.loads(self._get('/api/custom-rules')[1])
+        self.assertEqual((result['count'], result['enabled']), (1, True))
+        self.assertIn(self.CUSTOM_RULE, result['rules'])
+        # rules-info carries the summary but never the text - it's polled
+        # every 2 seconds
+        info = json.loads(self._get('/api/rules-info')[1])['suricata']['custom']
+        self.assertEqual((info['count'], info['enabled'], info['allowed']), (1, True, True))
+        self.assertNotIn('rules', info)
+
+    @unittest.mock.patch('suricata_analyzer.check_rules_with_suricata', return_value=[])
+    def test_custom_rules_problems_save_nothing(self, mock_check):
+        saved, active = self._custom_rules_paths()
+        self._post('/api/custom-rules', {'rules': self.CUSTOM_RULE})
+        status, body = self._post('/api/custom-rules', {
+            'rules': 'alert tcp any any -> any any (msg:"et"; sid:2014726; rev:1;)\n'
+                     'alert ip any any -> any any (msg:"x"; dataset:isset,a,type string,load /etc/passwd; sid:1000002;)'})
+        self.assertEqual(status, 400)
+        result = json.loads(body)
+        self.assertEqual([p['line'] for p in result['problems']], [1, 2])
+        self.assertIn('outside 1000000-1999999', result['problems'][0]['message'])
+        self.assertIn('dataset is not allowed', result['problems'][1]['message'])
+        # Suricata is only asked once the cheaper checks pass, and the last
+        # good save is untouched
+        self.assertEqual(mock_check.call_count, 1)
+        with open(active) as f:
+            self.assertIn('sid:1000001', f.read())
+
+    def test_custom_rules_suricata_problems_have_no_paths(self):
+        problem = {'line': 1, 'message': f"unknown rule keyword 'foo' in {self.tmpdir}/suricata/suricata.yaml"}
+        with unittest.mock.patch('suricata_analyzer.check_rules_with_suricata', return_value=[problem]):
+            status, body = self._post('/api/custom-rules', {'rules': self.CUSTOM_RULE})
+        self.assertEqual(status, 400)
+        message = json.loads(body)['problems'][0]['message']
+        self.assertNotIn(self.tmpdir, message)
+        self.assertIn("unknown rule keyword 'foo'", message)
+        self.assertFalse(os.path.exists(self._custom_rules_paths()[1]))
+
+    @unittest.mock.patch('suricata_analyzer.check_rules_with_suricata', return_value=[])
+    def test_custom_rules_empty_text_removes_them(self, _mock_check):
+        self._post('/api/custom-rules', {'rules': self.CUSTOM_RULE})
+        status, body = self._post('/api/custom-rules', {'rules': '  \n'})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['count'], 0)
+        self.assertFalse(any(os.path.exists(p) for p in self._custom_rules_paths()))
+
+    def test_custom_rules_refused_when_not_allowed(self):
+        with unittest.mock.patch.object(server.Handler, 'ALLOW_CUSTOM_RULES', False):
+            status, body = self._post('/api/custom-rules', {'rules': self.CUSTOM_RULE})
+            self.assertEqual(status, 403)
+            self.assertIn('ALLOW_CUSTOM_RULES', json.loads(body)['error'])
+            self.assertFalse(json.loads(self._get('/api/custom-rules')[1])['allowed'])
+            self.assertFalse(json.loads(self._get('/api/rules-info')[1])['suricata']['custom']['allowed'])
+        self.assertFalse(os.path.exists(self._custom_rules_paths()[0]))
+
+    def test_custom_rules_needs_json_and_a_string(self):
+        status, _ = self._post('/api/custom-rules', self.CUSTOM_RULE.encode(), content_type='text/plain')
+        self.assertEqual(status, 415)
+        status, _ = self._post('/api/custom-rules', {'rules': 12345})
+        self.assertEqual(status, 400)
+
+    @unittest.mock.patch('socrates.threading.Thread', new=SyncThread)
+    @unittest.mock.patch('socrates.setup_suricata_config')
+    def test_update_rules_custom_source_turns_custom_rules_on_or_off(self, mock_suricata):
+        """'custom' in sources is the custom rules' switch, not a
+        suricata-update source: it becomes custom_rules_enabled, and is
+        left out of enabled_sources."""
+        status, _ = self._post('/api/update-rules', {'ruleset': 'suricata', 'sources': ['et/open', 'custom']})
+        self.assertEqual(status, 200)
+        self.assertEqual(mock_suricata.call_args.kwargs['enabled_sources'], ['et/open'])
+        self.assertIs(mock_suricata.call_args.kwargs['custom_rules_enabled'], True)
+        self._post('/api/update-rules', {'ruleset': 'suricata', 'sources': ['et/open']})
+        self.assertIs(mock_suricata.call_args.kwargs['custom_rules_enabled'], False)
+        self._post('/api/update-rules', {'ruleset': 'suricata'})
+        self.assertIsNone(mock_suricata.call_args.kwargs['custom_rules_enabled'])
+
+    # ---- ET Pro access code ----
+
+    ETPRO_CODE = 'abcdef0123456789'
+
+    def test_etpro_code_saved_and_never_sent_back(self):
+        info = json.loads(self._get('/api/rules-info')[1])['suricata']
+        self.assertEqual(info['etpro'], {'codeSet': False, 'codeHint': None})
+        self.assertIn('et/pro', info['availableSources'])
+        self.assertFalse(info['availableSources']['et/pro']['bakedIn'])
+        status, body = self._post('/api/etpro-code', {'code': f'  {self.ETPRO_CODE} '})
+        self.assertEqual(status, 200)
+        self.assertNotIn(self.ETPRO_CODE, body)
+        self.assertEqual(json.loads(body)['codeHint'], '6789')
+        rules_info = self._get('/api/rules-info')[1]
+        self.assertNotIn(self.ETPRO_CODE, rules_info)
+        self.assertEqual(json.loads(rules_info)['suricata']['etpro'], {'codeSet': True, 'codeHint': '6789'})
+        with open(os.path.join(self.tmpdir, 'suricata', 'etpro.code')) as f:
+            self.assertEqual(f.read().strip(), self.ETPRO_CODE)
+
+    def test_etpro_code_empty_removes_it(self):
+        self._post('/api/etpro-code', {'code': self.ETPRO_CODE})
+        status, body = self._post('/api/etpro-code', {'code': ''})
+        self.assertEqual(status, 200)
+        self.assertFalse(json.loads(body)['codeSet'])
+        self.assertFalse(os.path.exists(os.path.join(self.tmpdir, 'suricata', 'etpro.code')))
+
+    def test_etpro_code_must_be_letters_and_digits(self):
+        for bad in ({'code': '../../x?y=1'}, {'code': 'short'}, {'code': 12345678}, {}):
+            status, _ = self._post('/api/etpro-code', bad)
+            self.assertEqual(status, 400, bad)
+        self.assertFalse(os.path.exists(os.path.join(self.tmpdir, 'suricata', 'etpro.code')))
+
+    def test_etpro_code_waits_for_a_running_suricata_update(self):
+        with server._rule_update_lock:
+            previous = server._rule_update_state['suricata']
+            server._rule_update_state['suricata'] = {'running': True, 'lines': [], 'done': False, 'error': None}
+        try:
+            status, _ = self._post('/api/etpro-code', {'code': self.ETPRO_CODE})
+        finally:
+            with server._rule_update_lock:
+                server._rule_update_state['suricata'] = previous
+        self.assertEqual(status, 409)
+        self.assertFalse(os.path.exists(os.path.join(self.tmpdir, 'suricata', 'etpro.code')))
+
+    def test_rules_info_labels_et_pro_sids(self):
+        ranges = json.loads(self._get('/api/rules-info')[1])['suricata']['sidRanges']
+        self.assertIn({'min': 2800000, 'max': 2899999, 'label': 'Emerging Threats Pro'}, ranges)
+
+
+@unittest.skipUnless(shutil.which('suricata') and os.path.isdir('/etc/suricata'), 'needs Suricata installed')
+class TestCustomRulesEndToEnd(unittest.TestCase):
+    """A saved custom rule fires in a real analysis of the built-in sample
+    capture, labeled 'Local / Custom Rules' (its sid is inside the old
+    built-in range, so this also proves the local range wins), and stops
+    once the rules are turned off."""
+
+    RULE = ('alert http any any -> any any (msg:"Lab update.bin download"; '
+            'flow:established,to_server; http.uri; content:"/update.bin"; sid:1000100; rev:1;)')
+
+    def setUp(self):
+        self.data_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.data_dir, ignore_errors=True)
+        suricata_analyzer.setup_suricata_config(self.data_dir, on_progress=lambda m: None, network_allowed=False)
+
+    def _analyze(self):
+        from samples import SAMPLES
+        analysis_dir = tempfile.mkdtemp(dir=self.data_dir)
+        pcap = os.path.join(analysis_dir, 'sample.pcap')
+        with open(pcap, 'wb') as f:
+            f.write(SAMPLES['pcap'][1]())
+        with unittest.mock.patch('shark_analyzer.enabled', return_value=False):
+            self.assertTrue(suricata_analyzer.spawn_suricata(analysis_dir, pcap, data_dir=self.data_dir))
+        deadline = time.time() + 120
+        while os.path.exists(os.path.join(analysis_dir, '.phase')) and time.time() < deadline:
+            time.sleep(0.2)
+        self.assertFalse(os.path.exists(os.path.join(analysis_dir, '.error')))
+        return db.get_aggregation_data_sqlite(os.path.join(analysis_dir, 'events.db'), 'alert')
+
+    def test_custom_rule_fires_and_is_labeled_local(self):
+        count, problems = suricata_analyzer.save_custom_rules(self.RULE, self.data_dir)
+        self.assertEqual((count, problems), (1, []))
+        aggregation = self._analyze()
+        self.assertIn({'value': 'Lab update.bin download', 'count': 1}, aggregation['Alert'])
+        self.assertIn({'value': 'Local / Custom Rules', 'count': 1}, aggregation['Ruleset'])
+
+        suricata_analyzer.setup_suricata_config(self.data_dir, on_progress=lambda m: None,
+                                                network_allowed=False, custom_rules_enabled=False)
+        aggregation = self._analyze()
+        self.assertNotIn('Lab update.bin download', [row['value'] for row in aggregation.get('Alert', [])])
+
+    def test_bad_rule_is_refused_with_its_line(self):
+        count, problems = suricata_analyzer.save_custom_rules(
+            f'{self.RULE}\n\nalert tcp any any -> any any (msg:"x"; foo:bar; sid:1000101; rev:1;)', self.data_dir)
+        self.assertEqual(problems, [{'line': 3, 'message': "unknown rule keyword 'foo'"}])
+        self.assertIsNone(suricata_analyzer.get_custom_rules(self.data_dir)['count'])
 
 
 class TestGetSuricataRulesInfoStaleness(unittest.TestCase):
@@ -5100,6 +5774,32 @@ class TestSpawnSuricataErrorHandling(unittest.TestCase):
             self.assertEqual(mock_proc.wait.call_count, 2,
                              'proc.wait() must be called again after kill() to reap the process, not just once before the timeout')
 
+    def test_suricata_writing_no_results_is_an_error_not_processing_forever(self):
+        """REGRESSION: Suricata exiting without an eve.json (a bad config
+        or rule file, a pcap it rejects, killed) left no events.db, no
+        .phase and no .error - an analysis reported as processing forever."""
+        import unittest.mock
+        import time
+        from suricata_analyzer import spawn_suricata
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcap_path = os.path.join(tmpdir, 'test.pcap')
+            with open(pcap_path, 'wb') as f:
+                f.write(b'\xd4\xc3\xb2\xa1' + b'\x00' * 100)
+            mock_proc = unittest.mock.MagicMock()
+            mock_proc.wait.return_value = None
+            mock_proc.returncode = 1
+            with unittest.mock.patch('subprocess.Popen', return_value=mock_proc), \
+                    unittest.mock.patch('suricata_analyzer.run_yara_pipeline'):
+                self.assertTrue(spawn_suricata(tmpdir, pcap_path))
+                error_file = os.path.join(tmpdir, '.error')
+                for _ in range(50):
+                    if os.path.exists(error_file) and not os.path.exists(os.path.join(tmpdir, '.phase')):
+                        break
+                    time.sleep(0.1)
+            with open(error_file) as f:
+                self.assertEqual(f.read(), 'Suricata wrote no results (exit code 1)')
+            self.assertFalse(os.path.exists(os.path.join(tmpdir, '.phase')))
+
     def test_watchdog_clears_phase_on_unexpected_non_timeout_exception(self):
         """REGRESSION: _suricata_watchdog only caught subprocess.TimeoutExpired
         around proc.wait() - any other exception occurring anywhere in the
@@ -5147,6 +5847,90 @@ class TestSpawnSuricataErrorHandling(unittest.TestCase):
                             '.error must be written on an unexpected watchdog failure, not just a subprocess.TimeoutExpired')
             self.assertFalse(os.path.exists(os.path.join(tmpdir, '.phase')),
                              '.phase must be cleared even when the failure is not a subprocess.TimeoutExpired, or the analysis is stuck forever')
+
+
+
+class TestEveJsonRemovedOnceImported(unittest.TestCase):
+    """eve.json is removed once events.db has imported it - events.db keeps
+    every event in full and nothing reads eve.json again, so it only
+    doubled an analysis's size. A failed import keeps it."""
+
+    EVENT = {'timestamp': '2026-10-11T10:00:00.000000+0000', 'event_type': 'dns',
+             'src_ip': '10.0.0.1', 'src_port': 5353, 'dest_ip': '10.0.0.2', 'dest_port': 53, 'proto': 'UDP',
+             'dns': {'type': 'query', 'rrname': 'example.com'}}
+
+    def _run(self, tmpdir, **patches):
+        import unittest.mock
+        import time
+        import suricata_analyzer
+        pcap_path = os.path.join(tmpdir, 'test.pcap')
+        with open(pcap_path, 'wb') as f:
+            f.write(b'\xd4\xc3\xb2\xa1' + b'\x00' * 100)
+        with open(os.path.join(tmpdir, 'eve.json'), 'w') as f:
+            f.write(json.dumps(self.EVENT) + '\n')
+        mock_proc = unittest.mock.MagicMock()
+        mock_proc.wait.return_value = None
+        with unittest.mock.patch('subprocess.Popen', return_value=mock_proc), \
+             unittest.mock.patch('suricata_analyzer.run_yara_pipeline'), \
+             unittest.mock.patch('suricata_analyzer.shark_analyzer') as shark, \
+             unittest.mock.patch.multiple('suricata_analyzer', **(patches or {'create_sqlite_db': db.create_sqlite_db})):
+            shark.enabled.return_value = False
+            self.assertTrue(suricata_analyzer.spawn_suricata(tmpdir, pcap_path, data_dir=tmpdir))
+            for _ in range(100):
+                if not os.path.exists(os.path.join(tmpdir, '.phase')):
+                    break
+                time.sleep(0.05)
+        self.assertFalse(os.path.exists(os.path.join(tmpdir, '.phase')))
+
+    def test_removed_after_import(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(tmpdir)
+            self.assertFalse(os.path.exists(os.path.join(tmpdir, 'eve.json')))
+            conn = sqlite3.connect(os.path.join(tmpdir, 'events.db'))
+            try:
+                rows = [json.loads(r[0]) for r in conn.execute('SELECT json_data FROM events')]
+            finally:
+                conn.close()
+            self.assertEqual(rows, [self.EVENT], 'events.db must keep the event in full')
+
+    def test_kept_when_the_import_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(tmpdir, create_sqlite_db=unittest.mock.Mock(side_effect=RuntimeError('disk full')))
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, 'eve.json')))
+            with open(os.path.join(tmpdir, '.error')) as f:
+                self.assertIn('Database creation failed', f.read())
+
+    def _analysis(self, data_dir, name, *files):
+        dir_path = os.path.join(data_dir, name)
+        os.makedirs(dir_path)
+        for f in ('eve.json',) + files:
+            with open(os.path.join(dir_path, f), 'w') as fh:
+                fh.write('x' * 10)
+        return dir_path
+
+    def test_startup_removes_it_from_finished_analyses_only(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            done = self._analysis(data_dir, 'a' * 32, 'events.db')
+            running = self._analysis(data_dir, 'b' * 32, 'events.db', '.phase')
+            failed = self._analysis(data_dir, 'c' * 32, 'events.db', '.error')
+            unimported = self._analysis(data_dir, 'd' * 32)
+            self.assertEqual(storage.remove_imported_eve_files(data_dir), 10)
+            self.assertFalse(os.path.exists(os.path.join(done, 'eve.json')))
+            for dir_path in (running, failed, unimported):
+                self.assertTrue(os.path.exists(os.path.join(dir_path, 'eve.json')), dir_path)
+
+    def test_main_runs_the_startup_cleanup_before_serving(self):
+        with open(SERVER_FILE, 'r') as f:
+            main_section = f.read().split('\ndef main():')[1]
+        self.assertLess(main_section.index('remove_imported_eve_files(DATA_DIR)'), main_section.index('serve_forever()'))
+
+    def test_a_zip_pcap_already_imported_is_a_duplicate(self):
+        """Duplicate detection for a ZIP's pcaps can't rely on eve.json,
+        which a finished analysis no longer has."""
+        with open(SERVER_FILE, 'r') as f:
+            content = f.read()
+        section = content.split('def _commit_and_spawn_pcap_analysis(')[1].split('\n    def ')[0]
+        self.assertIn("('eve.json', 'events.db')", section)
 
 
 class TestServerBinding(unittest.TestCase):
@@ -5301,15 +6085,16 @@ class TestSubprocessTimeouts(unittest.TestCase):
     def test_tshark_has_timeout(self):
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
-        # _extract_payload_lines helper contains the tshark call
-        helper_section = content.split("def _extract_payload_lines(self, pcap, src, sport, dst, dport, proto):")[1].split("def handle_get_hexdump_stream(self, params):")[0]
-        tshark_match = re.search(r"\['tshark', '-r', pcap.*?timeout=", helper_section, re.DOTALL)
-        self.assertIsNotNone(tshark_match, '_extract_payload_lines must call tshark with timeout')
-        self.assertIn('STREAM_TIMEOUT_SECONDS', helper_section, 'tshark timeout must use centralized constant')
-        # The helper should be called twice (TCP then UDP fallback) from handle_get_ascii_stream
-        ascii_section = content.split("def handle_get_ascii_stream(self, params):")[1].split("def _extract_payload_lines(self, pcap, src, sport, dst, dport, proto):")[0]
-        calls_in_ascii = ascii_section.count('self._extract_payload_lines(')
-        self.assertGreaterEqual(calls_in_ascii, 2, '_extract_payload_lines must be called at least twice from ascii_stream')
+        # The transcript's tshark run (stream_payload.transcript_lines) takes
+        # its timeout from the handler - TCP, then UDP as a fallback
+        ascii_section = content.split("def handle_get_ascii_stream(self, params):")[1].split("def handle_get_hexdump_stream(self, params):")[0]
+        calls = re.findall(r"transcript_lines\(_reader_of\(flow_pcap\),.*?\)", ascii_section, re.DOTALL)
+        self.assertEqual(len(calls), 2, 'transcript_lines must be tried for TCP, then UDP')
+        for call in calls:
+            self.assertIn('config.STREAM_TIMEOUT_SECONDS', call, 'tshark timeout must use centralized constant')
+        import stream_payload
+        source = inspect.getsource(stream_payload.transcript_lines)
+        self.assertIn('timeout=timeout', source)
 
     def test_timeout_expired_handled(self):
         with open(SERVER_FILE, 'r') as f:
@@ -5367,17 +6152,24 @@ class TestSuricataProcessingLock(unittest.TestCase):
         self.assertIn("def _clear_error(dir_path):", content,
                       '_clear_error helper must exist in suricata module')
 
-    def test_error_set_on_yara_failure(self):
+    def test_warning_not_error_on_yara_failure(self):
+        """A failed YARA scan of extracted files (or tshark merge) doesn't
+        fail the analysis - it's a warning, while .error would show it as
+        "Analysis failed" with its results still to come."""
         with open(SURICATA_FILE, 'r') as f:
             content = f.read()
-        on_done = content.split("def on_suricata_done():")[1].split("\n    try:")[0]
-        self.assertIn("_set_error", on_done,
-                      'YARA failure must write error file')
+        on_done = content.split("def on_suricata_done(returncode=0):")[1].split("\n    try:")[0]
+        yara = on_done.split("run_yara_pipeline(")[1].split("_set_phase(dir_path, 'importing')")[0]
+        self.assertIn("add_analysis_warning(", yara)
+        self.assertNotIn("_set_error", yara)
+        merge = on_done.split("shark_analyzer.merge(dir_path)")[1]
+        self.assertIn("add_analysis_warning(", merge)
+        self.assertNotIn("_set_error", merge)
 
     def test_error_set_on_db_failure(self):
         with open(SURICATA_FILE, 'r') as f:
             content = f.read()
-        on_done = content.split("def on_suricata_done():")[1].split("\n    try:")[0]
+        on_done = content.split("def on_suricata_done(returncode=0):")[1].split("\n    try:")[0]
         self.assertIn("create_sqlite_db", on_done,
                       'DB creation must be in callback')
         self.assertIn("_set_error", on_done,
@@ -5390,36 +6182,53 @@ class TestSuricataProcessingLock(unittest.TestCase):
         self.assertIn("_set_error", spawn_section,
                       'Spawn failure must write error file')
 
+    def _status(self, setup, age=0):
+        """_build_status_response on a fresh analysis dir after setup(dir),
+        with every file in it made age seconds old."""
+        d = tempfile.mkdtemp()
+        try:
+            setup(d)
+            then = time.time() - age
+            for f in os.listdir(d):
+                os.utime(os.path.join(d, f), (then, then))
+            handler = server.Handler.__new__(server.Handler)
+            return handler._build_status_response(d), sorted(os.listdir(d))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_stale_phase_handled_in_check_status(self):
-        with open(SERVER_FILE, 'r') as f:
-            content = f.read()
-        status_helper = content.split("def _build_status_response(self, dir_path):")[1].split("def handle_get_status(self, params):")[0]
-        self.assertIn("lock_age", status_helper)
-        self.assertIn("STALE_THRESHOLD_SECONDS", status_helper)
-        self.assertIn("response['phase'] = phase", status_helper)
+        def setup(d):
+            open(os.path.join(d, 'events.db'), 'w').close()
+            with open(os.path.join(d, '.phase'), 'w') as f:
+                f.write('importing')
+        status, _ = self._status(setup)
+        self.assertEqual((status['status'], status['phase']), ('processing', 'importing'))
+        status, files = self._status(setup, age=server.config.STALE_THRESHOLD_SECONDS + 60)
+        self.assertEqual(status['status'], 'ready', 'a .phase left by a server that died must not hold it forever')
+        self.assertNotIn('.phase', files)
 
     def test_stale_error_handled_in_check_status(self):
-        with open(SERVER_FILE, 'r') as f:
-            content = f.read()
-        status_helper = content.split("def _build_status_response(self, dir_path):")[1].split("def handle_get_status(self, params):")[0]
-        self.assertIn("error_age", status_helper)
-        self.assertIn("'status': 'error'", status_helper)
-        self.assertIn("'message': error_msg", status_helper)
+        def setup(d):
+            with open(os.path.join(d, '.error'), 'w') as f:
+                f.write('Suricata failed: boom')
+        status, _ = self._status(setup)
+        self.assertEqual(status, {'status': 'error', 'message': 'Suricata failed: boom'})
+        status, files = self._status(setup, age=server.config.STALE_THRESHOLD_SECONDS + 60)
+        self.assertEqual(status['status'], 'processing')
+        self.assertNotIn('.error', files)
 
 
 class TestNameTxtPathSafety(unittest.TestCase):
     def _display_name_helper_section(self, content):
         """Both /api/analyses and /api/load-analysis resolve display names via
-        the shared _resolve_display_name helper, which must validate name.txt."""
-        self.assertIn("def _resolve_display_name(self, dir_path, md5):", content,
-                      'display name resolution must be shared via _resolve_display_name')
-        return content.split("def _resolve_display_name(self, dir_path, md5):")[1].split("def _validate_stream_params(self, params):")[0]
+        the shared storage.resolve_display_name, which must validate name.txt."""
+        return inspect.getsource(storage.resolve_display_name)
 
     def test_analyses_checks_name_txt_safety(self):
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
         analyses_section = content.split("def handle_get_analyses(self, params):")[1].split("def handle_get_load_analysis(self, params):")[0]
-        self.assertIn("self._resolve_display_name(dir_path, md5_dir)", analyses_section,
+        self.assertIn("resolve_display_name(dir_path, md5_dir)", analyses_section,
                       '/api/analyses must resolve display names via the shared helper')
         helper_section = self._display_name_helper_section(content)
         self.assertIn("is_safe_path(dir_path, name_path)", helper_section,
@@ -5429,7 +6238,7 @@ class TestNameTxtPathSafety(unittest.TestCase):
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
         load_section = content.split("def handle_get_load_analysis(self, params):")[1].split("def handle_post_delete_analysis(self):")[0]
-        self.assertIn("self._resolve_display_name(dir_path, md5)", load_section,
+        self.assertIn("resolve_display_name(dir_path, md5)", load_section,
                       '/api/load-analysis must resolve display names via the shared helper')
         helper_section = self._display_name_helper_section(content)
         self.assertIn("is_safe_path(dir_path, name_path)", helper_section,
@@ -5538,19 +6347,19 @@ class TestReanalyzeEndpoint(unittest.TestCase):
         with open(STORAGE_FILE, 'r') as f:
             storage_content = f.read()
         # Artifact lists are centralized in storage.py's module-level constants
-        self.assertIn("PCAP_ANALYSIS_ARTIFACTS = ('eve.json', 'events.db', '.phase', '.error', 'yara_matches.json', 'sigma_matches.json', '.meta', 'file_metadata.json', 'fast.log', 'stats.log', 'suricata.log')", storage_content,
+        self.assertIn("PCAP_ANALYSIS_ARTIFACTS = ('eve.json', 'events.db', 'events.db-wal', 'events.db-shm', '.phase', '.error', '.warnings', 'yara_matches.json', 'sigma_matches.json', '.meta', 'file_metadata.json', 'fast.log', 'stats.log', 'suricata.log',", storage_content,
                       'PCAP artifact list must be centralized in PCAP_ANALYSIS_ARTIFACTS')
         reanalyze_section = content.split("def handle_post_reanalyze(self):")[1]
-        # The actual per-artifact loop lives in the shared _remove_artifacts
-        # helper now (both the pcap and non-pcap branches used to each
-        # inline an identical copy of it) - reanalyze itself just calls it.
-        self.assertIn("self._remove_artifacts(dir_path, PCAP_ANALYSIS_ARTIFACTS)", reanalyze_section,
-                      'reanalyze must delete PCAP_ANALYSIS_ARTIFACTS via _remove_artifacts')
-        remove_artifacts_section = content.split("def _remove_artifacts(self, dir_path, artifacts):")[1].split("\n    def ")[0]
+        # The actual per-artifact loop lives in storage.remove_artifacts
+        # (both the pcap and non-pcap branches used to each inline an
+        # identical copy of it) - reanalyze itself just calls it.
+        self.assertIn("remove_artifacts(dir_path, PCAP_ANALYSIS_ARTIFACTS)", reanalyze_section,
+                      'reanalyze must delete PCAP_ANALYSIS_ARTIFACTS via remove_artifacts')
+        remove_artifacts_section = inspect.getsource(storage.remove_artifacts)
         self.assertIn('for artifact in artifacts:', remove_artifacts_section,
-                      '_remove_artifacts must loop over the given artifact list')
+                      'remove_artifacts must loop over the given artifact list')
         self.assertIn('os.unlink(artifact_path)', remove_artifacts_section,
-                      '_remove_artifacts must unlink artifact files')
+                      'remove_artifacts must unlink artifact files')
 
     def test_reanalyze_evicts_sankey_and_aggregation_cache(self):
         """Reanalyze deletes and rebuilds events.db, so any cached Sankey/
@@ -5561,7 +6370,7 @@ class TestReanalyzeEndpoint(unittest.TestCase):
         reanalyze_section = content.split("def handle_post_reanalyze(self):")[1]
         # Must evict before the artifact-deletion call, not after.
         evict_pos = reanalyze_section.find('evict_analysis_cache(md5)')
-        removal_pos = reanalyze_section.find('self._remove_artifacts(dir_path, PCAP_ANALYSIS_ARTIFACTS)')
+        removal_pos = reanalyze_section.find('remove_artifacts(dir_path, PCAP_ANALYSIS_ARTIFACTS)')
         self.assertNotEqual(evict_pos, -1, 'reanalyze must call evict_analysis_cache(md5)')
         self.assertLess(evict_pos, removal_pos,
                          'cache eviction must happen before events.db is deleted/rebuilt')
@@ -5570,7 +6379,7 @@ class TestReanalyzeEndpoint(unittest.TestCase):
         """Verify reanalyze does NOT delete pcap files or name.txt."""
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
-        # name.txt must not appear in either artifact tuple _remove_artifacts
+        # name.txt must not appear in either artifact tuple remove_artifacts
         # is ever called with from handle_post_reanalyze, and reanalyze must
         # never rmtree the whole analysis directory (only the filestore
         # subdirectory is allowed to be rmtree'd).
@@ -5593,27 +6402,30 @@ class TestReanalyzeEndpoint(unittest.TestCase):
         reanalyze_section = content.split("def handle_post_reanalyze(self):")[1]
         self.assertIn('non_pcap_files', reanalyze_section,
                       'reanalyze must look for non-PCAP files')
-        self.assertIn("self._analyze_standalone_file", reanalyze_section,
-                      'reanalyze must support standalone file re-analysis')
-        self.assertIn("self._analyze_log_file", reanalyze_section,
-                      'reanalyze must support log file re-analysis')
+        # Through the same detection and dispatch every upload path uses.
+        self.assertIn("detected = _detect_file_type(prefix, file_path)", reanalyze_section,
+                      'reanalyze must detect the file type the way uploads do')
+        self.assertIn("self._analyze_by_type(detected,", reanalyze_section)
+        dispatch = content.split("def _analyze_by_type(self,")[1].split("\n    def ")[0]
+        for analyzer in ('self._analyze_email_file', 'self._analyze_log_file', 'self._analyze_standalone_file'):
+            self.assertIn(analyzer, dispatch)
 
     def test_reanalyze_excludes_zircolite_artifacts(self):
         """Verify reanalyze excludes zircolite.log and .zircolite_events.db
-        from file selection - via the shared _non_artifact_files() helper
-        (also used by _resolve_display_name()), not a hand-rolled
+        from file selection - via the shared storage.non_artifact_files()
+        (also used by resolve_display_name()), not a hand-rolled
         duplicate list local to handle_post_reanalyze()."""
         with open(SERVER_FILE, 'r') as f:
             content = f.read()
         reanalyze_section = content.split("def handle_post_reanalyze(self):")[1]
-        self.assertIn("self._non_artifact_files(dir_path, pcap_file=pcap_file)", reanalyze_section,
-                      'reanalyze must use the shared _non_artifact_files() helper for file selection')
+        self.assertIn("non_artifact_files(dir_path, pcap_file=pcap_file)", reanalyze_section,
+                      'reanalyze must use the shared non_artifact_files() helper for file selection')
         with open(STORAGE_FILE, 'r') as f:
             storage_content = f.read()
         self.assertIn("'zircolite.log'", storage_content,
-                      'zircolite.log must be excluded (via FILE_ANALYSIS_ARTIFACTS, checked by _non_artifact_files)')
+                      'zircolite.log must be excluded (via FILE_ANALYSIS_ARTIFACTS, checked by non_artifact_files)')
         self.assertIn("'.zircolite_events.db'", storage_content,
-                      '.zircolite_events.db must be excluded (via FILE_ANALYSIS_ARTIFACTS, checked by _non_artifact_files)')
+                      '.zircolite_events.db must be excluded (via FILE_ANALYSIS_ARTIFACTS, checked by non_artifact_files)')
 
     def test_reanalyze_returns_409_if_already_processing(self):
         """Verify reanalyze returns 409 when analysis is already in progress."""
@@ -6102,6 +6914,38 @@ class TestSuricataProtocolEnable(unittest.TestCase):
                     content = f.read()
         self.assertIn('community-id: true', content)
 
+    def test_set_mpm_cache_path_rewrites_the_path(self):
+        sample = '''  sgh-mpm-caching: yes
+  sgh-mpm-caching-path: /var/lib/suricata/cache/sgh
+  # sgh-mpm-caching-max-age: 7d
+'''
+        result = suricata_analyzer._set_mpm_cache_path(sample, '/data/suricata/cache/sgh')
+        self.assertIn('  sgh-mpm-caching-path: /data/suricata/cache/sgh\n', result)
+        self.assertIn('  sgh-mpm-caching: yes\n', result, 'must not touch the on/off key')
+        self.assertIn('  # sgh-mpm-caching-max-age: 7d\n', result)
+
+    def test_set_mpm_cache_path_is_idempotent_and_moves_an_old_path(self):
+        sample = '  sgh-mpm-caching-path: /old/data/suricata/cache/sgh\n'
+        once = suricata_analyzer._set_mpm_cache_path(sample, '/data/suricata/cache/sgh')
+        self.assertEqual(once, '  sgh-mpm-caching-path: /data/suricata/cache/sgh\n')
+        self.assertEqual(suricata_analyzer._set_mpm_cache_path(once, '/data/suricata/cache/sgh'), once)
+
+    def test_setup_points_the_rule_cache_at_a_writable_data_dir(self):
+        '''REGRESSION: the shipped config caches compiled rules under
+        /var/lib/suricata/cache/sgh, which doesn't exist in the image and
+        can't be created by the unprivileged user Suricata runs as - so the
+        cache was never written and every analysis spent ~16s rebuilding
+        the Hyperscan databases (7s with a warm cache).'''
+        with unittest.mock.patch('suricata_analyzer.has_internet_access', return_value=False):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                suricata_analyzer.setup_suricata_config(tmpdir)
+                cache_dir = os.path.join(tmpdir, 'suricata', 'cache', 'sgh')
+                with open(os.path.join(tmpdir, 'suricata', 'suricata.yaml')) as f:
+                    content = f.read()
+                self.assertTrue(os.path.isdir(cache_dir))
+        self.assertIn(f'sgh-mpm-caching-path: {cache_dir}\n', content)
+        self.assertNotIn('/var/lib/suricata/cache', content)
+
     def test_enable_ja3_ja4_fingerprints_flips_commented_auto_to_yes(self):
         sample = '''      #ja3-fingerprints: auto
       #ja4-fingerprints: auto
@@ -6352,6 +7196,53 @@ class TestSuricataFileStoreConfig(unittest.TestCase):
             content = f.read()
         self.assertIn("'-l', dir_path", content,
                       'spawn_suricata must set log directory to per-PCAP dir')
+
+
+class TestAnalysisWarnings(unittest.TestCase):
+    """What went wrong without failing an analysis: kept in .warnings, and
+    handed to the page with the analysis's ready status."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
+
+    def test_a_yara_scan_that_fails_is_a_warning_not_a_clean_scan(self):
+        """REGRESSION: a YARA failure or timeout returned no matches, like a
+        clean scan - File Alerts silently empty."""
+        import subprocess as subprocess_mod
+        import yara_analyzer
+        filestore = os.path.join(self.dir, 'filestore', 'ab')
+        os.makedirs(filestore)
+        with open(os.path.join(filestore, 'ab' + 'c' * 62), 'wb') as f:
+            f.write(b'MZ' + bytes(62))
+        rules_dir = os.path.join(self.dir, 'data', yara_analyzer.YARA_RULES_SUBDIR)
+        os.makedirs(rules_dir)
+        with open(os.path.join(rules_dir, yara_analyzer.YARA_FORGE_FILENAME), 'w') as f:
+            f.write('rule x { condition: true }')
+        failed = subprocess_mod.CompletedProcess([], 1, stdout='', stderr='error: could not compile rules\n')
+        with unittest.mock.patch('yara_analyzer.check_yara_executable', return_value=True), \
+                unittest.mock.patch('yara_analyzer.subprocess.run', return_value=failed):
+            self.assertTrue(yara_analyzer.run_yara_pipeline(self.dir, data_dir=os.path.join(self.dir, 'data')))
+        self.assertEqual(storage.read_analysis_warnings(self.dir),
+                         ['The YARA scan of extracted files failed - File Alerts may be missing: '
+                          'error: could not compile rules'])
+        with unittest.mock.patch('yara_analyzer.subprocess.run', side_effect=subprocess_mod.TimeoutExpired('yara', 1)):
+            failures = []
+            yara_analyzer._run_yara_with_index(os.path.join(rules_dir, yara_analyzer.YARA_FORGE_FILENAME),
+                                               os.devnull, failures=failures)
+        self.assertEqual(len(failures), 1)
+        self.assertIn('timed out', failures[0])
+
+    def test_warnings_come_with_the_ready_status_and_go_on_reanalyze(self):
+        storage.add_analysis_warning(self.dir, 'The YARA scan failed - File Alerts may be missing: x')
+        storage.add_analysis_warning(self.dir, 'The YARA scan failed - File Alerts may be missing: x')
+        self.assertEqual(len(storage.read_analysis_warnings(self.dir)), 1, 'each once')
+        open(os.path.join(self.dir, 'events.db'), 'w').close()
+        handler = server.Handler.__new__(server.Handler)
+        self.assertEqual(handler._build_status_response(self.dir),
+                         {'status': 'ready', 'warnings': ['The YARA scan failed - File Alerts may be missing: x']})
+        self.assertIn('.warnings', storage.PCAP_ANALYSIS_ARTIFACTS)
+        self.assertIn('.warnings', storage.FILE_ANALYSIS_ARTIFACTS)
 
 
 class TestYaraScannerModule(unittest.TestCase):
@@ -7033,6 +7924,20 @@ class TestDockerfile(unittest.TestCase):
         self.assertIsNone(re.search(r'^\s+unzip\s*\\?$', final_stage, re.MULTILINE),
                           'unzip must not be installed in the final runtime stage')
 
+    def test_geoip_baked_from_resources_builder(self):
+        """DB-IP's country data is downloaded and converted by
+        scripts/build_geoip.py in the resources-builder stage, and copied
+        to the folder geo_lookup.GEOIP_DIR defaults to."""
+        import geo_lookup
+        with open(DOCKERFILE, 'r') as f:
+            content = f.read()
+        self.assertIn('COPY scripts/build_geoip.py /tmp/build_geoip.py', content)
+        self.assertIn('https://download.db-ip.com/free/dbip-country-lite-${month}.csv.gz', content)
+        self.assertIn('python3 /tmp/build_geoip.py /tmp/dbip.csv.gz /tmp/geoip-out/country.bin.gz', content)
+        final_stage = self._dockerfile_final_stage()
+        self.assertIn(f'COPY --from=resources-builder /tmp/geoip-out/ {geo_lookup.DEFAULT_GEOIP_DIR}/', final_stage)
+        self.assertNotIn('dbip', final_stage)
+
     def test_build_toolchain_absent_from_final_stage(self):
         """REGRESSION: the Rust/build toolchain used to compile the
         Zircolite venv must not be installed in the final runtime stage."""
@@ -7090,16 +7995,23 @@ class TestDockerfile(unittest.TestCase):
         self.assertIn('libxml2', final_stage, 'Final stage must install the libxml2 runtime library')
         self.assertIn('libxslt1.1', final_stage, 'Final stage must install the libxslt1.1 runtime library')
 
-    def test_dockerfile_venv_owned_by_app_user(self):
-        """Dockerfile must copy the Zircolite venv with --chown so the non-root
-        user can use it, without a separate chown -R RUN step (which would
-        force a full copy-up of the venv's contents into a new overlayfs
-        layer, doubling its footprint in the image)."""
+    def test_dockerfile_venv_is_not_writable_by_the_app_user(self):
+        """The Zircolite venv stays root-owned, like the rest of the image:
+        the non-root user runs it (its files are world-readable) but never
+        writes to it - so it can't rewrite the interpreter it runs. And no
+        separate chown -R RUN either, which would also double its layer."""
         final_stage = self._dockerfile_final_stage()
-        self.assertIn('COPY --from=zircolite-builder --chown=1000:1000 /usr/local/lib/zircolite-venv', final_stage,
-                      'Dockerfile must set venv ownership via COPY --chown, not a separate chown -R RUN')
-        self.assertNotIn('chown -R 1000:1000 /usr/local/lib/zircolite-venv', final_stage,
-                          'A separate chown -R on the venv would double its layer footprint')
+        self.assertIn('COPY --from=zircolite-builder /usr/local/lib/zircolite-venv /usr/local/lib/zircolite-venv',
+                      final_stage)
+        self.assertNotIn('--chown=1000:1000 /usr/local/lib/zircolite-venv', final_stage)
+        self.assertNotIn('chown -R 1000:1000 /usr/local/lib/zircolite-venv', final_stage)
+
+    def test_dockerfile_runtime_image_has_no_curl(self):
+        """curl is only for fetching rules at build time - done in the
+        resources-builder stage, so the runtime image doesn't carry it."""
+        final_stage = self._dockerfile_final_stage()
+        self.assertNotRegex(final_stage, r'(?m)^\s+curl \\$', 'not installed in the runtime stage')
+        self.assertNotIn('curl -', final_stage, 'nor used there')
 
     def test_dockerfile_exposes_port_8000(self):
         """Dockerfile must expose port 8000."""
@@ -7363,7 +8275,7 @@ class TestMultipartParsing(unittest.TestCase):
 
 class TestNonArtifactFiles(unittest.TestCase):
     """REGRESSION: zircolite.log (a real pipeline artifact for log/Sigma
-    analyses) used to slip through _non_artifact_files's suffix-based
+    analyses) used to slip through non_artifact_files's suffix-based
     exclusion list entirely, so it could transiently win a directory-listing
     race against the real uploaded file as the display-name fallback (before
     name.txt is written). Fixed by excluding exact known artifact filenames
@@ -7373,7 +8285,6 @@ class TestNonArtifactFiles(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        self.handler = server.Handler.__new__(server.Handler)
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -7381,32 +8292,32 @@ class TestNonArtifactFiles(unittest.TestCase):
     def test_zircolite_log_artifact_excluded(self):
         open(os.path.join(self.tmpdir, 'zircolite.log'), 'w').close()
         open(os.path.join(self.tmpdir, 'suspicious.log'), 'w').close()
-        result = self.handler._non_artifact_files(self.tmpdir)
+        result = storage.non_artifact_files(self.tmpdir)
         self.assertEqual(result, ['suspicious.log'],
                           'zircolite.log must be excluded but a user-uploaded .log file must not be')
 
     def test_zircolite_events_db_artifact_excluded(self):
         open(os.path.join(self.tmpdir, '.zircolite_events.db'), 'w').close()
-        result = self.handler._non_artifact_files(self.tmpdir)
+        result = storage.non_artifact_files(self.tmpdir)
         self.assertEqual(result, [], 'dotfile is already excluded, but confirm the exact-name set does not error on it')
 
     def test_missing_dir_returns_empty_list(self):
-        result = self.handler._non_artifact_files(os.path.join(self.tmpdir, 'does-not-exist'))
+        result = storage.non_artifact_files(os.path.join(self.tmpdir, 'does-not-exist'))
         self.assertEqual(result, [])
 
     def test_legitimately_named_txt_and_json_uploads_are_found(self):
-        """REGRESSION: _non_artifact_files() used to blanket-exclude any
+        """REGRESSION: non_artifact_files() used to blanket-exclude any
         .txt/.json/.db-suffixed filename by extension, even though a
         legitimately-uploaded standalone file can itself have one of
         those extensions - the exact same directory's file was still
         correctly found by handle_post_reanalyze()'s own separate,
         hand-rolled listing (which only excluded exact artifact names,
-        not extensions), so a missing name.txt meant _resolve_display_name()
+        not extensions), so a missing name.txt meant resolve_display_name()
         could never fall back to the real filename for such an upload
         even though reanalyze happily found and used it. Both call sites
         now share this one helper, so this can no longer disagree."""
         open(os.path.join(self.tmpdir, 'My Notes.txt'), 'w').close()
-        result = self.handler._non_artifact_files(self.tmpdir)
+        result = storage.non_artifact_files(self.tmpdir)
         self.assertEqual(result, ['My Notes.txt'],
                           'a legitimately-uploaded .txt file must be found, not treated as an artifact')
 
@@ -7416,7 +8327,7 @@ class TestNonArtifactFiles(unittest.TestCase):
         must still be excludable by passing its name explicitly."""
         open(os.path.join(self.tmpdir, 'so-pcap.1234567890'), 'w').close()
         open(os.path.join(self.tmpdir, 'real-upload.bin'), 'w').close()
-        result = self.handler._non_artifact_files(self.tmpdir, pcap_file='so-pcap.1234567890')
+        result = storage.non_artifact_files(self.tmpdir, pcap_file='so-pcap.1234567890')
         self.assertEqual(result, ['real-upload.bin'])
 
 
@@ -7704,11 +8615,14 @@ class TestCSPEnforced(unittest.TestCase):
 
     def test_report_endpoint_tolerates_garbage(self):
         import urllib.request
-        req = urllib.request.Request(
-            f'http://127.0.0.1:{self.port}/api/csp-report', data=b'not json',
-            headers={'Content-Type': 'application/csp-report'})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            self.assertEqual(resp.status, 204)
+        for body in (b'not json', b'{"csp-report": ["a list"]}', b'{"csp-report": "a string"}',
+                     b'{"csp-report": {"effective-directive": 5, "document-uri": 7}}'):
+            with self.subTest(body=body):
+                req = urllib.request.Request(
+                    f'http://127.0.0.1:{self.port}/api/csp-report', data=body,
+                    headers={'Content-Type': 'application/csp-report'})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    self.assertEqual(resp.status, 204)
 
 
 class TestSessionTokenAuth(unittest.TestCase):
@@ -8310,6 +9224,57 @@ class TestRawBytesEndpoints(unittest.TestCase):
         status, _, body = self._get(f'/api/ascii-stream?md5={self.MD5}&src=10.0.0.1&sport=40000&dst=10.0.0.2&dport=80')
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)['proto'], 'tcp')
+
+    def _tshark_denied_the_analysis_folder(self):
+        """A tshark that, like one under AppArmor 5's profile for it, may
+        not read a file in the data directory - and a temp directory of the
+        test's own, returned, so what's left in it can be checked."""
+        work = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, work, True)
+        bin_dir = os.path.join(work, 'bin')
+        os.makedirs(bin_dir)
+        with open(os.path.join(bin_dir, 'tshark'), 'w') as f:
+            f.write('#!/bin/sh\nprev=\nfor a in "$@"; do\n'
+                    '  if [ "$prev" = -r ]; then case "$a" in "$DENY"/*)\n'
+                    '    echo "tshark: You don\'t have permission to read the file \\"$a\\"." >&2; exit 2;; esac; fi\n'
+                    '  prev=$a\ndone\nexec "$REAL_TSHARK" "$@"\n')
+        os.chmod(os.path.join(bin_dir, 'tshark'), 0o755)
+        tmp = os.path.join(work, 'tmp')
+        os.makedirs(tmp)
+        for patcher in (unittest.mock.patch.dict(os.environ, {'PATH': bin_dir + os.pathsep + os.environ['PATH'],
+                                                              'DENY': self.tmpdir,
+                                                              'REAL_TSHARK': shutil.which('tshark'),
+                                                              'SOCRATES_SANDBOX': '0'}),
+                        unittest.mock.patch.object(tempfile, 'tempdir', tmp)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return tmp
+
+    @unittest.skipUnless(shutil.which('tshark'), 'tshark not installed')
+    def test_transcript_and_payload_where_tshark_may_not_read_the_analysis_folder(self):
+        """REGRESSION: on Ubuntu 26.04, AppArmor's profile for tshark kept
+        it from reading the analysis's folder - the ASCII transcript came
+        back empty and the stream payload 404'd. Both now read the flow
+        carved into /tmp."""
+        from tests.pcap_fixtures import HTTP_REQUEST, HTTP_RESPONSE
+        tmp = self._tshark_denied_the_analysis_folder()
+        data = self._ascii('10.0.0.1', 40000, '10.0.0.2', 80)
+        self.assertIn('GET', ''.join(l['text'] for l in data['lines'] if l['direction'] == 'src'))
+        self.assertIn('HTTP/1.1 200 OK', ''.join(l['text'] for l in data['lines'] if l['direction'] == 'dst'))
+        status, _, body = self._stream()
+        self.assertEqual(status, 200)
+        self.assertEqual(body, HTTP_REQUEST + HTTP_RESPONSE)
+        self.assertEqual(os.listdir(tmp), [], 'the carved flow is removed')
+
+    @unittest.skipUnless(shutil.which('tshark'), 'tshark not installed')
+    def test_transcript_of_a_flow_past_the_carve_limit_is_marked_truncated(self):
+        """The transcript's carve has a limit of its own, far below the
+        download's: held in memory, then written to /tmp (often RAM)."""
+        self.assertLess(config.MAX_TRANSCRIPT_CARVE_SIZE, config.MAX_STREAM_DOWNLOAD_SIZE)
+        with unittest.mock.patch.object(config, 'MAX_TRANSCRIPT_CARVE_SIZE', 200):
+            data = self._ascii('10.0.0.1', 40000, '10.0.0.2', 80)
+        self.assertTrue(data['truncated'])
+        self.assertFalse(self._ascii('10.0.0.1', 40000, '10.0.0.2', 80)['truncated'], 'under the limit, it is not')
 
     def test_raw_stream_rejects_bad_params(self):
         self.assertEqual(self._stream('client')[0], 400)

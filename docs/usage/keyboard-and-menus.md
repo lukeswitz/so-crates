@@ -4,10 +4,11 @@
 
 Arrow keys navigate rather than scroll the page, and adapt to what's on screen:
 
-- **Left/Right** - on the welcome screen, moves between the sample-file cards; on an analysis page, moves a highlight between stat-card tabs (Enter switches to the highlighted one), or between Aggregation Tables (or, once on a table's Prev/Next stop, toggles between the two) when the keyboard highlight is inside that section
-- **Up/Down** - on the welcome screen, moves between rows in Previous Analyses; on an analysis page, steps through everything on screen in order - filter chips, stat cards, the section toggles, Aggregation Tables, data-table rows, and an expanded row's own controls. Inside the Aggregation Tables section, Down walks a table's own rows and then its Prev/Next stop before continuing into the next visual row of tables (or the Data Table if there isn't one) - Up retraces the same path in reverse
+- **Left/Right** - on the main screen, moves between the sample-file cards; on an analysis page, moves a highlight between stat-card tabs (Enter switches to the highlighted one), or between Aggregation Tables (or, once on a table's Prev/Next stop, toggles between the two) when the keyboard highlight is inside that section
+- **Up/Down** - on the main screen, moves between rows in Previous Analyses; on an analysis page, steps through everything on screen in order - filter chips, stat cards, the section toggles, Aggregation Tables, data-table rows, and an expanded row's own controls. Inside the Aggregation Tables section, Down walks a table's own rows and then its Prev/Next stop before continuing into the next visual row of tables (or the Data Table if there isn't one) - Up retraces the same path in reverse
+- A collapsed section of stat cards (see [Exploring Results](exploring-results.md#navigate-results)) is skipped by both: its cards aren't stops until it's opened. Its heading isn't an arrow stop either - Tab reaches the heading's button, and Enter there opens or collapses the section
 - **Enter** - activates whatever's currently highlighted (opens a sample or previous analysis, or expands/collapses a table row) - the same as clicking it
-- **Escape** - closes whatever's open (a modal, the gear menu, a pivot menu) one level at a time, then returns to the welcome screen once nothing else is open
+- **Escape** - closes whatever's open (a modal, the gear menu, a pivot menu) one level at a time, then returns to the main screen once nothing else is open
 - **`?`** - opens Help
 - **`<` / `>`** - cycles through themes backward/forward; see [Themes](../themes.md)
 
@@ -21,8 +22,8 @@ Typing any letter or digit outside a text field opens a command palette, pre-fil
 - Any data-type stat-card tab currently on screen (e.g. `dns`, `http`, `all events`) - switches to that tab, the same as clicking it
 - `help`, `about`, `themes`, `rules`, or `settings` - opens the corresponding modal from the [Gear Menu](#gear-menu) below
 - `advanced features` - opens the Security Onion feature-comparison modal
-- `documentation`, `security onion`, `github repo`, `pcap samples`, `log samples`, or `binary samples` - opens the corresponding external site in a new tab
-- `upload`, `import`, or `previous analyses` (analysis page only) - all three return to the welcome screen, where all three actions live
+- `documentation`, `security onion`, `github repo`, `pcap samples`, `log samples`, `binary samples`, or `email samples` - opens the corresponding external site in a new tab
+- `upload`, `import`, or `previous analyses` (analysis page only) - all three return to the main screen, where all three actions live
 - `copy md5 hash to clipboard` (analysis page only) - copies the current analysis's MD5, same as clicking it in the header
 - `rename analysis` (analysis page only) - starts renaming the current analysis, same as clicking its filename in the header
 - `notes` (analysis page only) - opens the Notes modal for the current analysis
@@ -31,6 +32,7 @@ Typing any letter or digit outside a text field opens a command palette, pre-fil
 - `search` (analysis page only) - focuses the search bar instead of opening a modal
 - `clear` (analysis page only) - clears all active search terms/filters, same as the filter bar's own Clear All button
 - `sankey` (analysis page only) - collapses or expands the Sankey Diagram section
+- `traffic map` (analysis page only) - collapses or expands the Traffic Map section
 - `aggregation` (analysis page only) - collapses or expands the Aggregation Tables section
 
 ## Gear Menu
@@ -38,7 +40,7 @@ Typing any letter or digit outside a text field opens a command palette, pre-fil
 The gear icon in the upper-right corner opens a menu with five entries:
 
 - **Help** - the welcome/help modal, including a link to this documentation site
-- **Settings** - upload size, query result limit, custom lookup sites, and a Danger Zone section to permanently delete every previous analysis at once (with a live count of how many exist)
+- **Settings** - upload size, query result limit, whether tshark adds the protocols Suricata doesn't parse, custom lookup sites, and a Danger Zone section to permanently delete every previous analysis at once (with a live count of how many exist)
 - **Themes** - browse and apply themes; see [Themes](../themes.md)
-- **Rules** - check the current rule count and last-updated time for Suricata, YARA, and Sigma, and trigger an update for one ruleset (or all three) with live progress. Rule updates are not run automatically at startup - this modal is the only way to refresh them after the initial install. The Suricata section also has a "Show protocol-anomaly noise alerts" toggle (off by default) for Suricata's own built-in decoder alerts (e.g. excessive retransmissions) - see [Decoder Alerts](exploring-results.md#navigate-results) - and a "Notify me when detection rules are stale after N days" option that shows a reminder on the welcome screen
-- **About** - current version, links to this documentation site and the GitHub repo, and an opt-in "Check GitHub for newer releases" setting with a manual "Check Now" button
+- **Rules** - check the current rule count and last-updated time for Suricata, YARA, and Sigma, and trigger an update for one ruleset (or all three) with live progress. Rule updates are not run automatically at startup - this modal is the only way to refresh them after the initial install (saving an Emerging Threats Pro access code there also starts a Suricata update). The Suricata section also has a "Show protocol-anomaly noise alerts" toggle (off by default) for Suricata's own built-in decoder alerts (e.g. excessive retransmissions) - see [Decoder Alerts](exploring-results.md#navigate-results) - a list of curated Suricata rule sources to turn on or off, an [Emerging Threats Pro](analyzing-files.md#emerging-threats-pro) access code, and your own [custom Suricata rules](analyzing-files.md#custom-suricata-rules). At the bottom of the modal, a "Notify me when detection rules are stale after N days" option shows a reminder on the main screen
+- **About** - current version, links to share SO-CRATES on X, LinkedIn or Bluesky, links to this documentation site and the GitHub repo, and an opt-in "Check GitHub for newer SO-CRATES releases" setting with a manual "Check Now" button

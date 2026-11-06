@@ -6,20 +6,27 @@ def get_timestamp(event):
     return event.get('timestamp', '')
 
 
+def _nested(event, key, field, default):
+    """An ECS-style {key: {field: ...}} value - only when key holds an
+    object: tshark's rows carry source: 'tshark', a string."""
+    value = event.get(key)
+    return value.get(field, default) if isinstance(value, dict) else default
+
+
 def get_src_ip(event):
-    return event.get('src_ip', event.get('source', {}).get('ip', ''))
+    return event['src_ip'] if 'src_ip' in event else _nested(event, 'source', 'ip', '')
 
 
 def get_src_port(event):
-    return event.get('src_port', event.get('source', {}).get('port', 0))
+    return event['src_port'] if 'src_port' in event else _nested(event, 'source', 'port', 0)
 
 
 def get_dest_ip(event):
-    return event.get('dest_ip', event.get('destination', {}).get('ip', ''))
+    return event['dest_ip'] if 'dest_ip' in event else _nested(event, 'destination', 'ip', '')
 
 
 def get_dest_port(event):
-    return event.get('dest_port', event.get('destination', {}).get('port', 0))
+    return event['dest_port'] if 'dest_port' in event else _nested(event, 'destination', 'port', 0)
 
 
 def get_protocol(event):

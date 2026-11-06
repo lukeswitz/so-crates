@@ -282,12 +282,12 @@ class TestLoginHandlers(unittest.TestCase):
         out = mapper.convert_record({
             'time': '1', 'event': {'openssh_login': {
                 'success': True, 'username': 'testuser',
-                'source_address': '10.0.0.5', 'source_address_type': 4,
+                'source_address': '192.0.2.5', 'source_address_type': 4,
             }},
             'process': {'executable': {'path': '/usr/sbin/sshd'}},
         })
         self.assertEqual(out['LoginUser'], 'testuser')
-        self.assertEqual(out['SourceIp'], '10.0.0.5')
+        self.assertEqual(out['SourceIp'], '192.0.2.5')
         self.assertEqual(out['Success'], True)
 
     def test_openssh_logout_has_no_success_flag(self):
@@ -295,7 +295,7 @@ class TestLoginHandlers(unittest.TestCase):
         uid - no success bool, unlike login."""
         out = mapper.convert_record({
             'time': '1', 'event': {'openssh_logout': {
-                'username': 'testuser', 'source_address': '10.0.0.5', 'uid': 501,
+                'username': 'testuser', 'source_address': '192.0.2.5', 'uid': 501,
             }},
             'process': {'executable': {'path': '/usr/sbin/sshd'}},
         })
@@ -314,7 +314,7 @@ class TestLoginHandlers(unittest.TestCase):
     def test_screensharing_captures_viewer_and_session(self):
         out = mapper.convert_record({
             'time': '1', 'event': {'screensharing_attach': {
-                'success': True, 'source_address': '192.168.1.10',
+                'success': True, 'source_address': '192.0.2.10',
                 'viewer_appleid': 'a@b.com',
                 'authentication_username': 'testuser',
                 'session_username': 'testuser', 'existing_session': False,
@@ -322,7 +322,7 @@ class TestLoginHandlers(unittest.TestCase):
             'process': {'executable': {'path': '/usr/libexec/screensharingd'}},
         })
         self.assertEqual(out['ViewerAppleId'], 'a@b.com')
-        self.assertEqual(out['SourceIp'], '192.168.1.10')
+        self.assertEqual(out['SourceIp'], '192.0.2.10')
 
 
 class TestSecuritySensitiveHandlers(unittest.TestCase):
