@@ -106,11 +106,13 @@ else
 fi
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-echo "==> Installing test dependencies into $REPO_DIR/.venv..."
-python3 -m venv "$REPO_DIR/.venv"
-"$REPO_DIR/.venv/bin/pip" install --quiet --disable-pip-version-check \
-    -r "$REPO_DIR/requirements-screenshots.txt"
-echo "    OK: run tests with sh scripts/run-tests.sh"
+if [ -d "$REPO_DIR/tests" ]; then
+    echo "==> Installing test dependencies into $REPO_DIR/.venv..."
+    python3 -m venv "$REPO_DIR/.venv"
+    "$REPO_DIR/.venv/bin/pip" install --quiet --disable-pip-version-check \
+        -r "$REPO_DIR/requirements-screenshots.txt"
+    echo "    OK: run tests with sh scripts/run-tests.sh"
+fi
 
 echo ""
 echo "Setup complete. Start SO-CRATES with:"

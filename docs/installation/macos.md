@@ -32,7 +32,7 @@ Alert details show Security Onion Playbooks and AI-generated rule summaries. `se
 
 If a capture has no packets, SO-CRATES skips Suricata and shows an empty analysis with a warning.
 
-Run the test suite with:
+This branch doesn't track the `tests/` directory. If you have a local copy of it, run the test suite with:
 
 ```bash
 sh scripts/run-tests.sh
