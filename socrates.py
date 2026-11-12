@@ -13,6 +13,7 @@ import http.cookies
 import secrets
 import ipaddress
 import posixpath
+import select
 import signal
 from urllib.parse import urlparse, parse_qs, unquote
 import urllib.request
@@ -90,7 +91,7 @@ import config
 import cyberchef
 import tomllib
 
-VERSION = '5.2.0'
+VERSION = '5.3.0'
 GITHUB_RELEASES_API = 'https://api.github.com/repos/dougburks/so-crates/releases/latest'
 PORT = int(os.environ.get('PORT', 8000))
 BIND_ADDRESS = os.environ.get('BIND_ADDRESS', '127.0.0.1')
@@ -177,51 +178,81 @@ def _stream_bpf_filter(src, sport, dst, dport):
     return f'({flow}) or (vlan and ({flow}))'
 
 
+# How long _stop_process waits for a process it couldn't signal to exit by
+# itself before leaving it to a background reaper
+_STOP_GRACE_SECONDS = 2
+
+
+def _stop_process(proc):
+    """Stop a process whose stdout we've stopped reading, and reap it.
+
+    A kill can be refused: Debian's and Ubuntu's AppArmor profile for
+    tcpdump has no signal rules, so a confined tcpdump can't be signaled by
+    us at all (EPERM, for SIGKILL too). Closing its stdout stops it anyway
+    the moment it next writes (EPIPE). One that never writes again - still
+    filtering a big capture for a flow it won't find - is left to a daemon
+    thread to reap rather than holding the request until it finishes.
+    """
+    try:
+        proc.kill()
+    except PermissionError:
+        pass
+    proc.stdout.close()
+    try:
+        proc.wait(timeout=_STOP_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        threading.Thread(target=proc.wait, daemon=True).start()
+
+
 def _run_capped(cmd, max_bytes, timeout, text=False):
     """Run a command capturing stdout up to max_bytes.
 
     subprocess.run(capture_output=True) buffers the entire stdout in RAM
     before any size cap can apply - for pcap-derived streams that can be
-    gigabytes. Read incrementally instead and kill the process once the cap
+    gigabytes. Read incrementally instead and stop the process once the cap
     is reached. Returns (returncode, output, truncated); raises
     subprocess.TimeoutExpired on timeout, matching subprocess.run.
+
+    The timeout is a deadline on the reads themselves (select), not a timer
+    thread that kills the process: a kill can be refused (see
+    _stop_process), and nothing else can interrupt a blocked read.
     """
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    timed_out = [False]
-
-    def _kill_on_timeout():
-        timed_out[0] = True
-        proc.kill()
-
-    timer = threading.Timer(timeout, _kill_on_timeout)
-    # Daemon, like every request thread: a non-daemon timer still pending
-    # when the server shuts down would hold the process open for up to
-    # the full timeout.
-    timer.daemon = True
-    timer.start()
+    fd = proc.stdout.fileno()
+    deadline = time.monotonic() + timeout
     chunks = []
     total = 0
     truncated = False
+    timed_out = False
+    finished = False
     try:
         while True:
-            chunk = proc.stdout.read(65536)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+                timed_out = True
+                break
+            chunk = os.read(fd, 65536)
             if not chunk:
+                finished = True
                 break
             total += len(chunk)
             if total > max_bytes:
                 chunks.append(chunk[:max_bytes - (total - len(chunk))])
                 truncated = True
-                proc.kill()
                 break
             chunks.append(chunk)
-        proc.wait()
     finally:
-        timer.cancel()
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait()
-        proc.stdout.close()
-    if timed_out[0]:
+        if finished:
+            # (end of output: the process is exiting by itself)
+            proc.stdout.close()
+            try:
+                proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _stop_process(proc)
+        else:
+            _stop_process(proc)
+    if timed_out:
         raise subprocess.TimeoutExpired(cmd, timeout)
     data = b''.join(chunks)
     if text:
@@ -1004,6 +1035,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             getattr(self, handler_name)()
         else:
             self._send_error(404, 'Not found')
+
+    def finish(self):
+        super().finish()
+        # A reply sent before the body was read (any early error) is lost if the
+        # socket closes with input unread: the kernel answers with a reset
+        if getattr(self, 'command', None) == 'POST':
+            try:
+                self.connection.settimeout(0)
+                for _ in range(64):
+                    if not self.connection.recv(65536):
+                        break
+            except OSError:
+                pass
 
     # ------------------------------------------------------------------
     # GET handlers
